@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import { Test } from "forge-std/Test.sol";
+import { PythEMAOracleFeed } from "../contracts/oracles/PythEMAOracleFeed.sol";
+import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
+import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+
+contract PythEMAOracleFeedTest is Test {
+    PythEMAOracleFeed public feed;
+    MockPyth public mockPyth;
+    MockERC20 public token;
+
+    bytes32 public constant FEED_ID = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+    uint256 public constant MAX_PRICE_AGE = 60;
+    uint256 public constant VALID_TIME_PERIOD = 60;
+    uint256 public constant SINGLE_UPDATE_FEE = 1e15;
+
+    function setUp() public {
+        mockPyth = new MockPyth(VALID_TIME_PERIOD, SINGLE_UPDATE_FEE);
+        feed = new PythEMAOracleFeed(address(mockPyth), MAX_PRICE_AGE);
+
+        token = new MockERC20("Token", "TKN");
+        feed.setTokenPriceFeed(address(token), FEED_ID);
+
+        _updatePriceFeed(FEED_ID, 1e8, 1e6, -8, uint64(block.timestamp));
+    }
+
+    function _updatePriceFeed(bytes32 feedId, int64 price, uint64 conf, int32 expo, uint64 publishTime) internal {
+        bytes memory updateData =
+            mockPyth.createPriceFeedUpdateData(feedId, price, conf, expo, price, conf, publishTime);
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = updateData;
+
+        uint256 fee = mockPyth.getUpdateFee(updateDataArray);
+        mockPyth.updatePriceFeeds{ value: fee }(updateDataArray);
+    }
+
+    function testGetPrice_NegativePrice_Reverts() public {
+        vm.warp(block.timestamp + 10);
+        _updatePriceFeed(FEED_ID, -1, 1e6, -8, uint64(block.timestamp));
+
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidPrice.selector, address(token), int256(-1)));
+        feed.getPrice(address(token));
+    }
+}

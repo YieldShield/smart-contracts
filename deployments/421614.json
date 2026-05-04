@@ -1,0 +1,7 @@
+{
+  "0x266d12a44a0D4f2b41cFd1b6Dc7bCf53265294Dc": "ERC4626OracleFeed",
+  "0x6EEBa450836B4F2EFc4049178D15888a3a5E6568": "SplitRiskPoolFactory",
+  "0xa55aA347625044fd220dFC0523d8fc96244882Ba": "PythOracle",
+  "0xcbB4F09a3564257e86DC765132d607598b6e7531": "CompositeOracle",
+  "networkName": "arbitrum-sepolia"
+}

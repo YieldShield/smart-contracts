@@ -1,0 +1,16 @@
+{
+  "filter_paths": "test/,script/,lib/,contracts/mocks/,contracts/MockTokenFaucet.sol,contracts/examples/",
+  "exclude_informational": true,
+  "exclude_low": false,
+  "exclude_optimization": true,
+  "foundry_out_directory": "out",
+  "detectors_to_exclude": [
+    "naming-convention",
+    "pragma",
+    "solc-version",
+    "assembly",
+    "low-level-calls",
+    "too-many-digits",
+    "timestamp"
+  ]
+}

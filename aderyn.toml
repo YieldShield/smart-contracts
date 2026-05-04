@@ -1,0 +1,7 @@
+# Aderyn configuration for YieldShield Foundry contracts
+version = 1
+root = "."
+
+# Keep production and devnet deployment contracts in scope, but exclude
+# test-only mocks and examples that inflate the report with non-production noise.
+exclude = ["contracts/mocks/", "contracts/examples/", "contracts/MockTokenFaucet.sol"]

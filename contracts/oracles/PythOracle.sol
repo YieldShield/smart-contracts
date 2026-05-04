@@ -1,0 +1,422 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
+import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { IPyth } from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
+import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
+import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
+
+/// @title PythOracle
+/// @author David Hawig
+/// @notice Price oracle implementation using Pyth Network's pull integration
+/// @dev Implements IPriceOracle and IOracleFeed interfaces using Pyth Network price feeds with staleness checks.
+///      All price outputs are normalized to 8 decimals (USD format) regardless of source feed precision.
+contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
+    using OracleValidationLib for uint256;
+
+    /// @notice Pyth contract instance
+    IPyth public immutable pyth;
+
+    /// @notice Maximum age of price data in seconds (default: 60 seconds)
+    uint256 public maxPriceAge;
+
+    /// @notice Maximum allowed deviation between spot and EMA price (in basis points, default: 500 = 5%)
+    /// @dev Used by circuit breaker to detect oracle manipulation attempts
+    uint256 public maxPriceDeviation;
+
+    /// @notice Mapping from token address to Pyth price feed ID
+    mapping(address => bytes32) public tokenToPriceFeedId;
+
+    /// @notice Mapping to track if a token is supported
+    mapping(address => bool) public isTokenSupported;
+
+    /// @notice Emitted when a token's price feed ID is set or updated
+    event TokenPriceFeedSet(address indexed token, bytes32 indexed feedId);
+
+    /// @notice Emitted when max price age is updated
+    event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when max price deviation is updated
+    event MaxPriceDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
+
+    /// @notice Emitted when price feeds are updated
+    event PriceFeedsUpdated(bytes32[] feedIds);
+
+    /// @notice Emitted when a stale price is detected
+    event StalePriceDetected(address indexed token, bytes32 indexed feedId, uint64 publishTime);
+
+    /// @notice Custom error for unsupported token
+    error TokenNotSupported(address token);
+
+    /// @notice Custom error for stale price
+    error StalePrice(address token, bytes32 feedId, uint64 publishTime, uint256 maxAge);
+
+    /// @notice Custom error for invalid price feed ID
+    error InvalidPriceFeedId(bytes32 feedId);
+
+    /// @notice Custom error for insufficient update fee
+    error InsufficientUpdateFee(uint256 required, uint256 provided);
+
+    /// @notice Custom error for price deviation exceeding threshold
+    /// @dev Reverted when spot price deviates too much from EMA, indicating potential manipulation
+    error PriceDeviationTooHigh(uint256 spotPrice, uint256 emaPrice, uint256 deviation, uint256 maxDeviation);
+
+    /// @notice Custom error for failed ETH refund
+    error EtherRefundFailed();
+
+    /// @notice Custom error for invalid/zero EMA price
+    error InvalidEMAPrice(address token, uint256 emaPrice);
+
+    /// @notice Custom error for invalid/zero price (division by zero protection)
+    error InvalidPrice(address token, uint256 price);
+
+    /// @notice Custom error for non-ERC20 or malformed token metadata
+    error InvalidTokenAddress(address token);
+
+    /// @notice Custom error for decimals values unsupported by scaling math
+    error InvalidTokenDecimals(address token, uint8 decimals);
+
+    /// @notice Custom error for invalid price age
+    error InvalidPriceAge(uint256 provided, uint256 minimum);
+
+    /// @notice Custom error for price age exceeding upper bound
+    error PriceAgeTooHigh(uint256 provided, uint256 maximum);
+
+    /// @notice Maximum allowed maxPriceAge value (1 hour)
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
+
+    /// @notice Custom error for invalid price deviation setting
+    error InvalidDeviation(uint256 provided, uint256 min, uint256 max);
+
+    /// @notice Constructor
+    /// @param _pythAddress The address of the Pyth contract on the current network
+    /// @param _maxPriceAge The maximum age of price data in seconds (default: 60)
+    constructor(address _pythAddress, uint256 _maxPriceAge) Ownable(msg.sender) {
+        if (_pythAddress == address(0)) revert("Invalid Pyth address");
+        if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        pyth = IPyth(_pythAddress);
+        maxPriceAge = _maxPriceAge;
+        maxPriceDeviation = 500; // Default 5% deviation threshold
+    }
+
+    /// @notice Update price feeds with given update data
+    /// @param priceUpdateData Array of price update data from Pyth's Hermes API
+    /// @dev Caller must send enough ETH to cover the update fee
+    function updatePriceFeeds(bytes[] calldata priceUpdateData) external payable {
+        uint256 updateFee = pyth.getUpdateFee(priceUpdateData);
+        if (msg.value < updateFee) {
+            revert InsufficientUpdateFee(updateFee, msg.value);
+        }
+
+        // slither-disable-next-line arbitrary-send-eth — ETH forwarded to trusted Pyth contract; excess refunded to caller
+        pyth.updatePriceFeeds{ value: updateFee }(priceUpdateData);
+
+        if (msg.value > updateFee) {
+            (bool success,) = payable(msg.sender).call{ value: msg.value - updateFee }("");
+            if (!success) revert EtherRefundFailed();
+        }
+    }
+
+    /// @notice Set the price feed ID for a token
+    /// @param token The token address
+    /// @param feedId The Pyth price feed ID for the token
+    function setTokenPriceFeed(address token, bytes32 feedId) external onlyOwner {
+        if (token == address(0)) revert("Invalid token address");
+        if (feedId == bytes32(0)) revert InvalidPriceFeedId(feedId);
+
+        tokenToPriceFeedId[token] = feedId;
+        isTokenSupported[token] = true;
+
+        emit TokenPriceFeedSet(token, feedId);
+    }
+
+    /// @notice Remove support for a token
+    /// @param token The token address to remove
+    function removeToken(address token) external onlyOwner {
+        delete tokenToPriceFeedId[token];
+        isTokenSupported[token] = false;
+
+        emit TokenPriceFeedSet(token, bytes32(0));
+    }
+
+    /// @notice Set the maximum age for price data
+    /// @param _maxPriceAge The maximum age in seconds (minimum 10)
+    function setMaxPriceAge(uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAge;
+        maxPriceAge = _maxPriceAge;
+
+        emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set the maximum allowed price deviation between spot and EMA
+    /// @dev Allows owner to configure circuit breaker sensitivity (1%-50% range)
+    /// @param _maxPriceDeviation Maximum deviation in basis points (e.g., 500 = 5%)
+    function setMaxPriceDeviation(uint256 _maxPriceDeviation) external onlyOwner {
+        if (_maxPriceDeviation < 100 || _maxPriceDeviation > 5000) {
+            revert InvalidDeviation(_maxPriceDeviation, 100, 5000);
+        }
+        uint256 oldDeviation = maxPriceDeviation;
+        maxPriceDeviation = _maxPriceDeviation;
+
+        emit MaxPriceDeviationUpdated(oldDeviation, _maxPriceDeviation);
+    }
+
+    /// @notice Get the price for a token in USD (8 decimals)
+    /// @param token The token address
+    /// @return price The price in USD with 8 decimals
+    /// @dev Reverts if token is not supported or price is stale
+    function getPrice(address token) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
+        bytes32 feedId = _getFeedId(token);
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        return _convertPrice(token, priceData);
+    }
+
+    /// @notice Calculate the value of an amount of tokens in USD (8 decimals)
+    /// @param token The token address
+    /// @param amount The amount of tokens in the token's native ERC20 units
+    /// @return value The value in USD with 8 decimals
+    /// @dev Reverts if token is not supported or price is stale
+    function getValue(address token, uint256 amount) external view override returns (uint256) {
+        return _getValueForPrice(token, amount, this.getPrice(token));
+    }
+
+    /// @notice Calculate how many tokenB are needed to match the value of tokenA amount
+    /// @param tokenA The first token address
+    /// @param amountA The amount of tokenA in tokenA's native ERC20 units
+    /// @param tokenB The second token address
+    /// @return amountB The amount of tokenB in tokenB's native ERC20 units
+    /// @dev Reverts if either token is not supported or prices are stale
+    function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint256 priceA = this.getPrice(tokenA);
+        uint256 priceB = this.getPrice(tokenB);
+
+        // Prevent division by zero
+        if (priceB == 0) revert InvalidPrice(tokenB, priceB);
+
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+    }
+
+    /// @notice Check if a price is stale for a given token
+    /// @param token The token address
+    /// @return isStale True if the price is stale
+    /// @return publishTime The publish time of the current price
+    function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
+        bytes32 feedId = _getFeedId(token);
+        try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
+            uint256 rawPublishTime = priceData.publishTime;
+            uint256 currentTime = block.timestamp;
+            isStale = (currentTime > rawPublishTime) && ((currentTime - rawPublishTime) > maxPriceAge);
+            publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
+        } catch {
+            isStale = true;
+            publishTime = 0;
+        }
+    }
+
+    /// @notice Get the update fee for price feeds
+    /// @param priceUpdateData Array of price update data
+    /// @return fee The required fee in wei
+    function getUpdateFee(bytes[] calldata priceUpdateData) external view returns (uint256 fee) {
+        return pyth.getUpdateFee(priceUpdateData);
+    }
+
+    /// @notice Internal function to get feed ID for a token
+    /// @param token The token address
+    /// @return feedId The price feed ID
+    /// @dev Reverts if token is not supported
+    function _getFeedId(address token) internal view returns (bytes32 feedId) {
+        if (!isTokenSupported[token]) {
+            revert TokenNotSupported(token);
+        }
+        feedId = tokenToPriceFeedId[token];
+        if (feedId == bytes32(0)) {
+            revert TokenNotSupported(token);
+        }
+    }
+
+    /// @notice Internal function to convert Pyth price data to 8 decimal format
+    /// @param priceData The Pyth price data structure
+    /// @return price The price in 8 decimals
+    function _convertPrice(address token, PythStructs.Price memory priceData) internal pure returns (uint256) {
+        int256 price = priceData.price;
+        int32 expo = priceData.expo;
+        if (price <= 0) revert InvalidPrice(token, 0);
+
+        // Calculate the adjustment needed: 10^(expo + 8)
+        int32 adjustment = expo + 8;
+
+        if (adjustment == 0) {
+            // Already in 8 decimals
+            return uint256(price);
+        } else if (adjustment > 0) {
+            // Need to multiply: price * 10^adjustment
+            return uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
+        } else {
+            // Need to divide: price / 10^(-adjustment)
+            return uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
+        }
+    }
+
+    /// @dev Calculate price deviation in basis points using OracleValidationLib
+    /// @param spotPrice The spot price
+    /// @param emaPrice The EMA price
+    /// @return deviation The deviation in basis points (0-10000+), type(uint256).max if either is 0
+    function _calculateDeviation(uint256 spotPrice, uint256 emaPrice) internal pure returns (uint256) {
+        return OracleValidationLib.calculateDeviation(spotPrice, emaPrice);
+    }
+
+    /// @notice Get price with circuit breaker protection
+    /// @dev Compares spot price to EMA and reverts if deviation exceeds threshold
+    ///      This prevents oracle manipulation attacks by detecting sudden price swings.
+    ///      Used in SplitRiskPool.shieldedWithdraw() for cross-asset withdrawals.
+    /// @param token The token address
+    /// @return price The spot price in USD with 8 decimals (if within deviation threshold)
+    function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
+        bytes32 feedId = _getFeedId(token);
+
+        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        uint256 spotPrice = _convertPrice(token, spotData);
+
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        uint256 emaPrice = _convertPrice(token, emaData);
+
+        // Prevent division by zero in deviation calculation
+        if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
+
+        uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
+        if (deviation > maxPriceDeviation) {
+            revert PriceDeviationTooHigh(spotPrice, emaPrice, deviation, maxPriceDeviation);
+        }
+
+        return spotPrice;
+    }
+
+    /// @notice Calculate equivalent amount with circuit breaker protection
+    /// @dev Uses circuit breaker protected prices for both tokens
+    ///      Prevents manipulation during deposit collateral calculations.
+    ///      Used in SplitRiskPool.depositShieldedAsset() for collateral requirement.
+    /// @param tokenA The first token address
+    /// @param amountA The amount of tokenA in tokenA's native ERC20 units
+    /// @param tokenB The second token address
+    /// @return amountB The amount of tokenB in tokenB's native ERC20 units
+    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint256 priceA = this.getPriceWithCircuitBreaker(tokenA);
+        uint256 priceB = this.getPriceWithCircuitBreaker(tokenB);
+
+        // Prevent division by zero
+        if (priceB == 0) revert InvalidPrice(tokenB, priceB);
+
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+    }
+
+    // ============ Graceful Degradation (R3 Implementation) ============
+
+    /// @notice Get price with graceful fallback to EMA if circuit breaker triggers
+    /// @dev Instead of reverting during high volatility, returns EMA price with reliability flag.
+    ///      This prevents users from being trapped during short-term volatility events.
+    /// @param token The token address
+    /// @return price The price in USD with 8 decimals
+    /// @return isReliable True if spot price passed circuit breaker, false if using EMA fallback
+    function getPriceWithFallback(address token) external view returns (uint256 price, bool isReliable) {
+        bytes32 feedId = _getFeedId(token);
+
+        // Get both spot and EMA prices
+        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        uint256 spotPrice = _convertPrice(token, spotData);
+
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        uint256 emaPrice = _convertPrice(token, emaData);
+
+        // Prevent division by zero in deviation calculation
+        if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
+
+        // Calculate deviation and check threshold
+        uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
+        if (deviation > maxPriceDeviation) {
+            return (emaPrice, false);
+        }
+
+        // Spot price passed circuit breaker check
+        return (spotPrice, true);
+    }
+
+    /// @notice Get value with graceful fallback to EMA if circuit breaker triggers
+    /// @param token The token address
+    /// @param amount The amount of tokens in the token's native ERC20 units
+    /// @return value The value in USD with 8 decimals
+    /// @return isReliable True if spot price passed circuit breaker, false if using EMA fallback
+    function getValueWithFallback(address token, uint256 amount)
+        external
+        view
+        returns (uint256 value, bool isReliable)
+    {
+        (uint256 price, bool reliable) = this.getPriceWithFallback(token);
+        return (_getValueForPrice(token, amount, price), reliable);
+    }
+
+    /// @notice Get EMA price directly (for stability-focused pricing)
+    /// @param token The token address
+    /// @return price The EMA price in USD with 8 decimals
+    function getEmaPrice(address token) external view returns (uint256) {
+        bytes32 feedId = _getFeedId(token);
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        return _convertPrice(token, emaData);
+    }
+
+    // ============ IOracleFeed Interface Implementation ============
+
+    /// @inheritdoc IOracleFeed
+    function decimals() external pure override returns (uint8) {
+        return 8;
+    }
+
+    /// @inheritdoc IOracleFeed
+    function description() external pure override returns (string memory) {
+        return "Pyth Network Price Oracle";
+    }
+
+    function _getValueForPrice(address token, uint256 amount, uint256 price) internal view returns (uint256) {
+        return Math.mulDiv(amount, price, _getTokenScale(token));
+    }
+
+    function _getEquivalentAmountForPrices(
+        address tokenA,
+        uint256 amountA,
+        address tokenB,
+        uint256 priceA,
+        uint256 priceB
+    ) internal view returns (uint256) {
+        uint256 amountAValueUsd = Math.mulDiv(amountA, priceA, _getTokenScale(tokenA));
+        return Math.mulDiv(amountAValueUsd, _getTokenScale(tokenB), priceB);
+    }
+
+    function _getTokenScale(address token) internal view returns (uint256 tokenScale) {
+        uint8 tokenDecimals = 0;
+        try IERC20Metadata(token).decimals() returns (uint8 reportedDecimals) {
+            tokenDecimals = reportedDecimals;
+        } catch {
+            revert InvalidTokenAddress(token);
+        }
+
+        if (tokenDecimals > 77) revert InvalidTokenDecimals(token, tokenDecimals);
+        tokenScale = 10 ** tokenDecimals;
+    }
+}
