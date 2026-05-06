@@ -46,10 +46,10 @@ jobs:
         run: npx prettier --check "scripts-js/**/*.{js,cjs}"
 
       - name: Build contracts
-        run: forge build --offline
+        run: forge build
 
       - name: Run tests
-        run: forge test --offline
+        run: forge test
 
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high

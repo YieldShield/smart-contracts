@@ -2,15 +2,15 @@ import { spawnSync } from "child_process";
 
 const RUNTIME_LIMIT = Number.parseInt(
     process.env.FOUNDRY_RUNTIME_SIZE_LIMIT || "24576",
-    10
+    10,
 );
 const INITCODE_LIMIT = Number.parseInt(
     process.env.FOUNDRY_INITCODE_SIZE_LIMIT || "49152",
-    10
+    10,
 );
 const WARNING_MARGIN = Number.parseInt(
     process.env.FOUNDRY_SIZE_WARNING_MARGIN || "512",
-    10
+    10,
 );
 
 function stripAnsi(value) {
@@ -79,7 +79,7 @@ const deployableRows = rows.filter((row) => isDeployableRow(row.contract));
 
 if (deployableRows.length === 0) {
     console.error(
-        "No contract size rows were parsed from `forge build --sizes`."
+        "No contract size rows were parsed from `forge build --sizes`.",
     );
     process.exit(1);
 }
@@ -89,12 +89,12 @@ const violations = deployableRows.filter(
         row.runtimeSize > RUNTIME_LIMIT ||
         row.initcodeSize > INITCODE_LIMIT ||
         row.runtimeMargin < 0 ||
-        row.initcodeMargin < 0
+        row.initcodeMargin < 0,
 );
 
 const nearLimitRows = deployableRows
     .filter(
-        (row) => row.runtimeMargin >= 0 && row.runtimeMargin < WARNING_MARGIN
+        (row) => row.runtimeMargin >= 0 && row.runtimeMargin < WARNING_MARGIN,
     )
     .sort((left, right) => left.runtimeMargin - right.runtimeMargin);
 
@@ -114,5 +114,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-    `Checked ${deployableRows.length} deployable contracts from a clean build. No size limit violations detected.`
+    `Checked ${deployableRows.length} deployable contracts from a clean build. No size limit violations detected.`,
 );

@@ -10,7 +10,7 @@ const BROADCAST_PATH = join(
     "broadcast",
     "DeployYieldShield.s.sol",
     "31337",
-    "run-latest.json"
+    "run-latest.json",
 );
 const DEPLOYMENT_PATH = join(FOUNDRY_DIR, "deployments", "31337.json");
 
@@ -106,7 +106,7 @@ function getDeploymentFactoryAddress() {
 
 function getFirstContractAddress(broadcast, contractName) {
     const tx = broadcast.transactions.find(
-        (transaction) => transaction.contractName === contractName
+        (transaction) => transaction.contractName === contractName,
     );
 
     return tx?.contractAddress
@@ -118,7 +118,7 @@ function getAllContractAddresses(broadcast, contractName) {
     return dedupeAddresses(
         broadcast.transactions
             .filter((transaction) => transaction.contractName === contractName)
-            .map((transaction) => transaction.contractAddress)
+            .map((transaction) => transaction.contractAddress),
     );
 }
 
@@ -171,7 +171,7 @@ async function main() {
     const mockERC20Addresses = getAllContractAddresses(broadcast, "MockERC20");
     const gtusdcAddress = getFirstContractAddress(
         broadcast,
-        "MockGauntletUSDCPrime"
+        "MockGauntletUSDCPrime",
     );
 
     if (!factoryAddress) {
@@ -188,7 +188,7 @@ async function main() {
     const existingPools = await getHistoricalPools(factory);
     if (existingPools.length > 0) {
         console.log(
-            `Pools already exist (${existingPools.length}), skipping creation.`
+            `Pools already exist (${existingPools.length}), skipping creation.`,
         );
         return;
     }
@@ -208,21 +208,21 @@ async function main() {
         const creationBondAmount = await getCreationBondAmount(
             factory,
             provider,
-            backingToken
+            backingToken,
         );
         const backingTokenContract = new ethers.Contract(
             backingToken,
             ERC20_ABI,
-            wallet
+            wallet,
         );
 
         if (!creationBondAmount.isZero()) {
             await waitForTransaction(
                 backingTokenContract.approve(
                     factoryAddress,
-                    creationBondAmount
+                    creationBondAmount,
                 ),
-                `Approved creation bond for ${poolConfig.backingTokenSymbol}`
+                `Approved creation bond for ${poolConfig.backingTokenSymbol}`,
             );
         }
 
@@ -235,11 +235,11 @@ async function main() {
                 poolConfig.commissionRate,
                 poolConfig.poolFee,
                 poolConfig.collateralRatio,
-                creationBondAmount
+                creationBondAmount,
             ),
             `Created pool #${index + 1} (${poolConfig.shieldedTokenSymbol}/${
                 poolConfig.backingTokenSymbol
-            })`
+            })`,
         );
     }
 

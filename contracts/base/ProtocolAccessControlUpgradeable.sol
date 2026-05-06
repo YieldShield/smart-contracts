@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title ProtocolAccessControlUpgradeable
 /// @notice Upgradeable variant of the shared access-control scaffold for all YieldShield contracts
@@ -13,7 +13,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     Initializable,
     OwnableUpgradeable,
     PausableUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuard
 {
     error GovernanceZeroAddress();
     error UnauthorizedGovernance(address caller);
@@ -29,7 +29,6 @@ abstract contract ProtocolAccessControlUpgradeable is
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
         __Pausable_init();
-        __ReentrancyGuard_init();
         __ProtocolAccessControl_init_unchained(governanceTimelock_);
     }
 

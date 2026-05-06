@@ -55,7 +55,7 @@ function getOracleAddress() {
         try {
             const deploymentData = require(deploymentFile);
             for (const [address, contractName] of Object.entries(
-                deploymentData
+                deploymentData,
             )) {
                 if (contractName === "PythOracle" && address.startsWith("0x")) {
                     return address;
@@ -63,7 +63,7 @@ function getOracleAddress() {
             }
         } catch (error) {
             console.warn(
-                `Warning: Could not read deployment file: ${error.message}`
+                `Warning: Could not read deployment file: ${error.message}`,
             );
         }
     }
@@ -100,17 +100,17 @@ function listFoundryKeystores() {
 
     if (!existsSync(keystorePath)) {
         throw new Error(
-            `Keystore directory not found: ${keystorePath}\nRun 'cast wallet new' to create a keystore.`
+            `Keystore directory not found: ${keystorePath}\nRun 'cast wallet new' to create a keystore.`,
         );
     }
 
     const keystores = readdirSync(keystorePath).filter(
-        (keystore) => keystore !== "scaffold-eth-default"
+        (keystore) => keystore !== "scaffold-eth-default",
     );
 
     if (keystores.length === 0) {
         throw new Error(
-            "No keystores found in ~/.foundry/keystores\nRun 'cast wallet new' to create a keystore."
+            "No keystores found in ~/.foundry/keystores\nRun 'cast wallet new' to create a keystore.",
         );
     }
 
@@ -129,8 +129,8 @@ async function selectKeystore(keystoreName) {
         }
         throw new Error(
             `Keystore not found: ${keystoreName}\nAvailable: ${keystores.join(
-                ", "
-            )}`
+                ", ",
+            )}`,
         );
     }
 
@@ -166,12 +166,12 @@ function getKeystoreAddress(keystoreName) {
             {
                 encoding: "utf-8",
                 stdio: ["pipe", "pipe", "pipe"],
-            }
+            },
         ).trim();
         return address;
     } catch (error) {
         throw new Error(
-            `Failed to get address for keystore ${keystoreName}: ${error.message}`
+            `Failed to get address for keystore ${keystoreName}: ${error.message}`,
         );
     }
 }
@@ -200,7 +200,7 @@ async function configureToken(
     tokenAddress,
     feedId,
     tokenName,
-    rpcUrl
+    rpcUrl,
 ) {
     try {
         console.log(`  Configuring ${tokenName} (${tokenAddress})...`);
@@ -224,7 +224,7 @@ async function configureToken(
         return true;
     } catch (error) {
         console.error(
-            `    ✗ Failed to configure ${tokenName}: ${error.message}`
+            `    ✗ Failed to configure ${tokenName}: ${error.message}`,
         );
         return false;
     }
@@ -251,7 +251,7 @@ async function main() {
     }
     if (!rpcUrl) {
         console.error(
-            "Error: RPC URL required. Set ARBITRUM_SEPOLIA_RPC_URL or ALCHEMY_API_KEY"
+            "Error: RPC URL required. Set ARBITRUM_SEPOLIA_RPC_URL or ALCHEMY_API_KEY",
         );
         process.exit(1);
     }
@@ -281,7 +281,7 @@ async function main() {
         const poolTokens = await getPoolTokens(poolAddress, provider);
         if (poolTokens) {
             tokensToCheck = poolTokens.filter(
-                (t) => t && t !== ethers.constants.AddressZero
+                (t) => t && t !== ethers.constants.AddressZero,
             );
             console.log(`  Found tokens: ${tokensToCheck.join(", ")}`);
         }
@@ -301,19 +301,19 @@ async function main() {
         const tokenInfo = normalizedTokenConfig[tokenAddress.toLowerCase()];
         if (!tokenInfo) {
             console.warn(
-                `  ⚠ ${tokenAddress}: No configuration found (unknown token)`
+                `  ⚠ ${tokenAddress}: No configuration found (unknown token)`,
             );
             continue;
         }
 
         const { isSupported, feedId } = await checkTokenConfig(
             oracle,
-            tokenAddress
+            tokenAddress,
         );
 
         if (!isSupported || feedId === ethers.constants.HashZero) {
             console.warn(
-                `  ⚠ ${tokenInfo.name} (${tokenAddress}): NOT CONFIGURED`
+                `  ⚠ ${tokenInfo.name} (${tokenAddress}): NOT CONFIGURED`,
             );
             tokensToConfigure.push({ address: tokenAddress, ...tokenInfo });
         } else {
@@ -329,7 +329,7 @@ async function main() {
 
     // Configure missing tokens
     console.log(
-        `\n=== Configuring ${tokensToConfigure.length} Missing Token(s) ===`
+        `\n=== Configuring ${tokensToConfigure.length} Missing Token(s) ===`,
     );
 
     // Check if we're the owner
@@ -366,21 +366,21 @@ async function main() {
             token.address,
             token.feedId,
             token.name,
-            rpcUrl
+            rpcUrl,
         );
         if (success) successCount++;
     }
 
     console.log(`\n=== Summary ===`);
     console.log(
-        `Configured: ${successCount}/${tokensToConfigure.length} tokens`
+        `Configured: ${successCount}/${tokensToConfigure.length} tokens`,
     );
 
     if (successCount === tokensToConfigure.length) {
         console.log("✅ All tokens configured successfully!");
     } else {
         console.warn(
-            "⚠ Some tokens failed to configure. Check the errors above."
+            "⚠ Some tokens failed to configure. Check the errors above.",
         );
         process.exit(1);
     }

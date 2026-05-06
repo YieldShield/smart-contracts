@@ -58,7 +58,7 @@ function getDeploymentHistory(broadcastPath) {
             (file) =>
                 file.startsWith("run-") &&
                 file.endsWith(".json") &&
-                !file.includes("run-latest")
+                !file.includes("run-latest"),
         )
         .sort((a, b) => {
             // Extract run numbers and compare them
@@ -69,7 +69,7 @@ function getDeploymentHistory(broadcastPath) {
 
     for (const file of runFiles) {
         const { transactions, receipts } = parseTransactionAndReceiptRun(
-            join(broadcastPath, file)
+            join(broadcastPath, file),
         );
 
         for (const tx of transactions) {
@@ -83,7 +83,7 @@ function getDeploymentHistory(broadcastPath) {
                     deploymentFile: file,
                     transaction: tx,
                     receipt: receipts.find(
-                        (r) => r.transactionHash === tx.hash
+                        (r) => r.transactionHash === tx.hash,
                     ),
                 });
 
@@ -102,7 +102,7 @@ function getDeploymentHistory(broadcastPath) {
                                 deploymentFile: file,
                                 transaction: tx,
                                 receipt: receipts.find(
-                                    (r) => r.transactionHash === tx.hash
+                                    (r) => r.transactionHash === tx.hash,
                                 ),
                             });
                         }
@@ -138,7 +138,7 @@ function getLatestRunDeployments(broadcastPath) {
                     continue;
 
                 const receipt = receipts.find(
-                    (r) => r.transactionHash === tx.hash
+                    (r) => r.transactionHash === tx.hash,
                 );
                 const baseDeployment = {
                     address: tx.contractAddress,
@@ -194,13 +194,13 @@ function getArtifactOfContract(contractName) {
     const current_path_to_artifacts = join(
         __dirname,
         "..",
-        `out/${contractName}.sol`
+        `out/${contractName}.sol`,
     );
 
     if (!existsSync(current_path_to_artifacts)) return null;
 
     const artifactJson = JSON.parse(
-        readFileSync(`${current_path_to_artifacts}/${contractName}.json`)
+        readFileSync(`${current_path_to_artifacts}/${contractName}.json`),
     );
 
     return artifactJson;
@@ -213,7 +213,7 @@ function getInheritedFromContracts(artifact) {
             if (astNode.nodeType == "ContractDefinition") {
                 if (astNode.baseContracts.length > 0) {
                     inheritedFromContracts = astNode.baseContracts.map(
-                        ({ baseName }) => baseName.name
+                        ({ baseName }) => baseName.name,
                     );
                 }
             }
@@ -267,7 +267,7 @@ function processAllDeployments(broadcastPath) {
 
             deploymentHistory.forEach((deployment) => {
                 const timestamp = parseInt(
-                    deployment.deploymentFile.match(/run-(\d+)/)?.[1] || "0"
+                    deployment.deploymentFile.match(/run-(\d+)/)?.[1] || "0",
                 );
                 const key = `${chainId}-${deployment.contractName}`;
 
@@ -323,19 +323,19 @@ function updatePonderConfig(
     factoryAddress,
     governorAddress,
     governorBlock,
-    chainId = "31337"
+    chainId = "31337",
 ) {
     const PONDER_CONFIG_PATH = join(
         __dirname,
         "..",
         "..",
         "ponder",
-        "ponder.config.ts"
+        "ponder.config.ts",
     );
 
     if (!existsSync(PONDER_CONFIG_PATH)) {
         console.warn(
-            `⚠️  Ponder config not found at ${PONDER_CONFIG_PATH}, skipping update`
+            `⚠️  Ponder config not found at ${PONDER_CONFIG_PATH}, skipping update`,
         );
         return;
     }
@@ -350,14 +350,14 @@ function updatePonderConfig(
     if (factoryAddress && factoryAddressRegex.test(configContent)) {
         configContent = configContent.replace(
             factoryAddressRegex,
-            `$1${factoryAddress}$3`
+            `$1${factoryAddress}$3`,
         );
         console.log(
-            `📝 Updated Ponder config with factory address: ${factoryAddress}`
+            `📝 Updated Ponder config with factory address: ${factoryAddress}`,
         );
     } else if (factoryAddress) {
         console.warn(
-            `⚠️  Could not find factory address pattern in ponder.config.ts`
+            `⚠️  Could not find factory address pattern in ponder.config.ts`,
         );
     }
 
@@ -369,14 +369,14 @@ function updatePonderConfig(
     if (governorAddress && governorAddressRegex.test(configContent)) {
         configContent = configContent.replace(
             governorAddressRegex,
-            `$1${governorAddress}$3`
+            `$1${governorAddress}$3`,
         );
         console.log(
-            `📝 Updated Ponder config with YSGovernor address: ${governorAddress}`
+            `📝 Updated Ponder config with YSGovernor address: ${governorAddress}`,
         );
     } else if (governorAddress) {
         console.warn(
-            `⚠️  Could not find YSGovernor address pattern in ponder.config.ts`
+            `⚠️  Could not find YSGovernor address pattern in ponder.config.ts`,
         );
     }
 
@@ -391,10 +391,10 @@ function updatePonderConfig(
         if (startBlockRegex.test(configContent)) {
             configContent = configContent.replace(
                 startBlockRegex,
-                `$1${startBlock}$3${governorBlock}$5`
+                `$1${startBlock}$3${governorBlock}$5`,
             );
             console.log(
-                `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock} (deployed at block ${governorBlock})`
+                `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock} (deployed at block ${governorBlock})`,
             );
         } else {
             // Try a simpler pattern if the comment format doesn't match
@@ -403,10 +403,10 @@ function updatePonderConfig(
             if (simpleStartBlockRegex.test(configContent)) {
                 configContent = configContent.replace(
                     simpleStartBlockRegex,
-                    `$1${startBlock}`
+                    `$1${startBlock}`,
                 );
                 console.log(
-                    `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock}`
+                    `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock}`,
                 );
             }
         }
@@ -429,17 +429,17 @@ function main() {
         if (!chain.endsWith(".json")) return;
         chain = chain.slice(0, -5);
         var deploymentObject = JSON.parse(
-            readFileSync(`${current_path_to_deployments}/${chain}.json`)
+            readFileSync(`${current_path_to_deployments}/${chain}.json`),
         );
         deployments[chain] = deploymentObject;
     });
 
     // Process all deployments from all script folders
     const allGeneratedContracts = processAllDeployments(
-        current_path_to_broadcast
+        current_path_to_broadcast,
     );
     const latestRunDeployments = getLatestRunDeployments(
-        current_path_to_broadcast
+        current_path_to_broadcast,
     );
 
     latestRunDeployments.forEach((deployment) => {
@@ -482,7 +482,7 @@ function main() {
         // This keeps local generated addresses aligned with the latest deploy entrypoint.
         if (deployments[chainId]) {
             for (const [address, name] of Object.entries(
-                deployments[chainId]
+                deployments[chainId],
             )) {
                 if (!address.startsWith("0x")) continue;
                 if (typeof name !== "string") continue;
@@ -510,16 +510,16 @@ function main() {
                         const { deploymentFile, deploymentScript, ...rest } =
                             contractData;
                         return [contractName, rest];
-                    }
-                )
+                    },
+                ),
             );
             return `${content}${parseInt(chainId).toFixed(0)}:${JSON.stringify(
                 cleanedChainConfig,
                 null,
-                2
+                2,
             )},`;
         },
-        ""
+        "",
     );
 
     // Write the files
@@ -536,11 +536,11 @@ function main() {
         `${NEXTJS_TARGET_DIR}deployedContracts.ts`,
         format(fileTemplate("~~/utils/scaffold-eth/contract"), {
             parser: "typescript",
-        })
+        }),
     );
 
     console.log(
-        `📝 Updated TypeScript contract definition file on ${NEXTJS_TARGET_DIR}deployedContracts.ts`
+        `📝 Updated TypeScript contract definition file on ${NEXTJS_TARGET_DIR}deployedContracts.ts`,
     );
 
     // Update ponder.config.ts with factory and governor addresses
@@ -610,19 +610,19 @@ function main() {
         updatePonderConfig(factoryAddress, governorAddress, governorBlock);
         if (factoryAddress) {
             console.log(
-                `✅ Updated Ponder config with factory address: ${factoryAddress}`
+                `✅ Updated Ponder config with factory address: ${factoryAddress}`,
             );
         }
         if (governorAddress) {
             console.log(
                 `✅ Updated Ponder config with YSGovernor address: ${governorAddress}${
                     governorBlock ? ` (block ${governorBlock})` : ""
-                }`
+                }`,
             );
         }
     } else {
         console.warn(
-            `⚠️  SplitRiskPoolFactory and YSGovernor not found in deployments`
+            `⚠️  SplitRiskPoolFactory and YSGovernor not found in deployments`,
         );
     }
 }

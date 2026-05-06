@@ -10,7 +10,7 @@ const BROADCAST_PATH = join(
     "broadcast",
     "DeployYieldShield.s.sol",
     "31337",
-    "run-latest.json"
+    "run-latest.json",
 );
 
 const RPC_URL = process.env.LOCAL_RPC_URL || "http://127.0.0.1:8545";
@@ -69,7 +69,7 @@ function dedupeAddresses(addresses) {
 
 function getFirstContractAddress(broadcast, contractName) {
     const tx = broadcast.transactions.find(
-        (transaction) => transaction.contractName === contractName
+        (transaction) => transaction.contractName === contractName,
     );
 
     return tx?.contractAddress
@@ -81,7 +81,7 @@ function getAllContractAddresses(broadcast, contractName) {
     return dedupeAddresses(
         broadcast.transactions
             .filter((transaction) => transaction.contractName === contractName)
-            .map((transaction) => transaction.contractAddress)
+            .map((transaction) => transaction.contractAddress),
     );
 }
 
@@ -121,8 +121,8 @@ async function topUpTokenBalances({
             contract[mintMethod](account, topUpAmount),
             `${label}: topped up account #${index} by ${formatUnits(
                 topUpAmount,
-                decimals
-            )}`
+                decimals,
+            )}`,
         );
     }
 }
@@ -138,7 +138,7 @@ async function distributeYSTokens(ysToken, walletAddress) {
         const currentBalance = await ysToken.balanceOf(account);
         if (currentBalance.lt(YS_STANDARD_AMOUNT)) {
             requiredStandardTopUp = requiredStandardTopUp.add(
-                YS_STANDARD_AMOUNT.sub(currentBalance)
+                YS_STANDARD_AMOUNT.sub(currentBalance),
             );
         }
     }
@@ -150,14 +150,14 @@ async function distributeYSTokens(ysToken, walletAddress) {
 
     const governanceBalance = await ysToken.balanceOf(ACCOUNTS[0]);
     const governanceTarget = governanceBalance.add(
-        deployerBalance.sub(requiredStandardTopUp)
+        deployerBalance.sub(requiredStandardTopUp),
     );
 
     if (governanceBalance.lt(governanceTarget)) {
         const amountToTransfer = governanceTarget.sub(governanceBalance);
         await waitForTransaction(
             ysToken.transfer(ACCOUNTS[0], amountToTransfer),
-            `YS: funded account #0 with ${formatUnits(amountToTransfer, 18)}`
+            `YS: funded account #0 with ${formatUnits(amountToTransfer, 18)}`,
         );
     }
 
@@ -175,8 +175,8 @@ async function distributeYSTokens(ysToken, walletAddress) {
             ysToken.transfer(account, amountToTransfer),
             `YS: topped up account #${index} by ${formatUnits(
                 amountToTransfer,
-                18
-            )}`
+                18,
+            )}`,
         );
     }
 }
@@ -189,7 +189,7 @@ async function main() {
 
     if (walletAddress !== DEPLOYER_ADDRESS) {
         throw new Error(
-            `Expected local deployer ${DEPLOYER_ADDRESS}, got ${wallet.address}`
+            `Expected local deployer ${DEPLOYER_ADDRESS}, got ${wallet.address}`,
         );
     }
 
@@ -197,7 +197,7 @@ async function main() {
     const usdcAddress = getFirstContractAddress(broadcast, "MockUSDC");
     const gtusdcAddress = getFirstContractAddress(
         broadcast,
-        "MockGauntletUSDCPrime"
+        "MockGauntletUSDCPrime",
     );
     const mockERC20Addresses = getAllContractAddresses(broadcast, "MockERC20");
 
@@ -226,7 +226,7 @@ async function main() {
         const token = new ethers.Contract(
             mockERC20Addresses[index],
             ERC20_ABI,
-            wallet
+            wallet,
         );
         await topUpTokenBalances({
             contract: token,

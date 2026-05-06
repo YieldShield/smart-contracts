@@ -48,7 +48,7 @@ async function getBalanceForEachNetwork(address) {
             if (!networkUrl) {
                 console.log(`\n--${networkName}-- 📡`);
                 console.log(
-                    "   Skipping: set ALCHEMY_API_KEY in packages/foundry/.env to query this network"
+                    "   Skipping: set ALCHEMY_API_KEY in packages/foundry/.env to query this network",
                 );
                 continue;
             }
@@ -56,7 +56,7 @@ async function getBalanceForEachNetwork(address) {
 
             try {
                 const provider = new ethers.providers.JsonRpcProvider(
-                    networkUrl
+                    networkUrl,
                 );
 
                 // Get balance and format it
@@ -66,11 +66,11 @@ async function getBalanceForEachNetwork(address) {
                 console.log("   Balance:", formattedBalance);
                 console.log(
                     "   Nonce:",
-                    await provider.getTransactionCount(address)
+                    await provider.getTransactionCount(address),
                 );
             } catch (e) {
                 console.log(
-                    `   ❌ Can't connect to network ${networkName}: ${e.message}`
+                    `   ❌ Can't connect to network ${networkName}: ${e.message}`,
                 );
             }
         }
@@ -84,7 +84,7 @@ async function checkAccountBalance() {
         // Step 1: List accounts and let user select one
         console.log("📋 Listing available accounts...");
         const selectedKeystore = await listKeystores(
-            "Select a keystore to display its balance (enter the number, e.g., 1): "
+            "Select a keystore to display its balance (enter the number, e.g., 1): ",
         );
 
         if (!selectedKeystore) {
