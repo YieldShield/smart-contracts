@@ -17,7 +17,7 @@ let keystoreArg = null;
 
 // Show help message if --help is provided
 if (args.includes("--help") || args.includes("-h")) {
-  console.log(`
+    console.log(`
 Usage: yarn deploy [options]
 Options:
   --file <filename>     Specify the deployment script file (default: Deploy.s.sol)
@@ -29,61 +29,61 @@ Examples:
   yarn deploy --file DeployYieldShield.s.sol --network localhost
   yarn deploy --file DeployYieldShieldProduction.s.sol --network arbitrum --keystore my-account
   `);
-  process.exit(0);
+    process.exit(0);
 }
 
 // Parse arguments
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--network" && args[i + 1]) {
-    network = args[i + 1];
-    i++; // Skip next arg since we used it
-  } else if (args[i] === "--file" && args[i + 1]) {
-    fileName = args[i + 1];
-    i++; // Skip next arg since we used it
-  } else if (args[i] === "--keystore" && args[i + 1]) {
-    keystoreArg = args[i + 1];
-    i++; // Skip next arg since we used it
-  }
+    if (args[i] === "--network" && args[i + 1]) {
+        network = args[i + 1];
+        i++; // Skip next arg since we used it
+    } else if (args[i] === "--file" && args[i + 1]) {
+        fileName = args[i + 1];
+        i++; // Skip next arg since we used it
+    } else if (args[i] === "--keystore" && args[i + 1]) {
+        keystoreArg = args[i + 1];
+        i++; // Skip next arg since we used it
+    }
 }
 
 // Function to check if a keystore exists
 function validateKeystore(keystoreName) {
-  if (keystoreName === "scaffold-eth-default") {
-    return true; // Default keystore is always valid
-  }
+    if (keystoreName === "scaffold-eth-default") {
+        return true; // Default keystore is always valid
+    }
 
-  const keystorePath = join(
-    process.env.HOME,
-    ".foundry",
-    "keystores",
-    keystoreName
-  );
-  return existsSync(keystorePath);
+    const keystorePath = join(
+        process.env.HOME,
+        ".foundry",
+        "keystores",
+        keystoreName
+    );
+    return existsSync(keystorePath);
 }
 
 // Check if the network exists in rpc_endpoints
 try {
-  const foundryTomlPath = join(__dirname, "..", "foundry.toml");
-  const tomlString = readFileSync(foundryTomlPath, "utf-8");
-  const parsedToml = parse(tomlString);
+    const foundryTomlPath = join(__dirname, "..", "foundry.toml");
+    const tomlString = readFileSync(foundryTomlPath, "utf-8");
+    const parsedToml = parse(tomlString);
 
-  if (!parsedToml.rpc_endpoints[network]) {
-    console.log(
-      `\n❌ Error: Network '${network}' not found in foundry.toml!`,
-      "\nPlease check `foundry.toml` for available networks in the [rpc_endpoints] section or add a new network."
-    );
-    process.exit(1);
-  }
+    if (!parsedToml.rpc_endpoints[network]) {
+        console.log(
+            `\n❌ Error: Network '${network}' not found in foundry.toml!`,
+            "\nPlease check `foundry.toml` for available networks in the [rpc_endpoints] section or add a new network."
+        );
+        process.exit(1);
+    }
 } catch (error) {
-  console.error("\n❌ Error reading or parsing foundry.toml:", error);
-  process.exit(1);
+    console.error("\n❌ Error reading or parsing foundry.toml:", error);
+    process.exit(1);
 }
 
 if (
-  process.env.LOCALHOST_KEYSTORE_ACCOUNT !== "scaffold-eth-default" &&
-  network === "localhost"
+    process.env.LOCALHOST_KEYSTORE_ACCOUNT !== "scaffold-eth-default" &&
+    network === "localhost"
 ) {
-  console.log(`
+    console.log(`
 ⚠️ Warning: Using ${process.env.LOCALHOST_KEYSTORE_ACCOUNT} keystore account on localhost.
 
 You can either:
@@ -95,54 +95,54 @@ You can either:
 }
 
 if (network !== "localhost" && fileName === "Deploy.s.sol") {
-  console.log(`
+    console.log(`
 ❌ Error: Deploy.s.sol is a local-only entrypoint.
 
 For public-network deployments, use the explicit production script instead:
   yarn deploy --file DeployYieldShieldProduction.s.sol --network ${network}
 `);
-  process.exit(1);
+    process.exit(1);
 }
 
 let selectedKeystore = process.env.LOCALHOST_KEYSTORE_ACCOUNT;
 if (network !== "localhost") {
-  if (keystoreArg) {
-    // Use the keystore provided via command line argument
+    if (keystoreArg) {
+        // Use the keystore provided via command line argument
+        if (!validateKeystore(keystoreArg)) {
+            console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
+            console.log(
+                `Please check that the keystore exists in ~/.foundry/keystores/`
+            );
+            process.exit(1);
+        }
+        selectedKeystore = keystoreArg;
+        console.log(`\n🔑 Using keystore: ${selectedKeystore}`);
+    } else {
+        try {
+            selectedKeystore = await selectOrCreateKeystore();
+        } catch (error) {
+            console.error("\n❌ Error selecting keystore:", error);
+            process.exit(1);
+        }
+    }
+} else if (keystoreArg) {
+    // Allow overriding the localhost keystore with --keystore flag
     if (!validateKeystore(keystoreArg)) {
-      console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
-      console.log(
-        `Please check that the keystore exists in ~/.foundry/keystores/`
-      );
-      process.exit(1);
+        console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
+        console.log(
+            `Please check that the keystore exists in ~/.foundry/keystores/`
+        );
+        process.exit(1);
     }
     selectedKeystore = keystoreArg;
-    console.log(`\n🔑 Using keystore: ${selectedKeystore}`);
-  } else {
-    try {
-      selectedKeystore = await selectOrCreateKeystore();
-    } catch (error) {
-      console.error("\n❌ Error selecting keystore:", error);
-      process.exit(1);
-    }
-  }
-} else if (keystoreArg) {
-  // Allow overriding the localhost keystore with --keystore flag
-  if (!validateKeystore(keystoreArg)) {
-    console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
     console.log(
-      `Please check that the keystore exists in ~/.foundry/keystores/`
+        `\n🔑 Using keystore: ${selectedKeystore} for localhost deployment`
     );
-    process.exit(1);
-  }
-  selectedKeystore = keystoreArg;
-  console.log(
-    `\n🔑 Using keystore: ${selectedKeystore} for localhost deployment`
-  );
 }
 
 // Check for default account on live network
 if (selectedKeystore === "scaffold-eth-default" && network !== "localhost") {
-  console.log(`
+    console.log(`
 ❌ Error: Cannot deploy to live network using default keystore account!
 
 To deploy to ${network}, please follow these steps:
@@ -154,7 +154,7 @@ To deploy to ${network}, please follow these steps:
 
 The default account (scaffold-eth-default) can only be used for localhost deployments.
 `);
-  process.exit(0);
+    process.exit(0);
 }
 
 // Set environment variables for the make command
@@ -163,8 +163,8 @@ process.env.RPC_URL = network;
 process.env.ETH_KEYSTORE_ACCOUNT = selectedKeystore;
 
 const result = spawnSync("make", ["deploy-and-generate-abis"], {
-  stdio: "inherit",
-  shell: true,
+    stdio: "inherit",
+    shell: true,
 });
 
 process.exit(result.status);

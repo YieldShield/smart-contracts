@@ -1,10 +1,10 @@
 import {
-  readdirSync,
-  statSync,
-  readFileSync,
-  existsSync,
-  mkdirSync,
-  writeFileSync,
+    readdirSync,
+    statSync,
+    readFileSync,
+    existsSync,
+    mkdirSync,
+    writeFileSync,
 } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -19,490 +19,511 @@ const generatedContractComment = `
  */`;
 
 function getDirectories(path) {
-  if (!existsSync(path)) {
-    return [];
-  }
+    if (!existsSync(path)) {
+        return [];
+    }
 
-  return readdirSync(path).filter(function (file) {
-    return statSync(join(path, file)).isDirectory();
-  });
+    return readdirSync(path).filter(function (file) {
+        return statSync(join(path, file)).isDirectory();
+    });
 }
 
 function getFiles(path) {
-  return readdirSync(path).filter(function (file) {
-    return statSync(join(path, file)).isFile();
-  });
+    return readdirSync(path).filter(function (file) {
+        return statSync(join(path, file)).isFile();
+    });
 }
 
 function parseTransactionAndReceiptRun(filePath) {
-  try {
-    const content = readFileSync(filePath, "utf8");
-    const broadcastData = JSON.parse(content);
-    return {
-      transactions: broadcastData.transactions || [],
-      receipts: broadcastData.receipts || [],
-    };
-  } catch (error) {
-    console.warn(`Warning: Could not parse ${filePath}:`, error.message);
-    return [];
-  }
+    try {
+        const content = readFileSync(filePath, "utf8");
+        const broadcastData = JSON.parse(content);
+        return {
+            transactions: broadcastData.transactions || [],
+            receipts: broadcastData.receipts || [],
+        };
+    } catch (error) {
+        console.warn(`Warning: Could not parse ${filePath}:`, error.message);
+        return [];
+    }
 }
 
 function getDeploymentHistory(broadcastPath) {
-  const files = getFiles(broadcastPath);
-  const deploymentHistory = new Map();
+    const files = getFiles(broadcastPath);
+    const deploymentHistory = new Map();
 
-  // Sort files to process them in chronological order
-  const runFiles = files
-    .filter(
-      (file) =>
-        file.startsWith("run-") &&
-        file.endsWith(".json") &&
-        !file.includes("run-latest")
-    )
-    .sort((a, b) => {
-      // Extract run numbers and compare them
-      const runA = parseInt(a.match(/run-(\d+)/)?.[1] || "0");
-      const runB = parseInt(b.match(/run-(\d+)/)?.[1] || "0");
-      return runA - runB;
-    });
-
-  for (const file of runFiles) {
-    const { transactions, receipts } = parseTransactionAndReceiptRun(
-      join(broadcastPath, file)
-    );
-
-    for (const tx of transactions) {
-      if (tx.transactionType === "CREATE") {
-        // Store or update contract deployment info
-        // Use contractName + address as key to handle proxy deployments correctly
-        const key = `${tx.contractName}-${tx.contractAddress}`;
-        deploymentHistory.set(key, {
-          contractName: tx.contractName,
-          address: tx.contractAddress,
-          deploymentFile: file,
-          transaction: tx,
-          receipt: receipts.find((r) => r.transactionHash === tx.hash),
+    // Sort files to process them in chronological order
+    const runFiles = files
+        .filter(
+            (file) =>
+                file.startsWith("run-") &&
+                file.endsWith(".json") &&
+                !file.includes("run-latest")
+        )
+        .sort((a, b) => {
+            // Extract run numbers and compare them
+            const runA = parseInt(a.match(/run-(\d+)/)?.[1] || "0");
+            const runB = parseInt(b.match(/run-(\d+)/)?.[1] || "0");
+            return runA - runB;
         });
 
-        // Handle proxy deployments: if this is a proxy, also create entries for contracts in additionalContracts
-        if (tx.additionalContracts && Array.isArray(tx.additionalContracts)) {
-          for (const additionalContract of tx.additionalContracts) {
-            if (additionalContract.name) {
-              // Create entry for the additional contract using the proxy address
-              const additionalKey = `${additionalContract.name}-${tx.contractAddress}`;
-              deploymentHistory.set(additionalKey, {
-                contractName: additionalContract.name,
-                address: tx.contractAddress, // Proxy address
-                deploymentFile: file,
-                transaction: tx,
-                receipt: receipts.find((r) => r.transactionHash === tx.hash),
-              });
-            }
-          }
-        }
-      }
-    }
-  }
+    for (const file of runFiles) {
+        const { transactions, receipts } = parseTransactionAndReceiptRun(
+            join(broadcastPath, file)
+        );
 
-  return Array.from(deploymentHistory.values());
+        for (const tx of transactions) {
+            if (tx.transactionType === "CREATE") {
+                // Store or update contract deployment info
+                // Use contractName + address as key to handle proxy deployments correctly
+                const key = `${tx.contractName}-${tx.contractAddress}`;
+                deploymentHistory.set(key, {
+                    contractName: tx.contractName,
+                    address: tx.contractAddress,
+                    deploymentFile: file,
+                    transaction: tx,
+                    receipt: receipts.find(
+                        (r) => r.transactionHash === tx.hash
+                    ),
+                });
+
+                // Handle proxy deployments: if this is a proxy, also create entries for contracts in additionalContracts
+                if (
+                    tx.additionalContracts &&
+                    Array.isArray(tx.additionalContracts)
+                ) {
+                    for (const additionalContract of tx.additionalContracts) {
+                        if (additionalContract.name) {
+                            // Create entry for the additional contract using the proxy address
+                            const additionalKey = `${additionalContract.name}-${tx.contractAddress}`;
+                            deploymentHistory.set(additionalKey, {
+                                contractName: additionalContract.name,
+                                address: tx.contractAddress, // Proxy address
+                                deploymentFile: file,
+                                transaction: tx,
+                                receipt: receipts.find(
+                                    (r) => r.transactionHash === tx.hash
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return Array.from(deploymentHistory.values());
 }
 
 function getLatestRunDeployments(broadcastPath) {
-  const scriptFolders = getDirectories(broadcastPath);
-  const latestDeployments = new Map();
+    const scriptFolders = getDirectories(broadcastPath);
+    const latestDeployments = new Map();
 
-  scriptFolders.forEach((scriptFolder) => {
-    const scriptPath = join(broadcastPath, scriptFolder);
-    const chainFolders = getDirectories(scriptPath);
+    scriptFolders.forEach((scriptFolder) => {
+        const scriptPath = join(broadcastPath, scriptFolder);
+        const chainFolders = getDirectories(scriptPath);
 
-    chainFolders.forEach((chainId) => {
-      const runLatestPath = join(scriptPath, chainId, "run-latest.json");
-      if (!existsSync(runLatestPath)) {
-        return;
-      }
+        chainFolders.forEach((chainId) => {
+            const runLatestPath = join(scriptPath, chainId, "run-latest.json");
+            if (!existsSync(runLatestPath)) {
+                return;
+            }
 
-      const { transactions, receipts } =
-        parseTransactionAndReceiptRun(runLatestPath);
-      const fileTimestamp = statSync(runLatestPath).mtimeMs;
+            const { transactions, receipts } =
+                parseTransactionAndReceiptRun(runLatestPath);
+            const fileTimestamp = statSync(runLatestPath).mtimeMs;
 
-      for (const tx of transactions) {
-        if (tx.transactionType !== "CREATE" || !tx.contractName) continue;
+            for (const tx of transactions) {
+                if (tx.transactionType !== "CREATE" || !tx.contractName)
+                    continue;
 
-        const receipt = receipts.find((r) => r.transactionHash === tx.hash);
-        const baseDeployment = {
-          address: tx.contractAddress,
-          deploymentFile: "run-latest.json",
-          deploymentScript: scriptFolder,
-          deployedOnBlock: receipt?.blockNumber,
-        };
+                const receipt = receipts.find(
+                    (r) => r.transactionHash === tx.hash
+                );
+                const baseDeployment = {
+                    address: tx.contractAddress,
+                    deploymentFile: "run-latest.json",
+                    deploymentScript: scriptFolder,
+                    deployedOnBlock: receipt?.blockNumber,
+                };
 
-        const key = `${chainId}-${tx.contractName}`;
-        const current = latestDeployments.get(key);
-        if (!current || fileTimestamp >= current.timestamp) {
-          latestDeployments.set(key, {
-            contractName: tx.contractName,
-            chainId,
-            timestamp: fileTimestamp,
-            ...baseDeployment,
-          });
-        }
+                const key = `${chainId}-${tx.contractName}`;
+                const current = latestDeployments.get(key);
+                if (!current || fileTimestamp >= current.timestamp) {
+                    latestDeployments.set(key, {
+                        contractName: tx.contractName,
+                        chainId,
+                        timestamp: fileTimestamp,
+                        ...baseDeployment,
+                    });
+                }
 
-        if (!tx.additionalContracts || !Array.isArray(tx.additionalContracts)) {
-          continue;
-        }
+                if (
+                    !tx.additionalContracts ||
+                    !Array.isArray(tx.additionalContracts)
+                ) {
+                    continue;
+                }
 
-        for (const additionalContract of tx.additionalContracts) {
-          if (!additionalContract.name) continue;
+                for (const additionalContract of tx.additionalContracts) {
+                    if (!additionalContract.name) continue;
 
-          const additionalKey = `${chainId}-${additionalContract.name}`;
-          const currentAdditional = latestDeployments.get(additionalKey);
-          if (
-            !currentAdditional ||
-            fileTimestamp >= currentAdditional.timestamp
-          ) {
-            latestDeployments.set(additionalKey, {
-              contractName: additionalContract.name,
-              chainId,
-              timestamp: fileTimestamp,
-              ...baseDeployment,
-            });
-          }
-        }
-      }
+                    const additionalKey = `${chainId}-${additionalContract.name}`;
+                    const currentAdditional =
+                        latestDeployments.get(additionalKey);
+                    if (
+                        !currentAdditional ||
+                        fileTimestamp >= currentAdditional.timestamp
+                    ) {
+                        latestDeployments.set(additionalKey, {
+                            contractName: additionalContract.name,
+                            chainId,
+                            timestamp: fileTimestamp,
+                            ...baseDeployment,
+                        });
+                    }
+                }
+            }
+        });
     });
-  });
 
-  return Array.from(latestDeployments.values());
+    return Array.from(latestDeployments.values());
 }
 
 function getArtifactOfContract(contractName) {
-  const current_path_to_artifacts = join(
-    __dirname,
-    "..",
-    `out/${contractName}.sol`
-  );
+    const current_path_to_artifacts = join(
+        __dirname,
+        "..",
+        `out/${contractName}.sol`
+    );
 
-  if (!existsSync(current_path_to_artifacts)) return null;
+    if (!existsSync(current_path_to_artifacts)) return null;
 
-  const artifactJson = JSON.parse(
-    readFileSync(`${current_path_to_artifacts}/${contractName}.json`)
-  );
+    const artifactJson = JSON.parse(
+        readFileSync(`${current_path_to_artifacts}/${contractName}.json`)
+    );
 
-  return artifactJson;
+    return artifactJson;
 }
 
 function getInheritedFromContracts(artifact) {
-  let inheritedFromContracts = [];
-  if (artifact?.ast) {
-    for (const astNode of artifact.ast.nodes) {
-      if (astNode.nodeType == "ContractDefinition") {
-        if (astNode.baseContracts.length > 0) {
-          inheritedFromContracts = astNode.baseContracts.map(
-            ({ baseName }) => baseName.name
-          );
+    let inheritedFromContracts = [];
+    if (artifact?.ast) {
+        for (const astNode of artifact.ast.nodes) {
+            if (astNode.nodeType == "ContractDefinition") {
+                if (astNode.baseContracts.length > 0) {
+                    inheritedFromContracts = astNode.baseContracts.map(
+                        ({ baseName }) => baseName.name
+                    );
+                }
+            }
         }
-      }
     }
-  }
-  return inheritedFromContracts;
+    return inheritedFromContracts;
 }
 
 function getInheritedFunctions(mainArtifact) {
-  const inheritedFromContracts = getInheritedFromContracts(mainArtifact);
-  const inheritedFunctions = {};
-  for (const inheritanceContractName of inheritedFromContracts) {
-    const artifact = getArtifactOfContract(inheritanceContractName);
-    if (artifact) {
-      const {
-        abi,
-        ast: { absolutePath },
-      } = artifact;
-      for (const abiEntry of abi) {
-        if (abiEntry.type == "function") {
-          inheritedFunctions[abiEntry.name] = absolutePath;
+    const inheritedFromContracts = getInheritedFromContracts(mainArtifact);
+    const inheritedFunctions = {};
+    for (const inheritanceContractName of inheritedFromContracts) {
+        const artifact = getArtifactOfContract(inheritanceContractName);
+        if (artifact) {
+            const {
+                abi,
+                ast: { absolutePath },
+            } = artifact;
+            for (const abiEntry of abi) {
+                if (abiEntry.type == "function") {
+                    inheritedFunctions[abiEntry.name] = absolutePath;
+                }
+            }
         }
-      }
     }
-  }
-  return inheritedFunctions;
+    return inheritedFunctions;
 }
 
 function isLocalChain(chainId) {
-  return chainId === "31337" || chainId === "1337";
+    return chainId === "31337" || chainId === "1337";
 }
 
 function isLocalOnlyContract(contractName) {
-  return (
-    contractName.startsWith("Mock") || contractName === "AccessControlExample"
-  );
+    return (
+        contractName.startsWith("Mock") ||
+        contractName === "AccessControlExample"
+    );
 }
 
 function processAllDeployments(broadcastPath) {
-  const scriptFolders = getDirectories(broadcastPath);
-  const allDeployments = new Map();
+    const scriptFolders = getDirectories(broadcastPath);
+    const allDeployments = new Map();
 
-  scriptFolders.forEach((scriptFolder) => {
-    const scriptPath = join(broadcastPath, scriptFolder);
-    const chainFolders = getDirectories(scriptPath);
+    scriptFolders.forEach((scriptFolder) => {
+        const scriptPath = join(broadcastPath, scriptFolder);
+        const chainFolders = getDirectories(scriptPath);
 
-    chainFolders.forEach((chainId) => {
-      const chainPath = join(scriptPath, chainId);
-      const deploymentHistory = getDeploymentHistory(chainPath);
+        chainFolders.forEach((chainId) => {
+            const chainPath = join(scriptPath, chainId);
+            const deploymentHistory = getDeploymentHistory(chainPath);
 
-      deploymentHistory.forEach((deployment) => {
-        const timestamp = parseInt(
-          deployment.deploymentFile.match(/run-(\d+)/)?.[1] || "0"
-        );
-        const key = `${chainId}-${deployment.contractName}`;
+            deploymentHistory.forEach((deployment) => {
+                const timestamp = parseInt(
+                    deployment.deploymentFile.match(/run-(\d+)/)?.[1] || "0"
+                );
+                const key = `${chainId}-${deployment.contractName}`;
 
-        // Only update if this deployment is newer
-        if (
-          !allDeployments.has(key) ||
-          timestamp > allDeployments.get(key).timestamp
-        ) {
-          allDeployments.set(key, {
-            ...deployment,
-            timestamp,
-            chainId,
-            deploymentScript: scriptFolder,
-            deployedOnBlock: deployment?.receipt?.blockNumber,
-          });
-        }
-      });
+                // Only update if this deployment is newer
+                if (
+                    !allDeployments.has(key) ||
+                    timestamp > allDeployments.get(key).timestamp
+                ) {
+                    allDeployments.set(key, {
+                        ...deployment,
+                        timestamp,
+                        chainId,
+                        deploymentScript: scriptFolder,
+                        deployedOnBlock: deployment?.receipt?.blockNumber,
+                    });
+                }
+            });
+        });
     });
-  });
 
-  const allContracts = {};
+    const allContracts = {};
 
-  allDeployments.forEach((deployment) => {
-    const { chainId, contractName } = deployment;
-    const artifact = getArtifactOfContract(contractName);
+    allDeployments.forEach((deployment) => {
+        const { chainId, contractName } = deployment;
+        const artifact = getArtifactOfContract(contractName);
 
-    if (artifact) {
-      if (!isLocalChain(chainId) && isLocalOnlyContract(contractName)) {
-        return;
-      }
+        if (artifact) {
+            if (!isLocalChain(chainId) && isLocalOnlyContract(contractName)) {
+                return;
+            }
 
-      if (!allContracts[chainId]) {
-        allContracts[chainId] = {};
-      }
+            if (!allContracts[chainId]) {
+                allContracts[chainId] = {};
+            }
 
-      allContracts[chainId][contractName] = {
-        address: deployment.address,
-        abi: artifact.abi,
-        inheritedFunctions: getInheritedFunctions(artifact),
-        deploymentFile: deployment.deploymentFile,
-        deploymentScript: deployment.deploymentScript,
-        deployedOnBlock:
-          deployment?.deployedOnBlock &&
-          Number(BigInt(deployment.deployedOnBlock)),
-      };
-    }
-  });
+            allContracts[chainId][contractName] = {
+                address: deployment.address,
+                abi: artifact.abi,
+                inheritedFunctions: getInheritedFunctions(artifact),
+                deploymentFile: deployment.deploymentFile,
+                deploymentScript: deployment.deploymentScript,
+                deployedOnBlock:
+                    deployment?.deployedOnBlock &&
+                    Number(BigInt(deployment.deployedOnBlock)),
+            };
+        }
+    });
 
-  return allContracts;
+    return allContracts;
 }
 
 function updatePonderConfig(
-  factoryAddress,
-  governorAddress,
-  governorBlock,
-  chainId = "31337"
+    factoryAddress,
+    governorAddress,
+    governorBlock,
+    chainId = "31337"
 ) {
-  const PONDER_CONFIG_PATH = join(
-    __dirname,
-    "..",
-    "..",
-    "ponder",
-    "ponder.config.ts"
-  );
-
-  if (!existsSync(PONDER_CONFIG_PATH)) {
-    console.warn(
-      `⚠️  Ponder config not found at ${PONDER_CONFIG_PATH}, skipping update`
+    const PONDER_CONFIG_PATH = join(
+        __dirname,
+        "..",
+        "..",
+        "ponder",
+        "ponder.config.ts"
     );
-    return;
-  }
 
-  let configContent = readFileSync(PONDER_CONFIG_PATH, "utf8");
+    if (!existsSync(PONDER_CONFIG_PATH)) {
+        console.warn(
+            `⚠️  Ponder config not found at ${PONDER_CONFIG_PATH}, skipping update`
+        );
+        return;
+    }
 
-  // Update the factory address in the default value
-  // This regex matches: const factoryAddress = (process.env.PONDER_FACTORY_ADDRESS || "0x...") as `0x${string}`;
-  const factoryAddressRegex =
-    /(const factoryAddress = \(\s*process\.env\.PONDER_FACTORY_ADDRESS\s*\|\|\s*")(0x[a-fA-F0-9]+)("\s*\) as `0x\$\{string\}`;)/s;
+    let configContent = readFileSync(PONDER_CONFIG_PATH, "utf8");
 
-  if (factoryAddress && factoryAddressRegex.test(configContent)) {
-    configContent = configContent.replace(
-      factoryAddressRegex,
-      `$1${factoryAddress}$3`
-    );
-    console.log(
-      `📝 Updated Ponder config with factory address: ${factoryAddress}`
-    );
-  } else if (factoryAddress) {
-    console.warn(
-      `⚠️  Could not find factory address pattern in ponder.config.ts`
-    );
-  }
+    // Update the factory address in the default value
+    // This regex matches: const factoryAddress = (process.env.PONDER_FACTORY_ADDRESS || "0x...") as `0x${string}`;
+    const factoryAddressRegex =
+        /(const factoryAddress = \(\s*process\.env\.PONDER_FACTORY_ADDRESS\s*\|\|\s*")(0x[a-fA-F0-9]+)("\s*\) as `0x\$\{string\}`;)/s;
 
-  // Update the YSGovernor address in the default value
-  // This regex matches: address: (process.env.PONDER_GOVERNOR_ADDRESS || "0x...") as `0x${string}`,
-  const governorAddressRegex =
-    /(address: \(\s*process\.env\.PONDER_GOVERNOR_ADDRESS\s*\|\|\s*")(0x[a-fA-F0-9]+)("\s*\) as `0x\$\{string\}`)/s;
-
-  if (governorAddress && governorAddressRegex.test(configContent)) {
-    configContent = configContent.replace(
-      governorAddressRegex,
-      `$1${governorAddress}$3`
-    );
-    console.log(
-      `📝 Updated Ponder config with YSGovernor address: ${governorAddress}`
-    );
-  } else if (governorAddress) {
-    console.warn(
-      `⚠️  Could not find YSGovernor address pattern in ponder.config.ts`
-    );
-  }
-
-  // Update the YSGovernor startBlock
-  // This regex matches: startBlock: 123456, // YSGovernor deployed at block 123458, start slightly before
-  if (governorBlock) {
-    const startBlock = Math.max(0, governorBlock - 4); // Start 4 blocks before deployment
-    // Match: startBlock: 123456, // YSGovernor deployed at block 123458, start slightly before
-    const startBlockRegex =
-      /(startBlock: )(\d+)(, \/\/ YSGovernor deployed at block )(\d+)(, start slightly before)/;
-
-    if (startBlockRegex.test(configContent)) {
-      configContent = configContent.replace(
-        startBlockRegex,
-        `$1${startBlock}$3${governorBlock}$5`
-      );
-      console.log(
-        `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock} (deployed at block ${governorBlock})`
-      );
-    } else {
-      // Try a simpler pattern if the comment format doesn't match
-      const simpleStartBlockRegex = /(YSGovernor:[\s\S]*?startBlock: )(\d+)/;
-      if (simpleStartBlockRegex.test(configContent)) {
+    if (factoryAddress && factoryAddressRegex.test(configContent)) {
         configContent = configContent.replace(
-          simpleStartBlockRegex,
-          `$1${startBlock}`
+            factoryAddressRegex,
+            `$1${factoryAddress}$3`
         );
         console.log(
-          `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock}`
+            `📝 Updated Ponder config with factory address: ${factoryAddress}`
         );
-      }
+    } else if (factoryAddress) {
+        console.warn(
+            `⚠️  Could not find factory address pattern in ponder.config.ts`
+        );
     }
-  }
 
-  if (factoryAddress || governorAddress) {
-    writeFileSync(PONDER_CONFIG_PATH, configContent, "utf8");
-  }
+    // Update the YSGovernor address in the default value
+    // This regex matches: address: (process.env.PONDER_GOVERNOR_ADDRESS || "0x...") as `0x${string}`,
+    const governorAddressRegex =
+        /(address: \(\s*process\.env\.PONDER_GOVERNOR_ADDRESS\s*\|\|\s*")(0x[a-fA-F0-9]+)("\s*\) as `0x\$\{string\}`)/s;
+
+    if (governorAddress && governorAddressRegex.test(configContent)) {
+        configContent = configContent.replace(
+            governorAddressRegex,
+            `$1${governorAddress}$3`
+        );
+        console.log(
+            `📝 Updated Ponder config with YSGovernor address: ${governorAddress}`
+        );
+    } else if (governorAddress) {
+        console.warn(
+            `⚠️  Could not find YSGovernor address pattern in ponder.config.ts`
+        );
+    }
+
+    // Update the YSGovernor startBlock
+    // This regex matches: startBlock: 123456, // YSGovernor deployed at block 123458, start slightly before
+    if (governorBlock) {
+        const startBlock = Math.max(0, governorBlock - 4); // Start 4 blocks before deployment
+        // Match: startBlock: 123456, // YSGovernor deployed at block 123458, start slightly before
+        const startBlockRegex =
+            /(startBlock: )(\d+)(, \/\/ YSGovernor deployed at block )(\d+)(, start slightly before)/;
+
+        if (startBlockRegex.test(configContent)) {
+            configContent = configContent.replace(
+                startBlockRegex,
+                `$1${startBlock}$3${governorBlock}$5`
+            );
+            console.log(
+                `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock} (deployed at block ${governorBlock})`
+            );
+        } else {
+            // Try a simpler pattern if the comment format doesn't match
+            const simpleStartBlockRegex =
+                /(YSGovernor:[\s\S]*?startBlock: )(\d+)/;
+            if (simpleStartBlockRegex.test(configContent)) {
+                configContent = configContent.replace(
+                    simpleStartBlockRegex,
+                    `$1${startBlock}`
+                );
+                console.log(
+                    `📝 Updated Ponder config with YSGovernor startBlock: ${startBlock}`
+                );
+            }
+        }
+    }
+
+    if (factoryAddress || governorAddress) {
+        writeFileSync(PONDER_CONFIG_PATH, configContent, "utf8");
+    }
 }
 
 function main() {
-  const current_path_to_broadcast = join(__dirname, "..", "broadcast");
-  const current_path_to_deployments = join(__dirname, "..", "deployments");
+    const current_path_to_broadcast = join(__dirname, "..", "broadcast");
+    const current_path_to_deployments = join(__dirname, "..", "deployments");
 
-  const Deploymentchains = getFiles(current_path_to_deployments);
-  const deployments = {};
+    const Deploymentchains = getFiles(current_path_to_deployments);
+    const deployments = {};
 
-  // Load existing deployments from deployments directory
-  Deploymentchains.forEach((chain) => {
-    if (!chain.endsWith(".json")) return;
-    chain = chain.slice(0, -5);
-    var deploymentObject = JSON.parse(
-      readFileSync(`${current_path_to_deployments}/${chain}.json`)
-    );
-    deployments[chain] = deploymentObject;
-  });
-
-  // Process all deployments from all script folders
-  const allGeneratedContracts = processAllDeployments(
-    current_path_to_broadcast
-  );
-  const latestRunDeployments = getLatestRunDeployments(
-    current_path_to_broadcast
-  );
-
-  latestRunDeployments.forEach((deployment) => {
-    const { chainId, contractName } = deployment;
-    const artifact = getArtifactOfContract(contractName);
-
-    if (!artifact) return;
-    if (!isLocalChain(chainId) && isLocalOnlyContract(contractName)) {
-      return;
-    }
-
-    if (!allGeneratedContracts[chainId]) {
-      allGeneratedContracts[chainId] = {};
-    }
-
-    allGeneratedContracts[chainId][contractName] = {
-      address: deployment.address,
-      abi: artifact.abi,
-      inheritedFunctions: getInheritedFunctions(artifact),
-      deploymentFile: deployment.deploymentFile,
-      deploymentScript: deployment.deploymentScript,
-      deployedOnBlock:
-        deployment?.deployedOnBlock &&
-        Number(BigInt(deployment.deployedOnBlock)),
-    };
-  });
-
-  // Update contract keys based on deployments if they exist
-  Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {
-    Object.entries(contracts).forEach(([contractName, contractData]) => {
-      const deployedName = deployments[chainId]?.[contractData.address];
-      if (deployedName) {
-        // If we have a deployment name, use it instead of the contract name
-        allGeneratedContracts[chainId][deployedName] = contractData;
-        delete allGeneratedContracts[chainId][contractName];
-      }
+    // Load existing deployments from deployments directory
+    Deploymentchains.forEach((chain) => {
+        if (!chain.endsWith(".json")) return;
+        chain = chain.slice(0, -5);
+        var deploymentObject = JSON.parse(
+            readFileSync(`${current_path_to_deployments}/${chain}.json`)
+        );
+        deployments[chain] = deploymentObject;
     });
 
-    // Also update deployment-mapped contract addresses from deployments JSON.
-    // This keeps local generated addresses aligned with the latest deploy entrypoint.
-    if (deployments[chainId]) {
-      for (const [address, name] of Object.entries(deployments[chainId])) {
-        if (!address.startsWith("0x")) continue;
-        if (typeof name !== "string") continue;
+    // Process all deployments from all script folders
+    const allGeneratedContracts = processAllDeployments(
+        current_path_to_broadcast
+    );
+    const latestRunDeployments = getLatestRunDeployments(
+        current_path_to_broadcast
+    );
 
-        if (allGeneratedContracts[chainId][name]) {
-          allGeneratedContracts[chainId][name].address = address;
+    latestRunDeployments.forEach((deployment) => {
+        const { chainId, contractName } = deployment;
+        const artifact = getArtifactOfContract(contractName);
+
+        if (!artifact) return;
+        if (!isLocalChain(chainId) && isLocalOnlyContract(contractName)) {
+            return;
         }
-      }
+
+        if (!allGeneratedContracts[chainId]) {
+            allGeneratedContracts[chainId] = {};
+        }
+
+        allGeneratedContracts[chainId][contractName] = {
+            address: deployment.address,
+            abi: artifact.abi,
+            inheritedFunctions: getInheritedFunctions(artifact),
+            deploymentFile: deployment.deploymentFile,
+            deploymentScript: deployment.deploymentScript,
+            deployedOnBlock:
+                deployment?.deployedOnBlock &&
+                Number(BigInt(deployment.deployedOnBlock)),
+        };
+    });
+
+    // Update contract keys based on deployments if they exist
+    Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {
+        Object.entries(contracts).forEach(([contractName, contractData]) => {
+            const deployedName = deployments[chainId]?.[contractData.address];
+            if (deployedName) {
+                // If we have a deployment name, use it instead of the contract name
+                allGeneratedContracts[chainId][deployedName] = contractData;
+                delete allGeneratedContracts[chainId][contractName];
+            }
+        });
+
+        // Also update deployment-mapped contract addresses from deployments JSON.
+        // This keeps local generated addresses aligned with the latest deploy entrypoint.
+        if (deployments[chainId]) {
+            for (const [address, name] of Object.entries(
+                deployments[chainId]
+            )) {
+                if (!address.startsWith("0x")) continue;
+                if (typeof name !== "string") continue;
+
+                if (allGeneratedContracts[chainId][name]) {
+                    allGeneratedContracts[chainId][name].address = address;
+                }
+            }
+        }
+    });
+
+    const NEXTJS_TARGET_DIR = "../nextjs/contracts/";
+
+    // Ensure target directories exist
+    if (!existsSync(NEXTJS_TARGET_DIR)) {
+        mkdirSync(NEXTJS_TARGET_DIR, { recursive: true });
     }
-  });
 
-  const NEXTJS_TARGET_DIR = "../nextjs/contracts/";
+    // Generate the deployedContracts content
+    const fileContent = Object.entries(allGeneratedContracts).reduce(
+        (content, [chainId, chainConfig]) => {
+            const cleanedChainConfig = Object.fromEntries(
+                Object.entries(chainConfig).map(
+                    ([contractName, contractData]) => {
+                        const { deploymentFile, deploymentScript, ...rest } =
+                            contractData;
+                        return [contractName, rest];
+                    }
+                )
+            );
+            return `${content}${parseInt(chainId).toFixed(0)}:${JSON.stringify(
+                cleanedChainConfig,
+                null,
+                2
+            )},`;
+        },
+        ""
+    );
 
-  // Ensure target directories exist
-  if (!existsSync(NEXTJS_TARGET_DIR)) {
-    mkdirSync(NEXTJS_TARGET_DIR, { recursive: true });
-  }
-
-  // Generate the deployedContracts content
-  const fileContent = Object.entries(allGeneratedContracts).reduce(
-    (content, [chainId, chainConfig]) => {
-      const cleanedChainConfig = Object.fromEntries(
-        Object.entries(chainConfig).map(([contractName, contractData]) => {
-          const { deploymentFile, deploymentScript, ...rest } = contractData;
-          return [contractName, rest];
-        })
-      );
-      return `${content}${parseInt(chainId).toFixed(0)}:${JSON.stringify(
-        cleanedChainConfig,
-        null,
-        2
-      )},`;
-    },
-    ""
-  );
-
-  // Write the files
-  const fileTemplate = (importPath) => `
+    // Write the files
+    const fileTemplate = (importPath) => `
     ${generatedContractComment}
     import { GenericContractsDeclaration } from "${importPath}";
 
@@ -511,99 +532,104 @@ function main() {
     export default deployedContracts satisfies GenericContractsDeclaration;
   `;
 
-  writeFileSync(
-    `${NEXTJS_TARGET_DIR}deployedContracts.ts`,
-    format(fileTemplate("~~/utils/scaffold-eth/contract"), {
-      parser: "typescript",
-    })
-  );
-
-  console.log(
-    `📝 Updated TypeScript contract definition file on ${NEXTJS_TARGET_DIR}deployedContracts.ts`
-  );
-
-  // Update ponder.config.ts with factory and governor addresses
-  // Check all chain IDs, prioritizing non-localhost chains (421614 = Arbitrum Sepolia)
-  const chainIds = Object.keys(allGeneratedContracts).sort((a, b) => {
-    // Prioritize Arbitrum Sepolia (421614) over localhost (31337)
-    if (a === "421614") return -1;
-    if (b === "421614") return 1;
-    if (a === "31337") return 1;
-    if (b === "31337") return -1;
-    return 0;
-  });
-
-  let factoryAddress, governorAddress, governorBlock;
-
-  // Try to find addresses from allGeneratedContracts first (most reliable)
-  for (const chainId of chainIds) {
-    if (
-      !factoryAddress &&
-      allGeneratedContracts[chainId]?.["SplitRiskPoolFactory"]
-    ) {
-      factoryAddress =
-        allGeneratedContracts[chainId]["SplitRiskPoolFactory"].address;
-    }
-    if (!governorAddress && allGeneratedContracts[chainId]?.["YSGovernor"]) {
-      governorAddress = allGeneratedContracts[chainId]["YSGovernor"].address;
-      governorBlock =
-        allGeneratedContracts[chainId]["YSGovernor"].deployedOnBlock;
-    }
-    // If we found both, we can break
-    if (factoryAddress && governorAddress) break;
-  }
-
-  // Fallback to deployments JSON file if not found in allGeneratedContracts
-  for (const chainId of chainIds) {
-    if (!factoryAddress && deployments[chainId]) {
-      // deployments[chainId] is { address: name } mapping (may also have "networkName" key)
-      // Find the address that maps to "SplitRiskPoolFactory"
-      for (const [key, value] of Object.entries(deployments[chainId])) {
-        // Skip non-address keys like "networkName"
-        if (key.startsWith("0x") && value === "SplitRiskPoolFactory") {
-          factoryAddress = key;
-          break;
-        }
-      }
-    }
-    if (!governorAddress && deployments[chainId]) {
-      for (const [key, value] of Object.entries(deployments[chainId])) {
-        if (key.startsWith("0x") && value === "YSGovernor") {
-          governorAddress = key;
-          // Try to get block from allGeneratedContracts
-          governorBlock =
-            allGeneratedContracts[chainId]?.["YSGovernor"]?.deployedOnBlock;
-          break;
-        }
-      }
-    }
-    if (factoryAddress && governorAddress) break;
-  }
-
-  if (factoryAddress || governorAddress) {
-    updatePonderConfig(factoryAddress, governorAddress, governorBlock);
-    if (factoryAddress) {
-      console.log(
-        `✅ Updated Ponder config with factory address: ${factoryAddress}`
-      );
-    }
-    if (governorAddress) {
-      console.log(
-        `✅ Updated Ponder config with YSGovernor address: ${governorAddress}${
-          governorBlock ? ` (block ${governorBlock})` : ""
-        }`
-      );
-    }
-  } else {
-    console.warn(
-      `⚠️  SplitRiskPoolFactory and YSGovernor not found in deployments`
+    writeFileSync(
+        `${NEXTJS_TARGET_DIR}deployedContracts.ts`,
+        format(fileTemplate("~~/utils/scaffold-eth/contract"), {
+            parser: "typescript",
+        })
     );
-  }
+
+    console.log(
+        `📝 Updated TypeScript contract definition file on ${NEXTJS_TARGET_DIR}deployedContracts.ts`
+    );
+
+    // Update ponder.config.ts with factory and governor addresses
+    // Check all chain IDs, prioritizing non-localhost chains (421614 = Arbitrum Sepolia)
+    const chainIds = Object.keys(allGeneratedContracts).sort((a, b) => {
+        // Prioritize Arbitrum Sepolia (421614) over localhost (31337)
+        if (a === "421614") return -1;
+        if (b === "421614") return 1;
+        if (a === "31337") return 1;
+        if (b === "31337") return -1;
+        return 0;
+    });
+
+    let factoryAddress, governorAddress, governorBlock;
+
+    // Try to find addresses from allGeneratedContracts first (most reliable)
+    for (const chainId of chainIds) {
+        if (
+            !factoryAddress &&
+            allGeneratedContracts[chainId]?.["SplitRiskPoolFactory"]
+        ) {
+            factoryAddress =
+                allGeneratedContracts[chainId]["SplitRiskPoolFactory"].address;
+        }
+        if (
+            !governorAddress &&
+            allGeneratedContracts[chainId]?.["YSGovernor"]
+        ) {
+            governorAddress =
+                allGeneratedContracts[chainId]["YSGovernor"].address;
+            governorBlock =
+                allGeneratedContracts[chainId]["YSGovernor"].deployedOnBlock;
+        }
+        // If we found both, we can break
+        if (factoryAddress && governorAddress) break;
+    }
+
+    // Fallback to deployments JSON file if not found in allGeneratedContracts
+    for (const chainId of chainIds) {
+        if (!factoryAddress && deployments[chainId]) {
+            // deployments[chainId] is { address: name } mapping (may also have "networkName" key)
+            // Find the address that maps to "SplitRiskPoolFactory"
+            for (const [key, value] of Object.entries(deployments[chainId])) {
+                // Skip non-address keys like "networkName"
+                if (key.startsWith("0x") && value === "SplitRiskPoolFactory") {
+                    factoryAddress = key;
+                    break;
+                }
+            }
+        }
+        if (!governorAddress && deployments[chainId]) {
+            for (const [key, value] of Object.entries(deployments[chainId])) {
+                if (key.startsWith("0x") && value === "YSGovernor") {
+                    governorAddress = key;
+                    // Try to get block from allGeneratedContracts
+                    governorBlock =
+                        allGeneratedContracts[chainId]?.["YSGovernor"]
+                            ?.deployedOnBlock;
+                    break;
+                }
+            }
+        }
+        if (factoryAddress && governorAddress) break;
+    }
+
+    if (factoryAddress || governorAddress) {
+        updatePonderConfig(factoryAddress, governorAddress, governorBlock);
+        if (factoryAddress) {
+            console.log(
+                `✅ Updated Ponder config with factory address: ${factoryAddress}`
+            );
+        }
+        if (governorAddress) {
+            console.log(
+                `✅ Updated Ponder config with YSGovernor address: ${governorAddress}${
+                    governorBlock ? ` (block ${governorBlock})` : ""
+                }`
+            );
+        }
+    } else {
+        console.warn(
+            `⚠️  SplitRiskPoolFactory and YSGovernor not found in deployments`
+        );
+    }
 }
 
 try {
-  main();
+    main();
 } catch (error) {
-  console.error("Error:", error);
-  process.exitCode = 1;
+    console.error("Error:", error);
+    process.exitCode = 1;
 }
