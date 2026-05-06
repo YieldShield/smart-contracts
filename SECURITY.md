@@ -1,36 +1,66 @@
-# Static Analysis & Security Checklist
+# Security Policy
 
-The protocol now targets the Solidity best practices listed in `.cursor/rules/solidity.mdc`. Run the following tools locally before opening a PR:
+YieldShield is a smart-contract protocol. Please treat suspected vulnerabilities
+as sensitive until they have been triaged and remediated.
 
-1. **Slither**
-   ```bash
-   cd packages/foundry
-   pipx install slither-analyzer==0.10.3
-   slither . --foundry-out-dir out --checklist
-   ```
-   This respects `foundry.toml` remappings and reports reentrancy, unused return values, etc.
+## Supported Code
 
-2. **Mythril**
-   ```bash
-   cd packages/foundry
-   pipx install mythril==0.24.9
-   myth analyze contracts/SplitRiskPool.sol --solc-json solc-input.json
-   ```
-   Generate `solc-input.json` via `forge build --build-info` or `forge inspect SplitRiskPool solc-input`.
+Security reports should target the current `main` branch unless maintainers
+explicitly identify another supported release or deployment.
 
-3. **Invariant / Fuzz Tests**
-   ```bash
-   cd packages/foundry
-   forge test --ffi --gas-report
-   ```
+In scope:
 
-4. **Coverage**
-   ```bash
-   cd packages/foundry
-   forge coverage --ffi --report lcov
-   genhtml lcov.info -o coverage-report
-   open coverage-report/index.html
-   ```
-   This tracks line-by-line coverage for the fuzz, invariant, and fork suites. Treat regressions as blockers before merging feature branches.
+- Solidity contracts under `contracts/`
+- Deployment and verification scripts under `script/`
+- Oracle integrations and supporting libraries
+- Build, test, and security tooling that can affect contract verification
 
-Document triaged findings in a dated note under `packages/foundry/docs_ok/security/analyses/` or the relevant launch/security doc. CI already runs Foundry tests and Slither on PRs; keep the commands above as the local pre-push checklist.
+Out of scope:
+
+- Third-party dependencies under `lib/`, except when a pinned dependency version
+  creates a vulnerability in YieldShield contracts
+- Issues requiring leaked private keys, privileged account compromise, or
+  malicious maintainer behavior
+
+## Reporting a Vulnerability
+
+Do not open a public issue with exploit details.
+
+Use GitHub private vulnerability reporting for this repository if it is enabled.
+If private reporting is unavailable, open a minimal public issue asking for a
+security contact without including technical details.
+
+Please include:
+
+- A concise description of the issue
+- Affected contracts, scripts, or deployments
+- Steps to reproduce or a proof of concept
+- Expected impact and severity
+- Suggested remediation, if known
+
+## Local Security Checklist
+
+Run these checks before opening or merging security-sensitive changes:
+
+```sh
+forge build --offline
+forge test --offline
+forge fmt --check
+```
+
+Run static analysis when changing contract logic:
+
+```sh
+make slither
+make aderyn
+```
+
+Run coverage when changing core accounting, pool, oracle, receipt NFT, or
+governance behavior:
+
+```sh
+forge coverage --ffi --report summary
+```
+
+Document triaged security findings in a dated note under
+`docs_ok/security/analyses/` or in the relevant launch/security document.

@@ -1,0 +1,14 @@
+YieldShield Smart Contracts
+
+Unless otherwise noted by an SPDX license identifier in an individual source
+file, the project-authored files in this repository are licensed under the MIT
+License. See LICENSE.
+
+The following files include code derived from Uniswap v3-core and are licensed
+under GPL-2.0-or-later, as declared by their SPDX identifiers:
+
+- contracts/oracles/libraries/FullMath.sol
+- contracts/oracles/libraries/TickMath.sol
+
+Foundry dependencies under lib/ are Git submodules and retain their own
+upstream licenses and notices.
