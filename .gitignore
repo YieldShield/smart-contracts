@@ -2,6 +2,10 @@
 cache/
 out/
 
+# Node.js dependencies and logs
+node_modules/
+npm-debug.log*
+
 # Ignores development broadcast logs
 /broadcast/*/31337/
 /broadcast/**/dry-run/

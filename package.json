@@ -1,13 +1,28 @@
 {
-  "name": "@se-2/foundry",
+  "name": "@yieldshield/smart-contracts",
   "version": "0.0.1",
+  "description": "Foundry workspace for YieldShield protocol smart contracts.",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
+  "packageManager": "npm@11.9.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YieldShield/smart-contracts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YieldShield/smart-contracts/issues"
+  },
+  "homepage": "https://github.com/YieldShield/smart-contracts#readme",
+  "engines": {
+    "node": ">=20 <25"
+  },
   "scripts": {
     "account": "make account",
     "account:generate": "node scripts-js/generateKeystore.js",
     "account:import": "node scripts-js/importAccount.js",
     "account:reveal-pk": "node scripts-js/revealPK.js",
     "chain": "make chain",
+    "build": "forge build --offline",
     "clean": "forge clean",
     "compile": "make compile",
     "deploy": "node scripts-js/parseArgs.js",
@@ -16,6 +31,7 @@
     "format": "make format",
     "postinstall": "shx cp -n .env.example .env",
     "lint": "make lint",
+    "security": "make security",
     "size-check": "node scripts-js/checkContractSizes.js",
     "test": "forge test --offline",
     "verify": "make verify RPC_URL=${1:-localhost}"
@@ -25,7 +41,7 @@
     "axios": "^1.15.0",
     "dotenv": "~16.3.1",
     "envfile": "~6.18.0",
-    "ethers": "~5.7.1",
+    "ethers": "^5.8.0",
     "prettier": "~2.8.8",
     "qrcode": "~1.5.3",
     "toml": "~3.0.0"
