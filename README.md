@@ -192,5 +192,5 @@ The build completed successfully with existing compiler lint warnings and notes.
 Unless otherwise noted by an SPDX identifier in a source file, project-authored
 files are licensed under the MIT License. See [LICENSE](LICENSE).
 
-Some oracle math libraries are derived from Uniswap v3-core and are licensed
-under GPL-2.0-or-later. See [NOTICE](NOTICE) for details.
+The Uniswap V3 TWAP oracle path includes code derived from Uniswap v3-core and
+is licensed under GPL-2.0-or-later. See [NOTICE](NOTICE) for details.
