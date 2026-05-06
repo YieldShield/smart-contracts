@@ -45,11 +45,11 @@ flatten:
 
 # Format code
 format:
-	forge fmt && prettier --write ./scripts-js/**/*.js
+	forge fmt && npx prettier --write "scripts-js/**/*.{js,cjs}"
 
 # Lint code
 lint:
-	forge fmt --check && prettier --check ./scripts-js/**/*.js
+	forge fmt --check && npx prettier --check "scripts-js/**/*.{js,cjs}"
 
 # Run tests
 test:

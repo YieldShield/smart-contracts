@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Foundry and package checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Check Solidity formatting
+        run: forge fmt --check
+
+      - name: Check JavaScript formatting
+        run: npx prettier --check "scripts-js/**/*.{js,cjs}"
+
+      - name: Build contracts
+        run: forge build --offline
+
+      - name: Run tests
+        run: forge test --offline
+
+      - name: Check high-severity npm advisories
+        run: npm audit --omit=dev --audit-level=high
