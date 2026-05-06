@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible problem in contracts, scripts, or documentation.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include vulnerability details in public issues. Use SECURITY.md instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include commands, inputs, networks, and relevant logs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or deployed version
+      placeholder: e.g. main, commit SHA, or deployment address
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

@@ -1,0 +1,32 @@
+name: Audit finding
+description: Track a non-sensitive audit or review finding.
+title: "[Audit]: "
+labels:
+  - audit
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: Do not use this template for untriaged vulnerabilities. Follow SECURITY.md for private reporting.
+  - type: input
+    id: severity
+    attributes:
+      label: Severity
+      placeholder: Informational, Low, Medium, High, Critical
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+      description: Summarize the issue and affected code.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation
+  - type: textarea
+    id: status
+    attributes:
+      label: Status or mitigation notes

@@ -1,5 +1,8 @@
 # YieldShield Smart Contracts
 
+[![CI](https://github.com/YieldShield/smart-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/YieldShield/smart-contracts/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/YieldShield/smart-contracts)](LICENSE)
+
 Standalone Foundry workspace for the YieldShield protocol smart contracts.
 
 This repository was initialized from the latest `packages/foundry` snapshot in
@@ -159,6 +162,12 @@ make security
 
 Security reports and follow-up notes are stored in the root audit files and
 under `docs_ok/security/`.
+
+## Contributing and Support
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull request
+guidelines. Use [SUPPORT.md](SUPPORT.md) for support boundaries and
+[SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Submodules
 
