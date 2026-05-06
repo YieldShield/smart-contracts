@@ -186,3 +186,7 @@ forge build --offline
 ```
 
 The build completed successfully with existing compiler lint warnings and notes.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
