@@ -32,7 +32,7 @@ async function importAccount() {
         let accountName = process.argv[2];
         if (!accountName) {
             accountName = await prompt(
-                "\nEnter account name (e.g., my-keystore): "
+                "\nEnter account name (e.g., my-keystore): ",
             );
 
             if (!accountName.trim()) {
@@ -44,7 +44,7 @@ async function importAccount() {
         // Check if account name is scaffold-eth-default
         if (accountName === "scaffold-eth-default") {
             console.error(
-                "\n❌ Cannot use 'scaffold-eth-default' as account name. This is reserved for local development."
+                "\n❌ Cannot use 'scaffold-eth-default' as account name. This is reserved for local development.",
             );
             process.exit(1);
         }
@@ -56,7 +56,7 @@ async function importAccount() {
                 stdio: "inherit",
                 shell: true,
                 cwd: process.cwd(),
-            }
+            },
         );
 
         // Handle process completion
@@ -65,7 +65,7 @@ async function importAccount() {
                 process.exit(0);
             } else {
                 console.error(
-                    `\n❌ Failed to import account. Error code: ${code}`
+                    `\n❌ Failed to import account. Error code: ${code}`,
                 );
                 process.exit(1);
             }

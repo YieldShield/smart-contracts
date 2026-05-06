@@ -188,7 +188,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         __ProtocolAccessControl_init(initialOwner, _governanceTimelock);
-        __UUPSUpgradeable_init();
 
         SHIELDED_TOKEN = _shieldedTokenInfo.token;
         COMMISSION_RATE = _commissionRate;

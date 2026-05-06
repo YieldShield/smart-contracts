@@ -35,7 +35,7 @@ function getOracleAddress() {
             const deploymentData = require(deploymentFile);
             // Find PythOracle in the deployment file
             for (const [address, contractName] of Object.entries(
-                deploymentData
+                deploymentData,
             )) {
                 if (contractName === "PythOracle" && address.startsWith("0x")) {
                     return address;
@@ -43,7 +43,7 @@ function getOracleAddress() {
             }
         } catch (error) {
             console.warn(
-                `Warning: Could not read deployment file: ${error.message}`
+                `Warning: Could not read deployment file: ${error.message}`,
             );
         }
     }
@@ -80,7 +80,7 @@ function listKeystores() {
     }
 
     return readdirSync(keystorePath).filter(
-        (keystore) => keystore !== "scaffold-eth-default"
+        (keystore) => keystore !== "scaffold-eth-default",
     );
 }
 
@@ -99,7 +99,7 @@ function selectKeystore() {
         if (keystores.length === 0) {
             console.error("\n❌ No keystores found in ~/.foundry/keystores");
             console.error(
-                "Please create a keystore by running: yarn account:generate"
+                "Please create a keystore by running: yarn account:generate",
             );
             rl.close();
             reject(new Error("No keystores found"));
@@ -139,7 +139,7 @@ function decryptKeystore(keystoreName) {
             ["wallet", "decrypt-keystore", keystoreName],
             {
                 stdio: ["inherit", "pipe", "pipe"],
-            }
+            },
         );
 
         let stdout = "";
@@ -169,7 +169,7 @@ function decryptKeystore(keystoreName) {
                     reject(new Error("Wrong password for keystore"));
                 } else {
                     reject(
-                        new Error(`Failed to decrypt keystore: ${errorMsg}`)
+                        new Error(`Failed to decrypt keystore: ${errorMsg}`),
                     );
                 }
                 return;
@@ -181,7 +181,7 @@ function decryptKeystore(keystoreName) {
             // Try different patterns to extract private key
             // Pattern 1: "Private key: 0x..." or "🔑 0x..."
             let privateKeyMatch = allOutput.match(
-                /(?:Private key|🔑)[:\s]*(0x[a-fA-F0-9]{64})/i
+                /(?:Private key|🔑)[:\s]*(0x[a-fA-F0-9]{64})/i,
             );
             if (privateKeyMatch) {
                 resolve(privateKeyMatch[1]);
@@ -221,25 +221,25 @@ function decryptKeystore(keystoreName) {
 
             // If we still can't find it, show what we got for debugging
             console.error(
-                "\nDebug: Could not extract private key. Output received:"
+                "\nDebug: Could not extract private key. Output received:",
             );
             console.error(
                 "stdout length:",
                 stdout.length,
                 "content:",
-                JSON.stringify(stdout)
+                JSON.stringify(stdout),
             );
             console.error(
                 "stderr length:",
                 stderr.length,
                 "content:",
-                JSON.stringify(stderr)
+                JSON.stringify(stderr),
             );
             console.error("Combined output:", JSON.stringify(allOutput));
             reject(
                 new Error(
-                    "Could not extract private key from keystore output. Please check the debug output above."
-                )
+                    "Could not extract private key from keystore output. Please check the debug output above.",
+                ),
             );
         });
     });
@@ -265,7 +265,7 @@ function decryptKeystore(keystoreName) {
 async function fetchPriceUpdateData(
     priceIds,
     hermesUrl = PYTH_HERMES_URL,
-    useVAAs = false
+    useVAAs = false,
 ) {
     // If contract expects VAAs, use the VAA endpoint
     if (useVAAs) {
@@ -289,7 +289,7 @@ async function fetchPriceUpdateData(
             // Ensure it's exactly 64 hex characters (32 bytes)
             if (hexId.length !== 64) {
                 throw new Error(
-                    `Invalid price feed ID length: ${id} (expected 64 hex chars, got ${hexId.length})`
+                    `Invalid price feed ID length: ${id} (expected 64 hex chars, got ${hexId.length})`,
                 );
             }
             return hexId;
@@ -308,13 +308,13 @@ async function fetchPriceUpdateData(
                     !Array.isArray(response.binary.data)
                 ) {
                     throw new Error(
-                        `Invalid response format for feed ${index + 1}`
+                        `Invalid response format for feed ${index + 1}`,
                     );
                 }
 
                 if (response.binary.data.length === 0) {
                     throw new Error(
-                        `No update data returned for feed ${index + 1}`
+                        `No update data returned for feed ${index + 1}`,
                     );
                 }
 
@@ -327,7 +327,7 @@ async function fetchPriceUpdateData(
                 throw new Error(
                     `Failed to fetch update for feed ${index + 1} (${
                         priceIds[index]
-                    }): ${error.message}`
+                    }): ${error.message}`,
                 );
             }
         });
@@ -336,13 +336,13 @@ async function fetchPriceUpdateData(
         const vaaBytes = await Promise.all(updatePromises);
 
         console.log(
-            `Received ${vaaBytes.length} separate price update(s) from Pyth Hermes`
+            `Received ${vaaBytes.length} separate price update(s) from Pyth Hermes`,
         );
 
         // Validate that we have the expected number of updates
         if (vaaBytes.length !== priceIds.length) {
             throw new Error(
-                `Mismatch: expected ${priceIds.length} updates, got ${vaaBytes.length}`
+                `Mismatch: expected ${priceIds.length} updates, got ${vaaBytes.length}`,
             );
         }
 
@@ -376,7 +376,7 @@ function validatePriceUpdateData(priceUpdateData) {
             throw new Error(
                 `Update ${
                     index + 1
-                } is too short (${byteLength} bytes, expected at least 50)`
+                } is too short (${byteLength} bytes, expected at least 50)`,
             );
         }
 
@@ -388,7 +388,7 @@ function validatePriceUpdateData(priceUpdateData) {
                 console.warn(
                     `Update ${
                         index + 1
-                    } does not start with PNAU (got: "${ascii}")`
+                    } does not start with PNAU (got: "${ascii}")`,
                 );
             }
         } catch (e) {
@@ -418,25 +418,25 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
 
             if (pythAddress.toLowerCase() !== expectedAddress.toLowerCase()) {
                 console.warn(
-                    "\n⚠ WARNING: Oracle is using a different Pyth contract address!"
+                    "\n⚠ WARNING: Oracle is using a different Pyth contract address!",
                 );
                 if (
                     pythAddress.toLowerCase() ===
                     "0xa2aa501b19aff244d90cc15a4cf739d2725b5729"
                 ) {
                     console.warn(
-                        "This is the Base Sepolia address, not Arbitrum Sepolia!"
+                        "This is the Base Sepolia address, not Arbitrum Sepolia!",
                     );
                 }
                 console.warn(
-                    "The contract may expect a different data format."
+                    "The contract may expect a different data format.",
                 );
                 console.warn(
-                    "Please verify the Pyth contract address is correct for Arbitrum Sepolia.\n"
+                    "Please verify the Pyth contract address is correct for Arbitrum Sepolia.\n",
                 );
             } else {
                 console.log(
-                    "✓ Oracle is using the correct Pyth contract address for Arbitrum Sepolia\n"
+                    "✓ Oracle is using the correct Pyth contract address for Arbitrum Sepolia\n",
                 );
             }
         } catch (e) {
@@ -456,7 +456,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
             const gasEstimate =
                 await oracleContract.estimateGas.updatePriceFeeds(
                     priceUpdateData,
-                    { value: fee }
+                    { value: fee },
                 );
             console.log(`Estimated gas: ${gasEstimate.toString()}`);
             gasLimit = gasEstimate.mul(120).div(100); // Add 20% buffer
@@ -468,7 +468,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
                 console.warn("Error data:", estimateError.data);
                 if (estimateError.data === "0x2acbe915") {
                     console.warn(
-                        "→ This is InvalidWormholeVaa() error - data format issue"
+                        "→ This is InvalidWormholeVaa() error - data format issue",
                     );
                 }
             }
@@ -502,37 +502,37 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
             console.error("Error data:", error.data);
             if (error.data === "0x2acbe915") {
                 console.error(
-                    "\n→ InvalidWormholeVaa() error - The contract rejected the data format"
+                    "\n→ InvalidWormholeVaa() error - The contract rejected the data format",
                 );
                 console.error("\nROOT CAUSE:");
                 console.error(
-                    "  The deployed Oracle is using Pyth contract address:"
+                    "  The deployed Oracle is using Pyth contract address:",
                 );
                 console.error("  0xA2aa501b19aff244D90cc15a4Cf739D2725B5729");
                 console.error(
-                    "  This is the Base Sepolia Pyth contract, not Arbitrum Sepolia!"
+                    "  This is the Base Sepolia Pyth contract, not Arbitrum Sepolia!",
                 );
                 console.error("\nSOLUTION:");
                 console.error(
-                    "  1. The Oracle needs to be redeployed with the correct Pyth contract"
+                    "  1. The Oracle needs to be redeployed with the correct Pyth contract",
                 );
                 console.error("     address for Arbitrum Sepolia");
                 console.error(
-                    "  2. Update PythConfig.sol with the correct address"
+                    "  2. Update PythConfig.sol with the correct address",
                 );
                 console.error("  3. Redeploy the PythOracle contract");
                 console.error(
-                    "\nThe script is working correctly - it's fetching the right data format."
+                    "\nThe script is working correctly - it's fetching the right data format.",
                 );
                 console.error(
-                    "The issue is that the deployed contract uses the wrong Pyth address.\n"
+                    "The issue is that the deployed contract uses the wrong Pyth address.\n",
                 );
             }
         }
         if (error.transaction) {
             console.error(
                 "Transaction data length:",
-                error.transaction.data?.length || "N/A"
+                error.transaction.data?.length || "N/A",
             );
         }
         if (error.message) {
@@ -573,16 +573,16 @@ async function main() {
     if (!rpcUrl) {
         console.error("Error: RPC URL required");
         console.error(
-            "Usage: node scripts-js/update-pyth-prices.cjs [--keystore <name>] [--rpcUrl <RPC_URL>]"
+            "Usage: node scripts-js/update-pyth-prices.cjs [--keystore <name>] [--rpcUrl <RPC_URL>]",
         );
         console.error("Options:");
         console.error(
-            "  1. Set ALCHEMY_API_KEY in .env (will auto-construct RPC URL)"
+            "  1. Set ALCHEMY_API_KEY in .env (will auto-construct RPC URL)",
         );
         console.error("  2. Set ARBITRUM_SEPOLIA_RPC_URL in .env");
         console.error("  3. Pass --rpcUrl <URL> as argument");
         console.error(
-            "Example: https://arb-sepolia.g.alchemy.com/v2/YOUR_API_KEY"
+            "Example: https://arb-sepolia.g.alchemy.com/v2/YOUR_API_KEY",
         );
         process.exit(1);
     }
@@ -631,7 +631,7 @@ async function main() {
     const oracleContract = new ethers.Contract(
         oracleAddress,
         oracleAbi,
-        provider
+        provider,
     );
 
     console.log("=== Updating Pyth Price Feeds ===");
@@ -646,22 +646,22 @@ async function main() {
 
         if (pythAddress.toLowerCase() !== correctPythAddress.toLowerCase()) {
             console.warn(
-                "\n⚠ CRITICAL: Oracle was deployed with incorrect Pyth contract address!"
+                "\n⚠ CRITICAL: Oracle was deployed with incorrect Pyth contract address!",
             );
             console.warn(`  Current: ${pythAddress}`);
             console.warn(`  Expected: ${correctPythAddress}`);
             console.warn(
-                "\n  SOLUTION: Redeploy the Oracle with the updated PythConfig.sol"
+                "\n  SOLUTION: Redeploy the Oracle with the updated PythConfig.sol",
             );
             console.warn(
-                "  The PythConfig.sol has been updated with the correct address."
+                "  The PythConfig.sol has been updated with the correct address.",
             );
             console.warn(
-                "  After redeployment, this script will work correctly.\n"
+                "  After redeployment, this script will work correctly.\n",
             );
         } else {
             console.log(
-                `✓ Oracle is using correct Pyth contract: ${pythAddress}\n`
+                `✓ Oracle is using correct Pyth contract: ${pythAddress}\n`,
             );
         }
     } catch (e) {
@@ -688,7 +688,7 @@ async function main() {
                 "0x0000000000000000000000000000000000000000000000000000000000000000";
             if (!isSupported || feedId === zeroHash) {
                 console.warn(
-                    `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`
+                    `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`,
                 );
                 missingConfigs.push(token);
             } else {
@@ -696,31 +696,31 @@ async function main() {
             }
         } catch (e) {
             console.warn(
-                `  ⚠ ${token.name}: Could not check configuration (${e.message})`
+                `  ⚠ ${token.name}: Could not check configuration (${e.message})`,
             );
         }
     }
 
     if (missingConfigs.length > 0) {
         console.warn(
-            "\n⚠ WARNING: Some tokens are not configured in the Oracle!"
+            "\n⚠ WARNING: Some tokens are not configured in the Oracle!",
         );
         console.warn(
-            "  This will cause TokenNotSupported() errors when using the Oracle."
+            "  This will cause TokenNotSupported() errors when using the Oracle.",
         );
         console.warn("\n  SOLUTION: Run the configuration script:");
         console.warn("    node scripts-js/configure-pyth-tokens.cjs");
         console.warn("\n  Missing configurations:");
         missingConfigs.forEach((token) => {
             console.warn(
-                `    - ${token.name} (${token.address}) → Feed ID: ${token.feedId}`
+                `    - ${token.name} (${token.address}) → Feed ID: ${token.feedId}`,
             );
         });
         console.warn(
-            "\n  The deployment script should have configured these, but they may have been"
+            "\n  The deployment script should have configured these, but they may have been",
         );
         console.warn(
-            "  lost if the Oracle was redeployed separately from the tokens.\n"
+            "  lost if the Oracle was redeployed separately from the tokens.\n",
         );
     } else {
         console.log("\n✓ All tokens are properly configured\n");
@@ -744,7 +744,7 @@ async function main() {
         const priceUpdateData = await fetchPriceUpdateData(
             priceIds,
             PYTH_HERMES_URL,
-            false
+            false,
         );
         console.log(`Received ${priceUpdateData.length} price update(s)`);
 

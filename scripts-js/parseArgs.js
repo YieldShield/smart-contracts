@@ -56,7 +56,7 @@ function validateKeystore(keystoreName) {
         process.env.HOME,
         ".foundry",
         "keystores",
-        keystoreName
+        keystoreName,
     );
     return existsSync(keystorePath);
 }
@@ -70,7 +70,7 @@ try {
     if (!parsedToml.rpc_endpoints[network]) {
         console.log(
             `\n❌ Error: Network '${network}' not found in foundry.toml!`,
-            "\nPlease check `foundry.toml` for available networks in the [rpc_endpoints] section or add a new network."
+            "\nPlease check `foundry.toml` for available networks in the [rpc_endpoints] section or add a new network.",
         );
         process.exit(1);
     }
@@ -111,7 +111,7 @@ if (network !== "localhost") {
         if (!validateKeystore(keystoreArg)) {
             console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
             console.log(
-                `Please check that the keystore exists in ~/.foundry/keystores/`
+                `Please check that the keystore exists in ~/.foundry/keystores/`,
             );
             process.exit(1);
         }
@@ -130,13 +130,13 @@ if (network !== "localhost") {
     if (!validateKeystore(keystoreArg)) {
         console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
         console.log(
-            `Please check that the keystore exists in ~/.foundry/keystores/`
+            `Please check that the keystore exists in ~/.foundry/keystores/`,
         );
         process.exit(1);
     }
     selectedKeystore = keystoreArg;
     console.log(
-        `\n🔑 Using keystore: ${selectedKeystore} for localhost deployment`
+        `\n🔑 Using keystore: ${selectedKeystore} for localhost deployment`,
     );
 }
 

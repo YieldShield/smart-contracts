@@ -91,7 +91,6 @@ contract SplitRiskPoolFactory is
         if (governanceTimelock_ == address(0)) revert GovernanceZeroAddress();
         if (poolImplementation_ == address(0)) revert ErrorsLib.InvalidAssetAddress();
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
-        __UUPSUpgradeable_init();
         splitRiskPoolImplementation = poolImplementation_;
         minimumCreationBondUsd = DEFAULT_MINIMUM_CREATION_BOND_USD;
     }

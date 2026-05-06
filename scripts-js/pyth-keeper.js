@@ -49,14 +49,14 @@ async function fetchPriceUpdateData(priceIds, network = "testnet") {
                         const response = JSON.parse(data);
                         if (response.vaas && Array.isArray(response.vaas)) {
                             const vaaBytes = response.vaas.map((vaa) =>
-                                Buffer.from(vaa, "base64")
+                                Buffer.from(vaa, "base64"),
                             );
                             resolve({ vaaBytes, publishTimes: [] }); // Publish times would need to be parsed from VAA
                         } else {
                             reject(
                                 new Error(
-                                    "Invalid response format from Hermes API"
-                                )
+                                    "Invalid response format from Hermes API",
+                                ),
                             );
                         }
                     } catch (error) {
@@ -82,9 +82,8 @@ async function checkPriceStaleness(oracleContract, tokenAddresses) {
 
     for (const tokenAddress of tokenAddresses) {
         try {
-            const [isStale, publishTime] = await oracleContract.isPriceStale(
-                tokenAddress
-            );
+            const [isStale, publishTime] =
+                await oracleContract.isPriceStale(tokenAddress);
             results.push({
                 address: tokenAddress,
                 isStale,
@@ -96,7 +95,7 @@ async function checkPriceStaleness(oracleContract, tokenAddresses) {
         } catch (error) {
             console.error(
                 `Error checking staleness for ${tokenAddress}:`,
-                error.message
+                error.message,
             );
             results.push({
                 address: tokenAddress,
@@ -129,7 +128,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
             priceUpdateData,
             {
                 value: fee,
-            }
+            },
         );
         console.log(`Estimated gas: ${gasEstimate.toString()}`);
 
@@ -181,7 +180,7 @@ async function runKeeper(config) {
     const oracleContract = new ethers.Contract(
         oracleAddress,
         oracleAbi,
-        provider
+        provider,
     );
 
     console.log("Pyth Keeper Service Started");
@@ -195,7 +194,7 @@ async function runKeeper(config) {
             console.log("\n--- Checking price staleness ---");
             const { stale, tokens } = await checkPriceStaleness(
                 oracleContract,
-                tokenAddresses
+                tokenAddresses,
             );
 
             if (stale) {
@@ -203,7 +202,7 @@ async function runKeeper(config) {
                 tokens.forEach((token) => {
                     if (token.isStale) {
                         console.log(
-                            `  - ${token.address}: stale (publishTime: ${token.publishTime})`
+                            `  - ${token.address}: stale (publishTime: ${token.publishTime})`,
                         );
                     }
                 });
@@ -212,12 +211,12 @@ async function runKeeper(config) {
                 console.log("Fetching price update data from Hermes...");
                 const { vaaBytes } = await fetchPriceUpdateData(
                     priceFeedIds,
-                    network
+                    network,
                 );
 
                 // Convert to hex strings for contract call
                 const priceUpdateData = vaaBytes.map((vaa) =>
-                    ethers.utils.hexlify(vaa)
+                    ethers.utils.hexlify(vaa),
                 );
 
                 // Update prices on-chain
@@ -246,12 +245,12 @@ async function checkStalenessOnly(config) {
     const oracleContract = new ethers.Contract(
         oracleAddress,
         oracleAbi,
-        provider
+        provider,
     );
 
     const { stale, tokens } = await checkPriceStaleness(
         oracleContract,
-        tokenAddresses
+        tokenAddresses,
     );
     return { stale, tokens };
 }
@@ -280,7 +279,7 @@ if (require.main === module) {
     // Validate required config
     if (!config.rpcUrl || !config.oracle || !config.tokens) {
         console.error(
-            "Usage: node pyth-keeper.js --rpcUrl <url> --oracle <address> --tokens <token1>,<token2> [--network testnet] [--privateKey <key>]"
+            "Usage: node pyth-keeper.js --rpcUrl <url> --oracle <address> --tokens <token1>,<token2> [--network testnet] [--privateKey <key>]",
         );
         process.exit(1);
     }
@@ -292,7 +291,7 @@ if (require.main === module) {
 
     if (!config.privateKey) {
         console.error(
-            "Error: Private key required (--privateKey or PRIVATE_KEY env var)"
+            "Error: Private key required (--privateKey or PRIVATE_KEY env var)",
         );
         process.exit(1);
     }
