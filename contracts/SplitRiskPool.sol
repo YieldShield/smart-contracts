@@ -1948,13 +1948,19 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public totalProtectorShares;
     /// @notice tokenId => loss-socialized ownership shares
     mapping(uint256 => uint256) public protectorShares;
+    /// @notice Sticky launch flag used to lock creator-only ACL changes after first deposit
+    /// @dev Layout-stable: this field has occupied this slot since the original
+    ///      deployment. Do NOT insert new state above it — append after, claiming
+    ///      slots from `__gap`, so existing proxy storage remains valid on upgrade.
+    bool public hasEverLaunched;
     /// @notice Current protector share generation; increments when a shield activation wipes all backing assets
+    /// @dev Appended after `hasEverLaunched` in upgrade-safe order: existing proxies
+    ///      had this slot zero-initialised inside the prior `__gap`, so the value
+    ///      reads as 0 on first upgrade — matching the intended initial epoch.
     uint256 public protectorShareEpoch;
     /// @notice tokenId => share generation used to exclude wiped shares from future backing deposits
     mapping(uint256 => uint256) public protectorShareEpochs;
     /// @notice share generation => reward-per-share cap for historical commission claims
     mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
-    /// @notice Sticky launch flag used to lock creator-only ACL changes after first deposit
-    bool public hasEverLaunched;
     uint256[40] private __gap;
 }
