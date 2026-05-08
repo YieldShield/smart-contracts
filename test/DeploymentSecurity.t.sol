@@ -52,29 +52,47 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         assertGe(ysToken.getVotes(bootstrapHolder), governor.proposalThreshold());
 
-        (uint256 proposalVotes, uint256 proposalThreshold,) =
+        (uint256 proposalVotes, uint256 proposalThreshold,,) =
             finalizer.getBootstrapProposalVotes(bootstrapHolder, address(ysToken), address(governor));
 
         assertLt(proposalVotes, proposalThreshold, "finalizer should wait for a past-vote checkpoint");
     }
 
     function test_ProductionBootstrap_AdminCanBeRenouncedAfterPastVotesCheckpoint() public {
-        (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernanceWithBootstrapAdmin();
         FinalizeYieldShieldProductionGovernance finalizer = new FinalizeYieldShieldProductionGovernance();
 
         vm.prank(bootstrapHolder);
         ysToken.delegate(bootstrapHolder);
         vm.warp(block.timestamp + 1);
 
-        (uint256 proposalVotes, uint256 proposalThreshold,) =
+        (uint256 proposalVotes, uint256 proposalThreshold, uint256 quorumVotes,) =
             finalizer.getBootstrapProposalVotes(bootstrapHolder, address(ysToken), address(governor));
         assertGe(proposalVotes, proposalThreshold, "finalizer should only proceed once past votes are live");
+        assertGe(proposalVotes, quorumVotes, "finalizer should only proceed once quorum votes are live");
 
         bytes32 adminRole = timelock.DEFAULT_ADMIN_ROLE();
         vm.prank(bootstrapHolder);
         timelock.renounceRole(adminRole, bootstrapHolder);
 
         assertFalse(timelock.hasRole(adminRole, bootstrapHolder));
+    }
+
+    function test_ProductionBootstrap_FinalizerDetectsBelowQuorumVotingPower() public {
+        (YSToken ysToken,, YSGovernor governor) = _deployGovernanceWithBootstrapAdmin();
+        FinalizeYieldShieldProductionGovernance finalizer = new FinalizeYieldShieldProductionGovernance();
+
+        vm.startPrank(bootstrapHolder);
+        ysToken.burn(ysToken.INITIAL_SUPPLY() - governor.proposalThreshold());
+        ysToken.delegate(bootstrapHolder);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1);
+
+        (uint256 proposalVotes, uint256 proposalThreshold, uint256 quorumVotes,) =
+            finalizer.getBootstrapProposalVotes(bootstrapHolder, address(ysToken), address(governor));
+
+        assertGe(proposalVotes, proposalThreshold, "bootstrap holder can still propose");
+        assertLt(proposalVotes, quorumVotes, "bootstrap holder cannot meet quorum");
     }
 
     function test_ProductionProtocol_TransfersOwnershipToTimelock() public {
@@ -107,6 +125,22 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ysToken = new YSToken(bootstrapHolder);
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
 
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));
+        timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(governor));
+        timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
+    }
+
+    function _deployGovernanceWithBootstrapAdmin()
+        internal
+        returns (YSToken ysToken, TimelockController timelock, YSGovernor governor)
+    {
+        address[] memory emptyAccounts = new address[](0);
+        timelock = new TimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer);
+        ysToken = new YSToken(bootstrapHolder);
+        governor = new YSGovernor(IVotes(address(ysToken)), timelock);
+
+        timelock.grantRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder);
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));
         timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(governor));

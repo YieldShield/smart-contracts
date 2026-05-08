@@ -15,13 +15,16 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 contract FinalizeYieldShieldProductionGovernance is ScaffoldETHDeploy {
     error BootstrapClockNotAdvanced(uint48 currentTimepoint);
     error BootstrapHolderVotesBelowThreshold(uint256 votes, uint256 threshold);
+    error BootstrapHolderVotesBelowQuorum(uint256 votes, uint256 quorum);
     error BootstrapHolderMissingAdmin(address bootstrapHolder);
     error BootstrapFinalizerMustBeHolder(address broadcaster, address bootstrapHolder);
+    error GovernorMissingTimelockRole(bytes32 role, address governor);
+    error TimelockMissingSelfAdmin(address timelock);
 
     function getBootstrapProposalVotes(address bootstrapHolder, address ysTokenAddr, address governorAddr)
         public
         view
-        returns (uint256 proposalVotes, uint256 proposalThreshold, uint48 proposalTimepoint)
+        returns (uint256 proposalVotes, uint256 proposalThreshold, uint256 quorumVotes, uint48 proposalTimepoint)
     {
         YSToken ysToken = YSToken(ysTokenAddr);
         YSGovernor governor = YSGovernor(payable(governorAddr));
@@ -34,6 +37,7 @@ contract FinalizeYieldShieldProductionGovernance is ScaffoldETHDeploy {
 
         proposalTimepoint = currentTimepoint - 1;
         proposalVotes = ysToken.getPastVotes(bootstrapHolder, proposalTimepoint);
+        quorumVotes = governor.quorum(proposalTimepoint);
     }
 
     function run() external ScaffoldEthDeployerRunner {
@@ -46,20 +50,30 @@ contract FinalizeYieldShieldProductionGovernance is ScaffoldETHDeploy {
         address payable governorAddr = payable(vm.envAddress("YS_GOVERNOR_ADDRESS"));
         address timelockAddr = vm.envAddress("YS_TIMELOCK_ADDRESS");
 
-        (uint256 bootstrapProposalVotes, uint256 proposalThreshold, uint48 proposalTimepoint) =
+        (uint256 bootstrapProposalVotes, uint256 proposalThreshold, uint256 quorumVotes, uint48 proposalTimepoint) =
             getBootstrapProposalVotes(bootstrapHolder, ysTokenAddr, governorAddr);
         TimelockController timelock = TimelockController(payable(timelockAddr));
 
         if (bootstrapProposalVotes < proposalThreshold) {
             revert BootstrapHolderVotesBelowThreshold(bootstrapProposalVotes, proposalThreshold);
         }
+        if (bootstrapProposalVotes < quorumVotes) {
+            revert BootstrapHolderVotesBelowQuorum(bootstrapProposalVotes, quorumVotes);
+        }
         if (!timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder)) {
             revert BootstrapHolderMissingAdmin(bootstrapHolder);
         }
+        if (!timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), timelockAddr)) {
+            revert TimelockMissingSelfAdmin(timelockAddr);
+        }
+        _requireGovernorRole(timelock, timelock.PROPOSER_ROLE(), governorAddr);
+        _requireGovernorRole(timelock, timelock.EXECUTOR_ROLE(), governorAddr);
+        _requireGovernorRole(timelock, timelock.CANCELLER_ROLE(), governorAddr);
 
         console.log("Bootstrap proposal snapshot:", uint256(proposalTimepoint));
         console.log("Bootstrap proposer votes:", bootstrapProposalVotes / 1e18, "YS");
         console.log("Proposal threshold:", proposalThreshold / 1e18, "YS");
+        console.log("Quorum:", quorumVotes / 1e18, "YS");
         console.log("Renouncing bootstrap timelock admin for:", bootstrapHolder);
 
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder);
@@ -68,5 +82,11 @@ contract FinalizeYieldShieldProductionGovernance is ScaffoldETHDeploy {
         deployments.push(Deployment("YSToken", ysTokenAddr));
         deployments.push(Deployment("TimelockController", timelockAddr));
         deployments.push(Deployment("YSGovernor", governorAddr));
+    }
+
+    function _requireGovernorRole(TimelockController timelock, bytes32 role, address governorAddr) internal view {
+        if (!timelock.hasRole(role, governorAddr)) {
+            revert GovernorMissingTimelockRole(role, governorAddr);
+        }
     }
 }
