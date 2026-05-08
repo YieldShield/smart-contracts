@@ -6,11 +6,68 @@ import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
-import { MockOracle } from "../contracts/mocks/MockOracle.sol";
+import { IPriceOracle } from "../contracts/interfaces/IPriceOracle.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+
+contract ShieldActivationLossOracle is IPriceOracle {
+    using Math for uint256;
+
+    mapping(address => uint256) internal prices;
+    mapping(address => bool) internal priceIsSet;
+
+    address public shieldedToken;
+    bool public shieldedCircuitBreakerReverts;
+
+    error ShieldedCircuitBreakerUnavailable(address token);
+
+    function setShieldedToken(address token) external {
+        shieldedToken = token;
+    }
+
+    function setShieldedCircuitBreakerReverts(bool shouldRevert) external {
+        shieldedCircuitBreakerReverts = shouldRevert;
+    }
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+        priceIsSet[token] = true;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        return _price(token);
+    }
+
+    function getValue(address token, uint256 amount) external view returns (uint256) {
+        return amount.mulDiv(_price(token), 1e18);
+    }
+
+    function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB) external view returns (uint256) {
+        return amountA.mulDiv(_price(tokenA), _price(tokenB));
+    }
+
+    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
+        if (token == shieldedToken && shieldedCircuitBreakerReverts) {
+            revert ShieldedCircuitBreakerUnavailable(token);
+        }
+        return _price(token);
+    }
+
+    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        returns (uint256)
+    {
+        return amountA.mulDiv(this.getPriceWithCircuitBreaker(tokenA), this.getPriceWithCircuitBreaker(tokenB));
+    }
+
+    function _price(address token) internal view returns (uint256) {
+        return priceIsSet[token] ? prices[token] : 1e8;
+    }
+}
 
 contract SplitRiskPoolShieldActivationRegressionTest is Test {
     SplitRiskPool internal pool;
@@ -20,7 +77,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
     MockERC4626 internal backingToken;
     MockERC20 internal shieldedBaseToken;
     MockERC20 internal backingBaseToken;
-    MockOracle internal oracle;
+    ShieldActivationLossOracle internal oracle;
 
     address internal protector1 = address(0x1001);
     address internal protector2 = address(0x1002);
@@ -33,7 +90,8 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         backingToken = new MockERC4626(backingBaseToken, "Backing Token", "BACK");
         shieldedToken = new MockERC4626(shieldedBaseToken, "Shielded Token", "SHIELD");
 
-        oracle = new MockOracle();
+        oracle = new ShieldActivationLossOracle();
+        oracle.setShieldedToken(address(shieldedToken));
         oracle.setPrice(address(shieldedToken), 1e8);
         oracle.setPrice(address(backingToken), 1e8);
 
@@ -228,5 +286,23 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
 
         (uint256 shieldedPoolBalance,) = pool.getPoolBalances();
         assertEq(shieldedPoolBalance, 0, "claimed forfeiture should clear shielded pool balance");
+    }
+
+    function test_crossAssetShieldActivationDoesNotRequireCurrentShieldedPrice() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setShieldedCircuitBreakerReverts(true);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        assertEq(pool.totalShieldedTokens(), 0, "shielded position should still close");
+        assertEq(pool.totalProtectorTokens(), 0, "stored deposit value should drive backing payout");
+        assertEq(pool.getClaimableCommission(protectorTokenId), 100e18, "forfeiture remains reserved for protector");
     }
 }

@@ -1215,10 +1215,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        // Calculate and accumulate fees (USD-BASED)
-        (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-            _calculateAndAccumulateFees(tokenId);
-        uint256 totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
+        uint256 totalFees;
+        if (preferredAsset == SHIELDED_TOKEN) {
+            // Same-asset withdrawals collect yield fees using the protected current price.
+            (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
+                _calculateAndAccumulateFees(tokenId);
+            totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
+        }
 
         // Burn NFT (position data is deleted by burn, no need to update first)
         IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
@@ -1243,7 +1246,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             _ensureProtectorSharesInitialized();
-            uint256 forfeitedShieldedAmount = pos.amount - totalFees;
+            uint256 forfeitedShieldedAmount = pos.amount;
             _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
 
             uint256 uwPrice = _getProtectedBackingPrice();
