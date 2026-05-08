@@ -397,10 +397,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         view
         returns (uint256)
     {
-        uint256 primaryPrice =
-            IOracleFeed(primaryFeed).getPrice(token).normalize(IOracleFeed(primaryFeed).decimals(), ConstantsLib.USD_DECIMALS);
-        uint256 backupPrice =
-            IOracleFeed(backupFeed).getPrice(token).normalize(IOracleFeed(backupFeed).decimals(), ConstantsLib.USD_DECIMALS);
+        uint256 primaryPrice = IOracleFeed(primaryFeed).getPrice(token)
+            .normalize(IOracleFeed(primaryFeed).decimals(), ConstantsLib.USD_DECIMALS);
+        uint256 backupPrice = IOracleFeed(backupFeed).getPrice(token)
+            .normalize(IOracleFeed(backupFeed).decimals(), ConstantsLib.USD_DECIMALS);
         return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
     }
 
