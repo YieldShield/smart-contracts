@@ -816,12 +816,17 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (feed == address(0)) {
             return false;
         }
+        // staticcall to a no-code address succeeds with empty returndata, which would
+        // falsely register an EOA as supporting the circuit breaker. Require code.
+        if (feed.code.length == 0) {
+            return false;
+        }
 
         (bool success, bytes memory data) =
             feed.staticcall(abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (token)));
 
         if (success) {
-            return true;
+            return data.length != 0;
         }
 
         return data.length != 0;
