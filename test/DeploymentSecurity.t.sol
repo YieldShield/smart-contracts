@@ -119,6 +119,35 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(erc4626OracleFeed.owner(), address(timelock));
     }
 
+    function test_LegacySepoliaTimelockAdmin_RemediationClearsOpenRolesAndDeployerAdmin() public {
+        address[] memory openAccounts = new address[](1);
+        openAccounts[0] = address(0);
+        TimelockController timelock = new TimelockController(120, openAccounts, openAccounts, deployer);
+        address governor = address(0xC0FFEE);
+
+        timelock.grantRole(timelock.PROPOSER_ROLE(), governor);
+        timelock.grantRole(timelock.EXECUTOR_ROLE(), governor);
+        timelock.grantRole(timelock.CANCELLER_ROLE(), governor);
+
+        assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
+        assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(timelock)));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(0)));
+        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(0)));
+
+        timelock.revokeRole(timelock.PROPOSER_ROLE(), address(0));
+        timelock.revokeRole(timelock.EXECUTOR_ROLE(), address(0));
+        timelock.revokeRole(timelock.CANCELLER_ROLE(), address(0));
+        timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
+
+        assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(0)));
+        assertFalse(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(0)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(0)));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), governor));
+        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), governor));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), governor));
+    }
+
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {
         address[] memory emptyAccounts = new address[](0);
         timelock = new TimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer);
