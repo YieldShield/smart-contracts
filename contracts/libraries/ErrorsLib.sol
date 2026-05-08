@@ -134,4 +134,8 @@ library ErrorsLib {
     // ============ Oracle Errors ============
     /// @notice Thrown when an oracle returns a zero or invalid price
     error InvalidOraclePrice();
+    /// @notice Thrown when a shielded deposit is attempted while the token's dual-feed
+    ///         oracle has a pending challenge — the active feed is suspect and would
+    ///         lock in an exploitable `valueAtDeposit`.
+    error OraclePendingChallenge(address token);
 }

@@ -344,6 +344,20 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
+    /// @dev Reverts if `token` has a pending dual-feed challenge on the configured
+    ///      `CompositeOracle`. During the challenge timelock, `getPriceWithCircuitBreaker`
+    ///      still returns the (suspect) primary feed; deposits that lock USD value at this
+    ///      price would let an attacker realise the deviation via cross-asset withdraw.
+    ///      Reads via try/catch so non-CompositeOracle price oracles (which lack dual-feed
+    ///      semantics) are treated as challenge-free.
+    function _requireNoOraclePendingChallenge(address token) internal view {
+        try ICompositeOracle(poolConfig.priceOracle).getTokenDualFeedStatus(token) returns (
+            bool, address, address, bool, bool isChallengePending, uint256
+        ) {
+            if (isChallengePending) revert ErrorsLib.OraclePendingChallenge(token);
+        } catch { }
+    }
+
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
     function _getShieldedSpotPrice() internal view returns (uint256 price) {
         price = IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN);
@@ -1141,6 +1155,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositShielded");
         }
         if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
+
+        // Block deposits while the shielded oracle's dual-feed challenge is pending.
+        // The active feed is suspect for up to `challengeDurationSec`; locking
+        // `valueAtDeposit` from that feed would let a depositor realise the
+        // deviation via cross-asset withdraw at protectors' expense.
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
         // Transfer asset from depositor (balance-delta for fee-on-transfer tokens)
         uint256 received = _transferAndGetReceived(asset, depositAmount);
