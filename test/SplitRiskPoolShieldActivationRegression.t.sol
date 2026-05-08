@@ -196,15 +196,37 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
 
         assertEq(pool.getProtectorPositionAmount(protectorTokenId), 0, "wiped NFT should have no backing claim");
-        assertEq(
-            pool.getClaimableCommission(protectorTokenId),
-            claimableBeforeWipe,
-            "earned commissions should remain claimable"
-        );
+        uint256 claimableAfterWipe = pool.getClaimableCommission(protectorTokenId);
+        assertGt(claimableAfterWipe, claimableBeforeWipe, "forfeited shielded assets should be claimable too");
 
         uint256 balanceBefore = shieldedToken.balanceOf(protector1);
         vm.prank(protector1);
         pool.claimCommission(protectorTokenId);
-        assertEq(shieldedToken.balanceOf(protector1) - balanceBefore, claimableBeforeWipe);
+        assertEq(shieldedToken.balanceOf(protector1) - balanceBefore, claimableAfterWipe);
+    }
+
+    function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalShieldedTokens(), 0, "shielded position should be closed");
+        assertEq(pool.getReservedFees(), 100e18, "forfeited shielded assets should be reserved");
+        assertEq(pool.getClaimableCommission(protectorTokenId), 100e18, "protector should receive forfeiture");
+
+        uint256 balanceBefore = shieldedToken.balanceOf(protector1);
+        vm.prank(protector1);
+        pool.claimCommission(protectorTokenId);
+
+        assertEq(shieldedToken.balanceOf(protector1) - balanceBefore, 100e18);
+        assertEq(pool.getReservedFees(), 0, "all reserved forfeiture should be claimed");
+
+        (uint256 shieldedPoolBalance,) = pool.getPoolBalances();
+        assertEq(shieldedPoolBalance, 0, "claimed forfeiture should clear shielded pool balance");
     }
 }

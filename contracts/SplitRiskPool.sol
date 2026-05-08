@@ -739,6 +739,36 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         scaledProtocolFee = Math.mulDiv(protocolFeeAmount, maxTotalFees, totalFees);
     }
 
+    function _accumulateProtectorReward(uint256 rewardAmount, uint256 maxSafeAccumulation)
+        internal
+        returns (uint256 accumulatedReward, uint256 redirectedProtocolAmount)
+    {
+        if (rewardAmount == 0) {
+            return (0, 0);
+        }
+
+        uint256 currentTotalShares = _currentTotalProtectorShares();
+        if (currentTotalShares == 0 || totalProtectorTokens == 0) {
+            redirectedProtocolAmount = rewardAmount;
+            if (accumulatedProtocolFee + redirectedProtocolAmount > maxSafeAccumulation) {
+                redirectedProtocolAmount =
+                    accumulatedProtocolFee < maxSafeAccumulation ? maxSafeAccumulation - accumulatedProtocolFee : 0;
+            }
+            accumulatedProtocolFee += redirectedProtocolAmount;
+            return (0, redirectedProtocolAmount);
+        }
+
+        if (accumulatedCommissions + rewardAmount > maxSafeAccumulation) {
+            emit EventsLib.FeeDropped("commission", rewardAmount, accumulatedCommissions);
+            return (0, 0);
+        }
+
+        rewardPerShareAccumulated += (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
+        accumulatedCommissions += rewardAmount;
+        totalCommissionsEverAccumulated += rewardAmount;
+        return (rewardAmount, 0);
+    }
+
     /**
      * @dev Calculate and accumulate fees for a shielded position (USD-BASED for yield calculation)
      * @param tokenId The shield NFT token ID
@@ -811,39 +841,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Accumulate commissions in native shielded token units via rewards-per-share.
         // If no effective protector capital exists, redirect commissions to protocol fee.
-        uint256 currentTotalShares = _currentTotalProtectorShares();
-        // slither-disable-next-line incorrect-equality — empty-state guard, no effective protector capital = redirect
-        if (currentTotalShares == 0 || totalProtectorTokens == 0) {
-            // Redirect commission to protocol fee when no protectors exist
-            // This prevents commissions from becoming permanently stranded
-            uint256 redirectedAmount = commissionAmount;
-
-            // Add to protocol fee (with overflow protection)
-            // Note: accumulatedProtocolFee already includes protocolFeeAmount at this point
-            if (accumulatedProtocolFee + redirectedAmount > maxSafeAccumulation) {
-                // If overflow would occur, cap the redirected amount
-                if (accumulatedProtocolFee < maxSafeAccumulation) {
-                    redirectedAmount = maxSafeAccumulation - accumulatedProtocolFee;
-                } else {
-                    redirectedAmount = 0;
-                }
-            }
-            accumulatedProtocolFee += redirectedAmount;
-            protocolFeeAmount += redirectedAmount;
-
-            // Don't accumulate as commission since there are no protectors to claim it
-            commissionAmount = 0;
-        } else {
-            // Normal commission accumulation when protectors exist
-            if (accumulatedCommissions + commissionAmount > maxSafeAccumulation) {
-                emit EventsLib.FeeDropped("commission", commissionAmount, accumulatedCommissions);
-                commissionAmount = 0;
-            }
-            // Update rewards-per-share accumulator (MasterChef pattern)
-            rewardPerShareAccumulated += (commissionAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
-            accumulatedCommissions += commissionAmount;
-            totalCommissionsEverAccumulated += commissionAmount;
-        }
+        uint256 redirectedCommission;
+        (commissionAmount, redirectedCommission) = _accumulateProtectorReward(commissionAmount, maxSafeAccumulation);
+        protocolFeeAmount += redirectedCommission;
 
         // Recalculate totalFees after potential commission redirect
         totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
@@ -1243,6 +1243,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             _ensureProtectorSharesInitialized();
+            uint256 forfeitedShieldedAmount = pos.amount - totalFees;
+            _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
+
             uint256 uwPrice = _getProtectedBackingPrice();
             payoutAmount = Math.mulDiv(pos.valueAtDeposit, backingTokenScale, uwPrice);
 
