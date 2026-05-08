@@ -91,6 +91,7 @@ interface ISplitRiskPool {
     function getReservedFees() external view returns (uint256);
     function getWithdrawableBalance() external view returns (uint256);
     function getClaimableCommission(uint256 tokenId) external view returns (uint256);
+    function getProtectorPositionAmount(uint256 tokenId) external view returns (uint256);
     function getProtectorDepositInfo(uint256 tokenId)
         external
         view

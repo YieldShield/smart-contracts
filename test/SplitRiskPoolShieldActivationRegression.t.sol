@@ -218,6 +218,29 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         );
     }
 
+    function test_protectorReceiptPositionAmountReflectsSocializedLoss() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId1 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(protector2);
+        uint256 protectorTokenId2 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        IProtectorReceiptNFT.ProtectorPosition memory directPosition1 = protectorNFT.getPosition(protectorTokenId1);
+        IProtectorReceiptNFT.ProtectorPosition memory directPosition2 = protectorNFT.getPosition(protectorTokenId2);
+
+        assertEq(directPosition1.amount, 50e18, "NFT view should report current socialized claim");
+        assertEq(directPosition2.amount, 50e18, "NFT view should report current socialized claim");
+        assertEq(
+            directPosition1.depositTime, directPosition2.depositTime, "metadata should still come from NFT storage"
+        );
+    }
+
     function test_crossAssetShieldActivationWipesStaleSharesBeforeFutureDeposits() public {
         vm.prank(protector1);
         uint256 wipedProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);

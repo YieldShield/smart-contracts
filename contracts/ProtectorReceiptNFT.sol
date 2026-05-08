@@ -8,6 +8,10 @@ import { IProtectorReceiptNFT } from "./interfaces/IProtectorReceiptNFT.sol";
 import { ErrorsLib } from "./libraries/ErrorsLib.sol";
 import { EventsLib } from "./libraries/EventsLib.sol";
 
+interface IProtectorPositionAmountView {
+    function getProtectorPositionAmount(uint256 tokenId) external view returns (uint256);
+}
+
 /// @title ProtectorReceiptNFT
 /// @notice ERC-721 NFT representing a protector position in a YieldShield pool
 /// @dev Extends OpenZeppelin ERC721 for security and standard compliance
@@ -61,7 +65,16 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
 
     /// @notice Get position data for a token ID
     function getPosition(uint256 tokenId) external view returns (ProtectorPosition memory) {
-        return positions[tokenId];
+        ProtectorPosition memory position = positions[tokenId];
+        if (msg.sender == pool || pool == address(0) || position.amount == 0) {
+            return position;
+        }
+
+        try IProtectorPositionAmountView(pool).getProtectorPositionAmount(tokenId) returns (uint256 currentAmount) {
+            position.amount = currentAmount;
+        } catch { }
+
+        return position;
     }
 
     /// @notice Update amount for a position (only pool can call)
