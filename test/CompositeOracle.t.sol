@@ -189,13 +189,18 @@ contract CompositeOracleTest is Test {
         compositeOracle.getPriceWithCircuitBreaker(address(tokenA));
     }
 
-    function testPriceWithCircuitBreaker_FallsBackForFeedWithoutSupport() public {
+    function testPriceWithCircuitBreaker_RevertsForFeedWithoutSupport() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(tokenA), 2e8);
 
         compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
 
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(tokenA)), 2e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(noCircuitBreakerFeed)
+            )
+        );
+        compositeOracle.getPriceWithCircuitBreaker(address(tokenA));
     }
 
     function testPriceWithStrictCircuitBreaker() public {

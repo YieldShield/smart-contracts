@@ -107,15 +107,15 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         );
     }
 
-    function testCreatePoolAllowsCompositeFallbackWhenStrictPolicyDisabled() public {
+    function testCreatePoolRevertsWhenCompositeBackingFeedLacksCircuitBreaker() public {
         CompositeOracle fallbackCompositeOracle = _deployFallbackCompositeOracle();
         factory.setCompositeOracle(address(fallbackCompositeOracle));
 
-        SplitRiskPool createdPool = _createPool();
-        (,,,,,,,,, address configuredOracle) = createdPool.poolConfig();
-
-        assertEq(configuredOracle, address(fallbackCompositeOracle));
-        assertFalse(createdPool.requiresStrictProtectedBackingPrice());
+        _approveCreationBond();
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.createPool(
+            address(shieldedToken), "SHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
+        );
     }
 
     function testSetTokenRequiresStrictProtectedPriceRevertsWhenCurrentOracleUsesFallbackOnly() public {

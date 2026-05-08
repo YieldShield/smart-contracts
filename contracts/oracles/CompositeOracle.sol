@@ -607,7 +607,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return (true, abi.decode(data, (uint256)).normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
         }
 
-        // Missing function / no fallback => compatibility fallback to raw pricing.
+        // Missing function / no fallback.
         if (data.length == 0) {
             return (false, 0);
         }
@@ -697,8 +697,8 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @notice Get price with circuit breaker protection
-    /// @dev Delegates to the active feed's getPriceWithCircuitBreaker() if supported (e.g., PythOracle
-    ///      spot-vs-EMA check). Falls back to regular getPrice() for feeds without circuit breaker.
+    /// @dev Delegates to the active feed's getPriceWithCircuitBreaker() and fails closed
+    ///      when the feed does not expose a protected pricing path.
     /// @param token The token address
     /// @return price The price in USD with 8 decimals
     function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
@@ -708,14 +708,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
 
-        // Use feed-level circuit breaker when supported. Only downgrade to raw pricing when the feed
-        // does not expose circuit-breaker functionality at all.
         (bool supported, uint256 price) = _tryGetCircuitBreakerPrice(activeFeed, token);
         if (supported) {
             return price;
         }
 
-        return _getPrice(token);
+        revert CircuitBreakerNotSupported(token, activeFeed);
     }
 
     /// @inheritdoc ICompositeOracle
