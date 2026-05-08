@@ -22,6 +22,8 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint256 shareUnit;
         uint256 underlyingUnit;
         uint256 minimumSupply;
+        uint256 referenceAssetsPerShare;
+        uint256 maxSharePriceDeviationBps;
     }
 
     /// @notice Underlying price oracle for USD conversion
@@ -38,11 +40,25 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @dev The actual threshold is scaled per vault using its native share decimals.
     uint256 public constant MIN_VAULT_SHARE_COUNT = 1000;
 
+    /// @notice Default maximum share-rate movement before pricing is rejected
+    uint256 public constant DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS = 500;
+
+    /// @notice Hard cap for per-vault share-rate deviation settings
+    uint256 public constant MAX_SHARE_PRICE_DEVIATION_BPS = 2000;
+
     /// @notice Emitted when a vault is registered
     event VaultRegistered(address indexed vault, address indexed underlying);
 
     /// @notice Emitted when a vault is removed
     event VaultRemoved(address indexed vault);
+
+    /// @notice Emitted when the share-price reference is refreshed
+    event VaultSharePriceReferenceUpdated(
+        address indexed vault, uint256 oldReferenceAssetsPerShare, uint256 newReferenceAssetsPerShare
+    );
+
+    /// @notice Emitted when the share-price deviation bound is updated
+    event VaultSharePriceDeviationUpdated(address indexed vault, uint256 oldDeviationBps, uint256 newDeviationBps);
 
     /// @notice Emitted when underlying price oracle is updated
     event UnderlyingPriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
@@ -70,6 +86,14 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @param totalSupply Current total supply of vault shares
     /// @param required Minimum required total supply
     error InsufficientVaultLiquidity(address vault, uint256 totalSupply, uint256 required);
+
+    /// @notice Custom error for invalid share-price deviation bounds
+    error InvalidSharePriceDeviation(uint256 deviationBps);
+
+    /// @notice Custom error when the vault share rate moves too far from the configured reference
+    error SharePriceDeviationTooHigh(
+        address vault, uint256 assetsPerShare, uint256 referenceAssetsPerShare, uint256 maxDeviationBps
+    );
 
     /// @notice Custom error for stale underlying price
     /// @param vault The vault address
@@ -121,15 +145,42 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint8 shareDecimals = _getTokenDecimals(vault);
         uint8 underlyingDecimals = _getTokenDecimals(underlying);
         uint256 shareUnit = _getScaleFactor(vault, shareDecimals);
+        uint256 referenceAssetsPerShare = IERC4626(vault).convertToAssets(shareUnit);
 
         vaultToUnderlying[vault] = underlying;
         vaultConfigs[vault] = VaultConfig({
             underlying: underlying,
             shareUnit: shareUnit,
             underlyingUnit: _getScaleFactor(underlying, underlyingDecimals),
-            minimumSupply: _getMinimumVaultSupply(vault, shareDecimals, shareUnit)
+            minimumSupply: _getMinimumVaultSupply(vault, shareDecimals, shareUnit),
+            referenceAssetsPerShare: referenceAssetsPerShare,
+            maxSharePriceDeviationBps: DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS
         });
         emit VaultRegistered(vault, underlying);
+    }
+
+    /// @notice Refresh the vault share-rate reference to the current ERC4626 conversion rate
+    /// @param vault Address of the registered vault
+    function refreshVaultSharePriceReference(address vault) external onlyOwner {
+        VaultConfig storage config = _getVaultConfigStorage(vault);
+        uint256 newReference = IERC4626(vault).convertToAssets(config.shareUnit);
+        uint256 oldReference = config.referenceAssetsPerShare;
+        config.referenceAssetsPerShare = newReference;
+        emit VaultSharePriceReferenceUpdated(vault, oldReference, newReference);
+    }
+
+    /// @notice Update the maximum allowed share-rate deviation for a registered vault
+    /// @param vault Address of the registered vault
+    /// @param maxDeviationBps Maximum deviation in basis points
+    function setVaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external onlyOwner {
+        if (maxDeviationBps == 0 || maxDeviationBps > MAX_SHARE_PRICE_DEVIATION_BPS) {
+            revert InvalidSharePriceDeviation(maxDeviationBps);
+        }
+
+        VaultConfig storage config = _getVaultConfigStorage(vault);
+        uint256 oldDeviation = config.maxSharePriceDeviationBps;
+        config.maxSharePriceDeviationBps = maxDeviationBps;
+        emit VaultSharePriceDeviationUpdated(vault, oldDeviation, maxDeviationBps);
     }
 
     /// @notice Remove a vault from the feed
@@ -151,6 +202,17 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @dev Includes share inflation attack protection via minimum supply check.
     ///      Checks underlying price staleness and reverts if stale.
     function getPrice(address vault) external view override returns (uint256) {
+        return _getValidatedPrice(vault);
+    }
+
+    /// @notice Returns the price of vault shares using the protected ERC4626 share-rate path
+    /// @param vault The vault address
+    /// @return price The price in USD with 8 decimals
+    function getPriceWithCircuitBreaker(address vault) external view returns (uint256) {
+        return _getValidatedPrice(vault);
+    }
+
+    function _getValidatedPrice(address vault) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 
         (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
@@ -214,6 +276,13 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
     }
 
+    function _getVaultConfigStorage(address vault) internal view returns (VaultConfig storage config) {
+        config = vaultConfigs[vault];
+        if (config.underlying == address(0)) {
+            revert VaultNotRegistered(vault);
+        }
+    }
+
     function _getPriceFromConfig(address vault, VaultConfig memory config) internal view returns (uint256) {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         if (totalSupply < config.minimumSupply) {
@@ -221,11 +290,37 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
+        _validateSharePriceDeviation(vault, assetsPerShare, config);
         uint256 underlyingPrice = underlyingPriceOracle.getPrice(config.underlying);
         uint8 priceDecimals = underlyingPriceOracle.decimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
+    }
+
+    function _validateSharePriceDeviation(address vault, uint256 assetsPerShare, VaultConfig memory config)
+        internal
+        pure
+    {
+        uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
+        if (referenceAssetsPerShare == 0) {
+            revert SharePriceDeviationTooHigh(
+                vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
+            );
+        }
+
+        uint256 deviationAmount =
+            Math.mulDiv(referenceAssetsPerShare, config.maxSharePriceDeviationBps, ConstantsLib.BASIS_POINT_SCALE);
+        uint256 minAssetsPerShare = referenceAssetsPerShare > deviationAmount
+            ? referenceAssetsPerShare - deviationAmount
+            : 0;
+        uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
+
+        if (assetsPerShare < minAssetsPerShare || assetsPerShare > maxAssetsPerShare) {
+            revert SharePriceDeviationTooHigh(
+                vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
+            );
+        }
     }
 
     function _getTokenDecimals(address token) internal view returns (uint8 tokenDecimals) {

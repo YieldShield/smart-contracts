@@ -22,6 +22,9 @@ contract ERC4626OracleFeedTest is Test {
     event VaultRegistered(address indexed vault, address indexed underlying);
     event VaultRemoved(address indexed vault);
     event UnderlyingPriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
+    event VaultSharePriceReferenceUpdated(
+        address indexed vault, uint256 oldReferenceAssetsPerShare, uint256 newReferenceAssetsPerShare
+    );
 
     function setUp() public {
         // Deploy underlying asset and vault
@@ -116,6 +119,10 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(price, UNDERLYING_PRICE);
     }
 
+    function test_GetPriceWithCircuitBreaker_ReturnsCorrectNAV() public view {
+        assertEq(erc4626Feed.getPriceWithCircuitBreaker(address(vault)), UNDERLYING_PRICE);
+    }
+
     function test_GetPrice_CalculatesWithDeposit() public {
         // Deposit assets to properly initialize the vault
         underlyingAsset.mint(address(this), 1000e18);
@@ -139,6 +146,35 @@ contract ERC4626OracleFeedTest is Test {
         // Should reflect new underlying price
         // For 1:1 vault: price should equal underlying price
         assertEq(vaultPrice, newPrice);
+    }
+
+    function test_GetPrice_RevertsWhenShareRateJumpsAfterRegistration() public {
+        uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.getPrice(address(vault));
+    }
+
+    function test_RefreshVaultSharePriceReference_AllowsReviewedShareRate() public {
+        uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
+        underlyingAsset.mint(address(vault), donation);
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+
+        vm.expectEmit(true, false, false, true);
+        emit VaultSharePriceReferenceUpdated(address(vault), 1e18, assetsPerShare);
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+
+        assertApproxEqAbs(erc4626Feed.getPrice(address(vault)), 2e8, 1);
     }
 
     function test_GetPrice_RevertsOnUnregisteredVault() public {
