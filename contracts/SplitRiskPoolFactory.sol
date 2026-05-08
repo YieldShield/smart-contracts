@@ -6,6 +6,7 @@ import { ISplitRiskPoolFactory } from "./interfaces/ISplitRiskPoolFactory.sol";
 import { ISplitRiskPool } from "./interfaces/ISplitRiskPool.sol";
 import { ICompositeOracle } from "./interfaces/ICompositeOracle.sol";
 import { TokenWhitelistLib } from "./libraries/TokenWhitelistLib.sol";
+import { ConstantsLib } from "./libraries/ConstantsLib.sol";
 import { ErrorsLib } from "./libraries/ErrorsLib.sol";
 import { EventsLib } from "./libraries/EventsLib.sol";
 import { PoolValidationLib } from "./libraries/PoolValidationLib.sol";
@@ -493,6 +494,7 @@ contract SplitRiskPoolFactory is
      */
     function updateMinimumCollateral(address token, uint256 newMinCollateralRatioBp) external onlyGovernance {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
+        _validateMinCollateralRatioBp(newMinCollateralRatioBp);
 
         uint256 oldMinCollateral = tokenInfo[token].minCollateralRatioBp;
         tokenInfo[token].minCollateralRatioBp = newMinCollateralRatioBp;
@@ -578,6 +580,19 @@ contract SplitRiskPoolFactory is
             revert ErrorsLib.InvalidTokenAddress();
         }
         if (tokenDecimals > 77) revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
+    }
+
+    /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for
+    ///      "no per-token override" (consumers gate on `> 0` in PoolValidationLib).
+    ///      Non-zero values must lie within the global pool-creation collateral bounds;
+    ///      a value below the global minimum would be silently shadowed by it, and a
+    ///      value above the global maximum would lock out all pool creation for the token.
+    function _validateMinCollateralRatioBp(uint256 minCollateralRatioBp) internal pure {
+        if (minCollateralRatioBp == 0) return;
+        if (
+            minCollateralRatioBp < ConstantsLib.MIN_COLLATERAL_RATIO
+                || minCollateralRatioBp > ConstantsLib.MAX_COLLATERAL_RATIO
+        ) revert ErrorsLib.InvalidCollateralRatio();
     }
 
     function _collectAndValidateCreationBond(address token, uint256 creationBondAmount)
@@ -667,6 +682,7 @@ contract SplitRiskPoolFactory is
         uint256 minCollateralRatioBp
     ) internal {
         if (primaryOracleFeed == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _validateMinCollateralRatioBp(minCollateralRatioBp);
         _validateTokenDecimals(token);
         TokenWhitelistLib.addToken(whitelistedTokens, isWhitelisted, token);
 
