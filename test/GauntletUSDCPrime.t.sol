@@ -259,6 +259,7 @@ contract GauntletUSDCPrimeTest is Test {
 
         // Wait for challenge duration
         vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
 
         // Update market price to match NAV (simulating arbitrage)
         uint256 navPrice = erc4626Feed.getPrice(address(gtusdc));
@@ -281,6 +282,7 @@ contract GauntletUSDCPrimeTest is Test {
 
         // Wait for challenge duration (deviation persists because market price unchanged)
         vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
 
         // Finalize - should switch to backup since deviation persists
         compositeOracle.finalizeChallenge(address(gtusdc));
