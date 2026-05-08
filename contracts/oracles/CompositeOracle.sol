@@ -440,6 +440,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return;
         }
 
+        // Once activated, the backup becomes the feed used by protected pool valuation paths.
+        _requireCircuitBreakerSupport(token, config.backupFeed);
+
         if (strictCircuitBreakerRequired[token]) {
             _validateStrictCircuitBreakerConfig(token, config.primaryFeed, config.backupFeed, true);
         }
