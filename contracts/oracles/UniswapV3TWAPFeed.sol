@@ -244,25 +244,16 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         // price = 1.0001^tick, expressed as token1 per token0 (Uniswap convention)
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
 
-        // Convert sqrtPriceX96 to price in 18 decimals
-        // price = (sqrtPriceX96^2 / 2^192) scaled to 1e18
-        uint256 priceX192 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 192);
-        uint256 price = FullMath.mulDiv(priceX192, 1e18, 1);
-
-        // If token is token1, invert the price
-        if (!_isToken0) {
-            // L-3 FIX: Prevent division by zero when price rounds to 0
-            // For extreme negative ticks, priceX192 can round to 0
-            // In this case, use direct calculation from sqrtPriceX96 for better precision
-            if (price == 0) {
-                // Calculate inverted price directly: 1e36 / (sqrtPriceX96^2 / 2^192)
-                // = 1e36 * 2^192 / sqrtPriceX96^2
-                price = FullMath.mulDiv(1e36, 1 << 192, uint256(sqrtPriceX96) * uint256(sqrtPriceX96));
-            } else {
-                price = FullMath.mulDiv(1e36, 1, price);
-            }
+        if (sqrtPriceX96 <= type(uint128).max) {
+            uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+            return _isToken0
+                ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192)
+                : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
         }
 
-        return price;
+        uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
+        return _isToken0
+            ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128)
+            : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
     }
 }

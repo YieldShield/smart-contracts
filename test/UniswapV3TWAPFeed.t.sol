@@ -29,19 +29,18 @@ contract UniswapV3TWAPFeedTest is Test {
 
     function _expectedPriceFromTick(int24 tick, bool isToken0) internal pure returns (uint256) {
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
-        uint256 priceX192 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 192);
-        uint256 price = FullMath.mulDiv(priceX192, 1e18, 1);
 
-        if (!isToken0) {
-            // L-3 FIX: Prevent division by zero when price rounds to 0
-            if (price == 0) {
-                price = FullMath.mulDiv(1e36, 1 << 192, uint256(sqrtPriceX96) * uint256(sqrtPriceX96));
-            } else {
-                price = FullMath.mulDiv(1e36, 1, price);
-            }
+        if (sqrtPriceX96 <= type(uint128).max) {
+            uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+            return isToken0
+                ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192)
+                : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
         }
 
-        return price;
+        uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
+        return isToken0
+            ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128)
+            : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
     }
 
     function test_priceFromTick_MatchesTickMath_PositiveTick() public view {
@@ -56,5 +55,17 @@ contract UniswapV3TWAPFeedTest is Test {
         uint256 expected = _expectedPriceFromTick(tick, false);
         uint256 actual = harness.priceFromTick(tick, false);
         assertEq(actual, expected, "price should match TickMath for token1");
+    }
+
+    function test_priceFromTick_PreservesFractionalPriceBeforeScaling() public view {
+        int24 tick = 4055;
+
+        uint256 token0Price = harness.priceFromTick(tick, true);
+        uint256 token1Price = harness.priceFromTick(tick, false);
+
+        assertEq(token0Price, _expectedPriceFromTick(tick, true), "token0 price should keep sub-unit precision");
+        assertEq(token1Price, _expectedPriceFromTick(tick, false), "token1 inverse should keep sub-unit precision");
+        assertGt(token0Price, 1.4e18, "old math truncated token0 price to 1e18");
+        assertLt(token1Price, 0.7e18, "old math truncated token1 inverse to 1e18");
     }
 }
