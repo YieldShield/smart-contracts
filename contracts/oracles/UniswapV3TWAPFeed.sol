@@ -133,7 +133,19 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
             revert InvalidPool(pool);
         }
 
-        // Note: No cardinality pre-check. pool.observe() will revert if TWAP history is insufficient.
+        // Probe `observe` for the current TWAP period so that pools with insufficient
+        // observation cardinality are rejected at registration rather than later
+        // bricking `getPrice`. This isn't a manipulation defence (low-liquidity pools
+        // are still movable over short periods — operators must choose pools with
+        // adequate liquidity for the chosen TWAP period); it just catches grossly
+        // underprovisioned pools.
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = twapPeriod;
+        secondsAgos[1] = 0;
+        try v3Pool.observe(secondsAgos) returns (int56[] memory, uint160[] memory) { }
+        catch {
+            revert InvalidPool(pool);
+        }
 
         tokenPools[token] = pool;
         isToken0[token] = _isToken0;
