@@ -1389,6 +1389,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
         delete feeValueBaselineUsd[tokenId];
+        delete lastClaimRewardsTime[tokenId];
 
         // 4. Update pool totals (TOKEN-BASED)
         // Deduct both withdrawn amount AND fees from totalShieldedTokens
