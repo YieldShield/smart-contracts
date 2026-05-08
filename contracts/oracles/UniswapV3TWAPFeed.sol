@@ -246,14 +246,10 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         if (sqrtPriceX96 <= type(uint128).max) {
             uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-            return _isToken0
-                ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192)
-                : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
+            return _isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
         }
 
         uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
-        return _isToken0
-            ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128)
-            : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
+        return _isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
     }
 }

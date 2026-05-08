@@ -32,15 +32,11 @@ contract UniswapV3TWAPFeedTest is Test {
 
         if (sqrtPriceX96 <= type(uint128).max) {
             uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-            return isToken0
-                ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192)
-                : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
+            return isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
         }
 
         uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
-        return isToken0
-            ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128)
-            : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
+        return isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
     }
 
     function test_priceFromTick_MatchesTickMath_PositiveTick() public view {

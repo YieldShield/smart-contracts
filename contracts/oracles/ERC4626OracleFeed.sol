@@ -311,9 +311,8 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 deviationAmount =
             Math.mulDiv(referenceAssetsPerShare, config.maxSharePriceDeviationBps, ConstantsLib.BASIS_POINT_SCALE);
-        uint256 minAssetsPerShare = referenceAssetsPerShare > deviationAmount
-            ? referenceAssetsPerShare - deviationAmount
-            : 0;
+        uint256 minAssetsPerShare =
+            referenceAssetsPerShare > deviationAmount ? referenceAssetsPerShare - deviationAmount : 0;
         uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
 
         if (assetsPerShare < minAssetsPerShare || assetsPerShare > maxAssetsPerShare) {
