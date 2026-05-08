@@ -322,6 +322,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         delete _tokenOracleType[token];
         _isTokenSupported[token] = false;
 
+        // Clear the strict circuit-breaker requirement when removing the feed; otherwise
+        // re-adding the token with a single feed lacking circuit-breaker support would
+        // revert in `setTokenOracleFeed` against a stale flag.
+        if (strictCircuitBreakerRequired[token]) {
+            strictCircuitBreakerRequired[token] = false;
+            emit StrictCircuitBreakerRequirementUpdated(token, true, false);
+        }
+
         emit TokenOracleFeedRemoved(token);
     }
 
