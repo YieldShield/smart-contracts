@@ -101,6 +101,8 @@ library ErrorsLib {
     error EtherRefundFailed();
     /// @notice Thrown when ETH transfer is not allowed
     error EtherTransferNotAllowed();
+    /// @notice Thrown when a forfeiture or reward cannot be fully reserved
+    error RewardAccumulationIncomplete(uint256 expected, uint256 accumulated, uint256 redirected);
 
     // ============ Unsupported/Not Allowed Errors ============
     /// @notice Thrown when asset is not supported by the pool

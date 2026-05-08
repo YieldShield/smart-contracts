@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
+import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { IPriceOracle } from "../contracts/interfaces/IPriceOracle.sol";
@@ -12,6 +13,7 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
 
 contract ShieldActivationLossOracle is IPriceOracle {
     using Math for uint256;
@@ -70,6 +72,8 @@ contract ShieldActivationLossOracle is IPriceOracle {
 }
 
 contract SplitRiskPoolShieldActivationRegressionTest is Test {
+    using stdStorage for StdStorage;
+
     SplitRiskPool internal pool;
     ShieldReceiptNFT internal shieldNFT;
     ProtectorReceiptNFT internal protectorNFT;
@@ -304,5 +308,25 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(pool.totalShieldedTokens(), 0, "shielded position should still close");
         assertEq(pool.totalProtectorTokens(), 0, "stored deposit value should drive backing payout");
         assertEq(pool.getClaimableCommission(protectorTokenId), 100e18, "forfeiture remains reserved for protector");
+    }
+
+    function test_crossAssetShieldActivationRevertsIfForfeitureCannotBeReserved() public {
+        vm.prank(protector1);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(type(uint128).max);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.RewardAccumulationIncomplete.selector, 100e18, uint256(0), uint256(0))
+        );
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        assertEq(pool.totalShieldedTokens(), 100e18, "failed reservation should leave position accounting intact");
+        assertEq(pool.totalProtectorTokens(), 100e18, "failed reservation should leave backing accounting intact");
     }
 }

@@ -1247,7 +1247,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             _ensureProtectorSharesInitialized();
             uint256 forfeitedShieldedAmount = pos.amount;
-            _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
+            (uint256 accumulatedReward, uint256 redirectedReward) =
+                _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
+            if (accumulatedReward + redirectedReward != forfeitedShieldedAmount) {
+                revert ErrorsLib.RewardAccumulationIncomplete(
+                    forfeitedShieldedAmount, accumulatedReward, redirectedReward
+                );
+            }
 
             uint256 uwPrice = _getProtectedBackingPrice();
             payoutAmount = Math.mulDiv(pos.valueAtDeposit, backingTokenScale, uwPrice);
