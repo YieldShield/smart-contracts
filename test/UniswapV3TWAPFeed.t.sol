@@ -11,8 +11,12 @@ import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 contract UniswapV3TWAPHarness is UniswapV3TWAPFeed {
     constructor(address quoteToken, address quoteOracle) UniswapV3TWAPFeed(1800, quoteToken, quoteOracle) { }
 
-    function priceFromTick(int24 tick, bool isToken0) external pure returns (uint256) {
-        return _getPriceFromTick(tick, isToken0);
+    function priceFromTick(int24 tick, bool isToken0, uint256 tokenScale, uint256 quoteScale)
+        external
+        pure
+        returns (uint256)
+    {
+        return _getPriceFromTick(tick, isToken0, tokenScale, quoteScale);
     }
 }
 
@@ -42,26 +46,46 @@ contract UniswapV3TWAPFeedTest is Test {
     function test_priceFromTick_MatchesTickMath_PositiveTick() public view {
         int24 tick = 20000;
         uint256 expected = _expectedPriceFromTick(tick, true);
-        uint256 actual = harness.priceFromTick(tick, true);
+        uint256 actual = harness.priceFromTick(tick, true, 1e18, 1e18);
         assertEq(actual, expected, "price should match TickMath for token0");
     }
 
     function test_priceFromTick_MatchesTickMath_NegativeTick() public view {
         int24 tick = -20000;
         uint256 expected = _expectedPriceFromTick(tick, false);
-        uint256 actual = harness.priceFromTick(tick, false);
+        uint256 actual = harness.priceFromTick(tick, false, 1e18, 1e18);
         assertEq(actual, expected, "price should match TickMath for token1");
     }
 
     function test_priceFromTick_PreservesFractionalPriceBeforeScaling() public view {
         int24 tick = 4055;
 
-        uint256 token0Price = harness.priceFromTick(tick, true);
-        uint256 token1Price = harness.priceFromTick(tick, false);
+        uint256 token0Price = harness.priceFromTick(tick, true, 1e18, 1e18);
+        uint256 token1Price = harness.priceFromTick(tick, false, 1e18, 1e18);
 
         assertEq(token0Price, _expectedPriceFromTick(tick, true), "token0 price should keep sub-unit precision");
         assertEq(token1Price, _expectedPriceFromTick(tick, false), "token1 inverse should keep sub-unit precision");
         assertGt(token0Price, 1.4e18, "old math truncated token0 price to 1e18");
         assertLt(token1Price, 0.7e18, "old math truncated token1 inverse to 1e18");
+    }
+
+    function test_priceFromTick_AdjustsEighteenDecimalTokenAgainstSixDecimalQuote() public view {
+        int24 tick = -276_324;
+
+        uint256 rawUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e18);
+        uint256 humanUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e6);
+
+        assertEq(humanUnitPrice, rawUnitPrice * 1e12, "18/6 pair must scale raw pool ratio up");
+        assertApproxEqRel(humanUnitPrice, 1e18, 1e15, "one whole token should price near one whole quote");
+    }
+
+    function test_priceFromTick_AdjustsSixDecimalTokenAgainstEighteenDecimalQuote() public view {
+        int24 tick = 276_324;
+
+        uint256 rawUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e18);
+        uint256 humanUnitPrice = harness.priceFromTick(tick, true, 1e6, 1e18);
+
+        assertEq(humanUnitPrice, rawUnitPrice / 1e12, "6/18 pair must scale raw pool ratio down");
+        assertApproxEqRel(humanUnitPrice, 1e18, 1e15, "one whole token should price near one whole quote");
     }
 }

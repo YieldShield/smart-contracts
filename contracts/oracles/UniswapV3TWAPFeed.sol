@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { FullMath } from "./libraries/FullMath.sol";
 import { TickMath } from "./libraries/TickMath.sol";
@@ -52,6 +53,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Mapping from token to whether it's token0 in the pool
     mapping(address => bool) public isToken0;
 
+    /// @notice Mapping from token to its ERC20 scale
+    mapping(address => uint256) public tokenScales;
+
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
@@ -61,6 +65,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     /// @notice Oracle for quote token USD price
     IOracleFeed public quoteTokenOracle;
+
+    /// @notice ERC20 scale for the quote token
+    uint256 public immutable quoteTokenScale;
 
     /// @notice Emitted when a token pool is set
     event TokenPoolSet(address indexed token, address indexed pool, bool isToken0);
@@ -83,6 +90,12 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Custom error for invalid TWAP period
     error InvalidTWAPPeriod(uint32 provided, uint32 minimum);
 
+    /// @notice Custom error when token decimals cannot be queried
+    error InvalidTokenDecimals(address token);
+
+    /// @notice Custom error for token decimal configurations that overflow scaling math
+    error UnsupportedTokenDecimals(address token, uint8 decimals);
+
     /// @notice Constructor
     /// @param _twapPeriod TWAP observation period in seconds
     /// @param _quoteToken Quote token address (e.g., USDC)
@@ -95,6 +108,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         twapPeriod = _twapPeriod;
         quoteToken = _quoteToken;
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
+        quoteTokenScale = _getTokenScale(_quoteToken);
     }
 
     /// @notice Set the Uniswap V3 pool for a token
@@ -123,6 +137,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         tokenPools[token] = pool;
         isToken0[token] = _isToken0;
+        tokenScales[token] = _getTokenScale(token);
         isTokenSupported[token] = true;
 
         emit TokenPoolSet(token, pool, _isToken0);
@@ -133,6 +148,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     function removeTokenPool(address token) external onlyOwner {
         delete tokenPools[token];
         delete isToken0[token];
+        delete tokenScales[token];
         isTokenSupported[token] = false;
         emit TokenPoolSet(token, address(0), false);
     }
@@ -171,7 +187,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         // price = 1.0001^tick
         // If token is token0, price is in terms of token1 (quoteToken)
         // If token is token1, we need to invert
-        uint256 priceInQuoteToken = _getPriceFromTick(twapTick, _isToken0);
+        uint256 priceInQuoteToken = _getPriceFromTick(twapTick, _isToken0, tokenScales[token], quoteTokenScale);
 
         // Convert quote token price to USD
         uint256 quoteTokenUSDPrice = quoteTokenOracle.getPrice(quoteToken);
@@ -236,20 +252,47 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         return twapTick;
     }
 
-    /// @notice Convert a tick to price (in 18 decimals)
+    /// @notice Convert a tick to a human-unit token price in quote-token terms (18 decimals)
     /// @param tick The tick value
     /// @param _isToken0 Whether the target token is token0
+    /// @param tokenScale ERC20 scale for the target token
+    /// @param quoteScale ERC20 scale for the quote token
     /// @return price The price in 18 decimals
-    function _getPriceFromTick(int24 tick, bool _isToken0) internal pure returns (uint256) {
-        // price = 1.0001^tick, expressed as token1 per token0 (Uniswap convention)
+    function _getPriceFromTick(int24 tick, bool _isToken0, uint256 tokenScale, uint256 quoteScale)
+        internal
+        pure
+        returns (uint256)
+    {
+        // price = 1.0001^tick, expressed as raw token1 units per raw token0 unit.
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
+        uint256 rawPriceX18;
 
         if (sqrtPriceX96 <= type(uint128).max) {
             uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-            return _isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
+            rawPriceX18 =
+                _isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
+        } else {
+            uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
+            rawPriceX18 =
+                _isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
         }
 
-        uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
-        return _isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
+        return FullMath.mulDiv(rawPriceX18, tokenScale, quoteScale);
+    }
+
+    function _getTokenScale(address token) internal view returns (uint256) {
+        try IERC20Metadata(token).decimals() returns (uint8 tokenDecimals) {
+            if (tokenDecimals > 77) {
+                revert UnsupportedTokenDecimals(token, tokenDecimals);
+            }
+            return 10 ** tokenDecimals;
+        } catch (bytes memory reason) {
+            if (reason.length > 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+            revert InvalidTokenDecimals(token);
+        }
     }
 }
