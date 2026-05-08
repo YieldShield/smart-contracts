@@ -21,12 +21,13 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     address internal bootstrapHolder = address(0xB0057);
     address internal dummyPyth = address(0x1234);
 
-    function test_ProductionBootstrap_AssignsSupplyToBootstrapHolderAndClearsDeployerAdmin() public {
+    function test_ProductionBootstrap_AssignsSupplyAndClearsExternalAdmins() public {
         (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
 
         assertEq(ysToken.balanceOf(bootstrapHolder), ysToken.INITIAL_SUPPLY());
         assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
-        assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder));
+        assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder));
+        assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(timelock)));
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
         assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(governor)));
@@ -106,7 +107,6 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ysToken = new YSToken(bootstrapHolder);
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
 
-        timelock.grantRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder);
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));
         timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(governor));

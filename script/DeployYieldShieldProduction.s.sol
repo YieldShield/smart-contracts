@@ -79,14 +79,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         governorAddr = address(governor);
         console.log("YS Governor deployed at:", governorAddr);
 
-        timelock.grantRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder);
         timelock.grantRole(timelock.PROPOSER_ROLE(), governorAddr);
         timelock.grantRole(timelock.EXECUTOR_ROLE(), governorAddr);
         timelock.grantRole(timelock.CANCELLER_ROLE(), governorAddr);
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
 
         require(!timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer), "Deployer timelock admin not cleared");
-        require(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder), "Bootstrap timelock admin missing");
+        require(!timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder), "Bootstrap timelock admin retained");
+        require(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), timelockAddr), "Timelock self-admin missing");
         require(timelock.hasRole(timelock.PROPOSER_ROLE(), governorAddr), "Governor proposer role missing");
         require(timelock.hasRole(timelock.EXECUTOR_ROLE(), governorAddr), "Governor executor role missing");
         require(timelock.hasRole(timelock.CANCELLER_ROLE(), governorAddr), "Governor canceller role missing");
@@ -184,7 +184,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("Timelock Delay:", timelock.getMinDelay() / 3600, "hours");
         console.log("\nNo pools or whitelisted assets were created in this production bootstrap.");
         console.log("Bootstrap holder must self-delegate YS before the first governance proposal.");
-        console.log("Bootstrap admin should be renounced only after proposer voting power is live.");
+        console.log("No external timelock admin is retained after deployment.");
         console.log("Configure launch assets and oracle feeds through governance after review.");
     }
 
