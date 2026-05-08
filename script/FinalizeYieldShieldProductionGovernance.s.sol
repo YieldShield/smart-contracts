@@ -8,9 +8,19 @@ import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 /**
- * @notice Finalizes the production governance bootstrap once proposer voting power is live.
- * @dev Run this script from the bootstrap holder account after self-delegating enough YS
- *      to satisfy the governor proposal threshold.
+ * @notice Legacy bootstrap-admin renouncement for deploys that granted
+ *         `DEFAULT_ADMIN_ROLE` on the timelock to a bootstrap holder.
+ * @dev DO NOT USE FOR CURRENT PRODUCTION DEPLOYMENTS.
+ *      `DeployYieldShieldProduction` no longer grants the bootstrap holder
+ *      `DEFAULT_ADMIN_ROLE` on the timelock; it asserts the opposite. Running
+ *      this script against a current production deploy will revert with
+ *      `BootstrapHolderMissingAdmin`. If that happens, do not "fix" the
+ *      assertion by re-granting the role — that would re-introduce the
+ *      privileged-bootstrap-holder risk that commit b06513b removed.
+ *
+ *      This script is retained only to remediate older deployments that ran
+ *      the pre-b06513b flow (bootstrap holder retained admin), or for testing
+ *      scenarios that synthesize that prior state.
  */
 contract FinalizeYieldShieldProductionGovernance is ScaffoldETHDeploy {
     error BootstrapClockNotAdvanced(uint48 currentTimepoint);
