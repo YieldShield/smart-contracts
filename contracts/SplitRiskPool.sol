@@ -799,8 +799,20 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
         if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
 
+        // Probe the protected shielded price up-front. If the circuit breaker has tripped,
+        // skip fee accrual entirely so the same-asset shielded-withdraw path can still
+        // return the user's own principal — otherwise the user is locked out of their
+        // shielded position precisely when the oracle is most stressed. Fees are not
+        // forfeited: `feeValueBaselineUsd[tokenId]` is left untouched, so the next call
+        // after the CB clears computes the catch-up amount against the same high-water
+        // mark.
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
+        if (!priceAvailable) {
+            return (0, 0, 0);
+        }
+
         // Get current USD value (USD-BASED for yield calculation)
-        uint256 currentValue = _getShieldedValue(pos.amount);
+        uint256 currentValue = Math.mulDiv(pos.amount, currentPrice, shieldedTokenScale);
 
         // Use per-position high-water-mark baseline to avoid repeatedly taxing the same yield.
         // Backward compatibility: legacy positions without an initialized baseline use valueAtDeposit.
@@ -822,8 +834,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 protocolFeeAmountUsd =
             yieldEarnedUsd.mulDiv(poolConfig.protocolFee, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
 
-        // Convert USD fees (8 decimals) to shielded token units using cached scale.
-        uint256 currentPrice = _getShieldedPrice();
+        // Convert USD fees (8 decimals) to shielded token units using the same probed price.
         commissionAmount = Math.mulDiv(commissionAmountUsd, shieldedTokenScale, currentPrice);
         poolFeeAmount = Math.mulDiv(poolFeeAmountUsd, shieldedTokenScale, currentPrice);
         protocolFeeAmount = Math.mulDiv(protocolFeeAmountUsd, shieldedTokenScale, currentPrice);
