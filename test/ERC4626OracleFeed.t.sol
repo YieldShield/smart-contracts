@@ -123,6 +123,17 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(erc4626Feed.getPriceWithCircuitBreaker(address(vault)), UNDERLYING_PRICE);
     }
 
+    function test_GetPriceWithCircuitBreaker_UsesProtectedUnderlyingPrice() public {
+        underlyingOracle.setShouldRevertOnCircuitBreaker(true);
+
+        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "raw NAV path should remain available");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(underlyingAsset))
+        );
+        erc4626Feed.getPriceWithCircuitBreaker(address(vault));
+    }
+
     function test_GetPrice_CalculatesWithDeposit() public {
         // Deposit assets to properly initialize the vault
         underlyingAsset.mint(address(this), 1000e18);

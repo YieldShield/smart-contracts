@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -202,17 +203,17 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @dev Includes share inflation attack protection via minimum supply check.
     ///      Checks underlying price staleness and reverts if stale.
     function getPrice(address vault) external view override returns (uint256) {
-        return _getValidatedPrice(vault);
+        return _getValidatedPrice(vault, false);
     }
 
     /// @notice Returns the price of vault shares using the protected ERC4626 share-rate path
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
     function getPriceWithCircuitBreaker(address vault) external view returns (uint256) {
-        return _getValidatedPrice(vault);
+        return _getValidatedPrice(vault, true);
     }
 
-    function _getValidatedPrice(address vault) internal view returns (uint256) {
+    function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 
         (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
@@ -220,7 +221,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             revert StaleUnderlyingPrice(vault, config.underlying);
         }
 
-        return _getPriceFromConfig(vault, config);
+        return _getPriceFromConfig(vault, config, useCircuitBreaker);
     }
 
     /// @inheritdoc IOracleFeed
@@ -264,7 +265,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         // If stale, still calculate price but return stale flag
         // This allows callers to make informed decisions
         // Note: getPrice() will revert on stale, but this function provides flexibility
-        price = _getPriceFromConfig(vault, config);
+        price = _getPriceFromConfig(vault, config, false);
     }
 
     // ============ Internal Helper Functions ============
@@ -283,7 +284,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
     }
 
-    function _getPriceFromConfig(address vault, VaultConfig memory config) internal view returns (uint256) {
+    function _getPriceFromConfig(address vault, VaultConfig memory config, bool useCircuitBreaker)
+        internal
+        view
+        returns (uint256)
+    {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         if (totalSupply < config.minimumSupply) {
             revert InsufficientVaultLiquidity(vault, totalSupply, config.minimumSupply);
@@ -291,7 +296,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         _validateSharePriceDeviation(vault, assetsPerShare, config);
-        uint256 underlyingPrice = underlyingPriceOracle.getPrice(config.underlying);
+        uint256 underlyingPrice = useCircuitBreaker
+            ? IPriceOracle(address(underlyingPriceOracle)).getPriceWithCircuitBreaker(config.underlying)
+            : underlyingPriceOracle.getPrice(config.underlying);
         uint8 priceDecimals = underlyingPriceOracle.decimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
