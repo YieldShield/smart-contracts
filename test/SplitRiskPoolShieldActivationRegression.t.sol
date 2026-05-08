@@ -155,4 +155,56 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
             claimed1, claimed2, 1, "post-loss commissions should follow share ownership, not stale NFT amount"
         );
     }
+
+    function test_crossAssetShieldActivationWipesStaleSharesBeforeFutureDeposits() public {
+        vm.prank(protector1);
+        uint256 wipedProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), 0, "activation should wipe protector backing");
+        assertEq(pool.totalProtectorShares(), 0, "wiped shares should leave the active share supply");
+        assertEq(pool.getProtectorPositionAmount(wipedProtectorTokenId), 0, "wiped NFT should have no backing claim");
+
+        vm.prank(protector2);
+        uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        assertEq(pool.getProtectorPositionAmount(wipedProtectorTokenId), 0, "old shares must not revive");
+        assertEq(pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "new depositor should own new backing");
+    }
+
+    function test_crossAssetShieldActivationPreservesHistoricalCommissionClaims() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+        vm.prank(shieldedUser);
+        pool.claimRewards(shieldTokenId);
+
+        uint256 claimableBeforeWipe = pool.getClaimableCommission(protectorTokenId);
+        assertGt(claimableBeforeWipe, 0, "protector should have earned pre-wipe commissions");
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        assertEq(pool.getProtectorPositionAmount(protectorTokenId), 0, "wiped NFT should have no backing claim");
+        assertEq(
+            pool.getClaimableCommission(protectorTokenId),
+            claimableBeforeWipe,
+            "earned commissions should remain claimable"
+        );
+
+        uint256 balanceBefore = shieldedToken.balanceOf(protector1);
+        vm.prank(protector1);
+        pool.claimCommission(protectorTokenId);
+        assertEq(shieldedToken.balanceOf(protector1) - balanceBefore, claimableBeforeWipe);
+    }
 }

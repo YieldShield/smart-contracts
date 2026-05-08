@@ -675,8 +675,9 @@ contract SplitRiskPoolInvariantTest is Test {
         uint256 totalShares = pool.totalProtectorShares();
         uint256 accumulated = pool.accumulatedCommissions();
 
-        // If no protector shares exist, commissions should be 0 (otherwise they'd be stranded).
-        if (totalShares == 0) {
+        // If no active shares exist in the initial epoch, commissions should be 0.
+        // Later epochs may still have historical claims capped at the finalized epoch RPS.
+        if (totalShares == 0 && pool.protectorShareEpoch() == 0) {
             assertEq(accumulated, 0, "No commissions should accumulate with 0 protectors");
         }
     }

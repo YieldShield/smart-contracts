@@ -263,6 +263,22 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return recordedShares;
     }
 
+    /// @dev Returns shares only when the position belongs to the current loss-socialization epoch.
+    function _getActiveProtectorPositionShares(uint256 tokenId, IProtectorReceiptNFT.ProtectorPosition memory pos)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        if (positionShares_ == 0) {
+            return 0;
+        }
+        if (protectorShareEpochs[tokenId] != protectorShareEpoch) {
+            return 0;
+        }
+        return positionShares_;
+    }
+
     /// @dev Converts a protector share balance into the current backing-token claim.
     function _assetsFromProtectorShares(uint256 shares, uint256 totalAssets, uint256 totalShares)
         internal
@@ -284,7 +300,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function getProtectorPositionAmount(uint256 tokenId) public view returns (uint256) {
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 shares = _getProtectorPositionShares(tokenId, pos);
+        uint256 shares = _getActiveProtectorPositionShares(tokenId, pos);
         return _getProtectorPositionAmountFromShares(shares);
     }
 
@@ -542,7 +558,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function getAvailableForWithdrawal(uint256 tokenId) public view returns (uint256) {
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
 
         // slither-disable-next-line incorrect-equality — empty-position guard, 0 shares = nothing to withdraw
         if (positionShares_ == 0) return 0;
@@ -928,10 +944,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         view
         returns (uint256 claimable)
     {
-        uint256 totalEarned = (rewardPerShareAccumulated * positionShares_) / ConstantsLib.REWARD_PRECISION;
+        uint256 effectiveRewardPerShare = rewardPerShareAccumulated;
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        if (positionEpoch < protectorShareEpoch) {
+            effectiveRewardPerShare = protectorEpochFinalRewardPerShare[positionEpoch];
+        }
+
+        uint256 totalEarned = (effectiveRewardPerShare * positionShares_) / ConstantsLib.REWARD_PRECISION;
         uint256 debt = rewardDebt[tokenId];
         uint256 alreadyClaimed = commissionsClaimed[tokenId];
         return totalEarned > (debt + alreadyClaimed) ? totalEarned - debt - alreadyClaimed : 0;
+    }
+
+    /// @dev Ends the current share epoch when shield activation wipes all backing assets.
+    function _expireProtectorShareEpochIfDrained() internal {
+        if (totalProtectorTokens == 0 && totalProtectorShares != 0) {
+            protectorEpochFinalRewardPerShare[protectorShareEpoch] = rewardPerShareAccumulated;
+            totalProtectorShares = 0;
+            protectorShareEpoch += 1;
+        }
     }
 
     /// @dev Claims pending commissions for a protector position using share-based accounting.
@@ -1074,6 +1105,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Mint NFT
         tokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
         protectorShares[tokenId] = sharesMinted;
+        protectorShareEpochs[tokenId] = protectorShareEpoch;
 
         // Record reward debt at current accumulator value (MasterChef pattern)
         // This "debits" the position for rewards it didn't earn, preventing late-joiner exploit
@@ -1229,6 +1261,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
             totalProtectorTokens -= payoutAmount;
             poolState.totalBackingTokenBalance -= payoutAmount;
+            _expireProtectorShareEpochIfDrained();
         }
 
         // Update shielded totals (TOKEN-BASED)
@@ -1340,7 +1373,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function startUnlockProcess(uint256 tokenId) external nonReentrant onlyProtectorNFTOwner(tokenId) {
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
         uint256 positionAmount = _getProtectorPositionAmountFromShares(positionShares_);
         if (positionAmount == 0) revert ErrorsLib.InsufficientTokenBalance();
         if (pos.unlockRequestTime != 0) revert ErrorsLib.UnlockProcessAlreadyStarted();
@@ -1438,7 +1471,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
         _ensureProtectorSharesInitialized();
         uint256 currentTotalShares = _currentTotalProtectorShares();
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
         uint256 positionAmount = _assetsFromProtectorShares(positionShares_, totalProtectorTokens, currentTotalShares);
 
         if (pos.unlockRequestTime == 0 || pos.unlockRequestTime > block.timestamp) {
@@ -1479,6 +1512,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             IProtectorReceiptNFT(protectorReceiptNFT).burn(tokenId);
             delete rewardDebt[tokenId];
             delete protectorShares[tokenId];
+            delete protectorShareEpochs[tokenId];
             delete commissionsClaimed[tokenId];
         } else {
             // Partial withdrawal - reset to clean slate to avoid rounding exploits
@@ -1487,6 +1521,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Clear commissions claimed - position gets fresh accounting
             delete commissionsClaimed[tokenId];
             protectorShares[tokenId] = newShares;
+            protectorShareEpochs[tokenId] = protectorShareEpoch;
             IProtectorReceiptNFT(protectorReceiptNFT).updateAmount(tokenId, newAmount);
         }
 
@@ -1901,7 +1936,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public totalProtectorShares;
     /// @notice tokenId => loss-socialized ownership shares
     mapping(uint256 => uint256) public protectorShares;
+    /// @notice Current protector share generation; increments when a shield activation wipes all backing assets
+    uint256 public protectorShareEpoch;
+    /// @notice tokenId => share generation used to exclude wiped shares from future backing deposits
+    mapping(uint256 => uint256) public protectorShareEpochs;
+    /// @notice share generation => reward-per-share cap for historical commission claims
+    mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
     /// @notice Sticky launch flag used to lock creator-only ACL changes after first deposit
     bool public hasEverLaunched;
-    uint256[43] private __gap;
+    uint256[40] private __gap;
 }
