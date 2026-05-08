@@ -247,7 +247,15 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             /* uint80 answeredInRound */
         ) = sequencerUptimeFeed.latestRoundData();
 
-        // Answer: 0 = sequencer is up, 1 = sequencer is down
+        // Reject incomplete rounds. A `startedAt == 0` reading would otherwise let
+        // `block.timestamp - 0` trivially clear the grace-period gate, treating an
+        // uninitialised feed as "sequencer up forever".
+        if (startedAt == 0) {
+            revert SequencerDown();
+        }
+
+        // Answer: 0 = sequencer is up, 1 = sequencer is down. Anything else is malformed
+        // and treated as down.
         bool isSequencerUp = answer == 0;
         if (!isSequencerUp) {
             revert SequencerDown();
