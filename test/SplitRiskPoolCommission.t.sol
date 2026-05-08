@@ -1217,4 +1217,86 @@ contract SplitRiskPoolCommissionTest is Test {
         // Verify successful withdrawal with primary oracle
         assertEq(poolWithCompositeOracle.totalShieldedTokens(), 0, "Should have no shielded tokens");
     }
+
+    /// @notice Shielded deposits must revert while a dual-feed challenge is pending —
+    ///         otherwise a depositor could lock `valueAtDeposit` from the suspect
+    ///         primary feed and realise the deviation via cross-asset withdraw once
+    ///         the price corrects. Resolving the deviation must restore deposit
+    ///         availability without governance intervention.
+    function test_depositShielded_RevertsDuringPendingChallenge() public {
+        // Reuse the dual-feed setup pattern from testOracleSwitchover_DuringShieldedWithdrawal.
+        MockOracle primaryOracle = new MockOracle();
+        MockOracle backupOracle = new MockOracle();
+        primaryOracle.setPrice(address(shieldedToken), 1e8);
+        backupOracle.setPrice(address(shieldedToken), 1e8);
+        primaryOracle.setPrice(address(backingToken), 1e8);
+        backupOracle.setPrice(address(backingToken), 1e8);
+
+        CompositeOracle compositeOracle = new CompositeOracle();
+        compositeOracle.setTokenOracleFeedDual(address(shieldedToken), address(primaryOracle), address(backupOracle));
+        compositeOracle.setTokenOracleFeedDual(address(backingToken), address(primaryOracle), address(backupOracle));
+
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "INSURE",
+            symbol: "INSURE",
+            token: address(shieldedToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "UNDER",
+            symbol: "UNDER",
+            token: address(backingToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+
+        SplitRiskPool implementation = new SplitRiskPool();
+        ShieldReceiptNFT shieldNFT = new ShieldReceiptNFT("iINSURE", "iINSURE");
+        ProtectorReceiptNFT protectorNFT = new ProtectorReceiptNFT("uUNDER", "uUNDER");
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPool.initialize.selector,
+            shieldedTokenInfo,
+            backingTokenInfo,
+            1000,
+            500,
+            address(this),
+            15000,
+            governance,
+            address(compositeOracle),
+            address(0xfa9605A2c38a0B4f16f689FDD07B63F295b86d1C),
+            address(shieldNFT),
+            address(protectorNFT),
+            address(this)
+        );
+        SplitRiskPool challengePool =
+            SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
+        shieldNFT.setPool(address(challengePool));
+        protectorNFT.setPool(address(challengePool));
+        shieldNFT.transferOwnership(address(challengePool));
+        protectorNFT.transferOwnership(address(challengePool));
+
+        vm.prank(protector1);
+        backingToken.approve(address(challengePool), type(uint256).max);
+        vm.prank(shielded);
+        shieldedToken.approve(address(challengePool), type(uint256).max);
+        vm.prank(protector1);
+        challengePool.depositBackingAsset(address(backingToken), 20000e18, 0);
+
+        // Open a challenge by introducing a 1% deviation (> 0.75% threshold).
+        backupOracle.setPrice(address(shieldedToken), 1.01e8);
+        compositeOracle.challengeForToken(address(shieldedToken));
+
+        vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
+        challengePool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        // Resolve the deviation and clear the challenge — deposits should succeed again.
+        backupOracle.setPrice(address(shieldedToken), 1e8);
+        compositeOracle.cancelChallenge(address(shieldedToken));
+        vm.prank(shielded);
+        challengePool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+    }
 }
