@@ -611,6 +611,14 @@ contract SplitRiskPoolFactory is
         IERC20(token).safeTransferFrom(msg.sender, address(this), creationBondAmount);
         receivedBond = IERC20(token).balanceOf(address(this)) - balanceBefore;
 
+        // Skip the oracle valuation when no USD floor is enforced — querying the
+        // composite oracle here would otherwise let an unrelated stale or
+        // misconfigured backing-token feed DoS pool creation that doesn't actually
+        // need a bond floor.
+        if (minimumCreationBondUsd == 0) {
+            return receivedBond;
+        }
+
         uint256 receivedUsd = ICompositeOracle(compositeOracle).getValue(token, receivedBond);
         if (receivedUsd < minimumCreationBondUsd) {
             revert ErrorsLib.CreationBondBelowMinimum(receivedUsd, minimumCreationBondUsd);
