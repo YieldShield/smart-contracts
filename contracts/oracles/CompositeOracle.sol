@@ -431,11 +431,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
 
         if (currentDeviation <= deviationThresholdBps) {
-            // Deviation resolved during timelock - cancel challenge instead
+            // Deviation resolved during timelock - cancel challenge instead.
+            // Preserve `lastChallengeTime` set at challenge initiation; the cooldown
+            // already runs from then, so resetting it here would only let any caller
+            // extend the lockout against future legitimate challenges.
             config.challengeStartTime = 0;
-            config.lastChallengeTime = block.timestamp;
 
-            emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, "finalize_auto_cancelled");
+            emit CooldownApplied(
+                token, msg.sender, config.lastChallengeTime + COOLDOWN_PERIOD, "finalize_auto_cancelled"
+            );
             emit ChallengeCancelled(token, "Deviation resolved during timelock");
             return;
         }
@@ -473,10 +477,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert CancelNotPossible(token, "Deviation still exceeds threshold");
         }
 
+        // Preserve `lastChallengeTime` set at challenge initiation. Resetting it on
+        // cancel would let anyone extend the cooldown lockout each time a brief
+        // deviation appears and resolves, suppressing legitimate future challenges.
         config.challengeStartTime = 0;
-        config.lastChallengeTime = block.timestamp;
 
-        emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, "challenge_cancelled");
+        emit CooldownApplied(token, msg.sender, config.lastChallengeTime + COOLDOWN_PERIOD, "challenge_cancelled");
         emit ChallengeCancelled(token, "Deviation resolved");
     }
 
