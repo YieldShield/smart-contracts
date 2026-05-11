@@ -344,18 +344,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
-    /// @dev Reverts if `token` has a pending dual-feed challenge on the configured
-    ///      `CompositeOracle`. During the challenge timelock, `getPriceWithCircuitBreaker`
-    ///      still returns the (suspect) primary feed; deposits that lock USD value at this
-    ///      price would let an attacker realise the deviation via cross-asset withdraw.
-    ///      Reads via try/catch so non-CompositeOracle price oracles (which lack dual-feed
-    ///      semantics) are treated as challenge-free.
-    function _requireNoOraclePendingChallenge(address token) internal view {
+    /// @dev Returns true if `token` has a pending dual-feed challenge on the configured
+    ///      `CompositeOracle`. Reads via try/catch so non-CompositeOracle price oracles
+    ///      (which lack dual-feed semantics) are treated as challenge-free.
+    function _hasOraclePendingChallenge(address token) internal view returns (bool) {
         try ICompositeOracle(poolConfig.priceOracle).getTokenDualFeedStatus(token) returns (
             bool, address, address, bool, bool isChallengePending, uint256
         ) {
-            if (isChallengePending) revert ErrorsLib.OraclePendingChallenge(token);
+            return isChallengePending;
         } catch { }
+
+        return false;
+    }
+
+    /// @dev Reverts if `token` has a pending dual-feed challenge. During the challenge
+    ///      timelock, `getPriceWithCircuitBreaker` still returns the suspect active feed,
+    ///      so any operation that locks, releases, or sizes value from that token's price
+    ///      must fail closed until the challenge resolves.
+    function _requireNoOraclePendingChallenge(address token) internal view {
+        if (_hasOraclePendingChallenge(token)) revert ErrorsLib.OraclePendingChallenge(token);
     }
 
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
@@ -582,6 +589,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return 0;
         }
 
+        if (_hasOraclePendingChallenge(BACKING_TOKEN)) {
+            return 0;
+        }
+
         // slither-disable-next-line incorrect-equality — empty-state guard, no deposits means nothing locked
         if (totalValueAtDeposit == 0) return positionAmount; // No shielded deposits = nothing locked
 
@@ -783,6 +794,32 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return (rewardAmount, 0);
     }
 
+    function _redirectCurrentEpochOrphanedCommissions() internal {
+        if (protectorShareEpoch != 0 || totalProtectorShares != 0 || accumulatedCommissions == 0) {
+            return;
+        }
+
+        uint256 orphanedCommissions = accumulatedCommissions;
+        accumulatedCommissions = 0;
+
+        uint256 redirectAmount = orphanedCommissions;
+        if (accumulatedProtocolFee + redirectAmount > ConstantsLib.MAX_SAFE_ACCUMULATION) {
+            redirectAmount = accumulatedProtocolFee < ConstantsLib.MAX_SAFE_ACCUMULATION
+                ? ConstantsLib.MAX_SAFE_ACCUMULATION - accumulatedProtocolFee
+                : 0;
+        }
+
+        if (redirectAmount != 0) {
+            accumulatedProtocolFee += redirectAmount;
+        }
+
+        if (redirectAmount != orphanedCommissions) {
+            emit EventsLib.FeeDropped(
+                "orphanedCommission", orphanedCommissions - redirectAmount, accumulatedProtocolFee
+            );
+        }
+    }
+
     /**
      * @dev Calculate and accumulate fees for a shielded position (USD-BASED for yield calculation)
      * @param tokenId The shield NFT token ID
@@ -798,6 +835,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
         if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
+
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
         // Probe the protected shielded price up-front. If the circuit breaker has tripped,
         // skip fee accrual entirely so the same-asset shielded-withdraw path can still
@@ -1167,11 +1206,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
         if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
 
-        // Block deposits while the shielded oracle's dual-feed challenge is pending.
+        // Block deposits while either priced leg has a pending dual-feed challenge.
         // The active feed is suspect for up to `challengeDurationSec`; locking
-        // `valueAtDeposit` from that feed would let a depositor realise the
-        // deviation via cross-asset withdraw at protectors' expense.
+        // `valueAtDeposit` or the backing collateral cap from that feed would let a
+        // depositor realise the deviation via cross-asset withdraw.
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+        _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
         // Transfer asset from depositor (balance-delta for fee-on-transfer tokens)
         uint256 received = _transferAndGetReceived(asset, depositAmount);
@@ -1240,6 +1280,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Check minimum pool time only if withdrawing backing assets (shield activation)
         if (preferredAsset == BACKING_TOKEN) {
+            _requireNoOraclePendingChallenge(BACKING_TOKEN);
+
             uint256 timeElapsed = block.timestamp - uint256(pos.depositTime);
             if (timeElapsed < poolConfig.minimumPoolTime) {
                 revert ErrorsLib.InsufficientPoolTimeWithDetails(poolConfig.minimumPoolTime, timeElapsed);
@@ -1381,10 +1423,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // 3. Create new position with remaining amount
         // Calculate new collateral amount proportionally to remaining amount
-        uint256 newCollateralAmount = (pos.collateralAmount * remaining) / pos.amount;
+        uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees);
         // Calculate new valueAtDeposit proportionally from original (not from current price)
         // This ensures collateralization is based on original deposit values
-        uint256 newValueAtDeposit = (pos.valueAtDeposit * remaining) / pos.amount;
+        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees);
         newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
             .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
@@ -1506,6 +1548,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         if (amount == 0) revert ErrorsLib.NoTokensToWithdraw();
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
+        _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canWithdrawProtector(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawProtector");
@@ -1573,6 +1616,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalProtectorTokens -= amount;
         totalProtectorShares = newTotalShares;
         poolState.totalBackingTokenBalance -= amount;
+        _redirectCurrentEpochOrphanedCommissions();
 
         // Verify pool has sufficient balance
         uint256 poolBalance = IERC20(preferredAsset).balanceOf(address(this));
@@ -1943,7 +1987,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidTokenAddress();
         }
 
-        if (tokenDecimals > 77) {
+        if (tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > 77) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
 

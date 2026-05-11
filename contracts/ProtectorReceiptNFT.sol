@@ -51,7 +51,7 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
         tokenId = nextTokenId++;
         positions[tokenId] =
             ProtectorPosition({ amount: amount, depositTime: uint64(block.timestamp), unlockRequestTime: 0 });
-        _mint(to, tokenId);
+        _safeMint(to, tokenId);
         emit EventsLib.ProtectorNFTMinted(to, tokenId, amount);
     }
 

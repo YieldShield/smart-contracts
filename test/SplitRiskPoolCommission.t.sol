@@ -328,17 +328,20 @@ contract SplitRiskPoolCommissionTest is Test {
         pool.shieldedWithdraw(0, address(shieldedToken), 0);
 
         uint256 accumulatedBefore = pool.accumulatedCommissions();
+        uint256 protocolFeeBefore = pool.accumulatedProtocolFee();
         uint256 balanceBefore = shieldedToken.balanceOf(protector1);
 
         vm.prank(protector1);
         pool.protectorWithdraw(tokenId, backingAmount, address(backingToken), 0);
 
         uint256 claimed = shieldedToken.balanceOf(protector1) - balanceBefore;
+        uint256 roundingRemainder = accumulatedBefore - claimableBefore;
         assertEq(claimed, claimableBefore, "full withdrawal should pay pending commission");
+        assertEq(pool.accumulatedCommissions(), 0, "orphaned commission dust should be cleared");
         assertEq(
-            pool.accumulatedCommissions(),
-            accumulatedBefore - claimableBefore,
-            "claimed commission should not remain reserved in the pool"
+            pool.accumulatedProtocolFee(),
+            protocolFeeBefore + roundingRemainder,
+            "orphaned commission dust should stay reserved as protocol fee"
         );
         assertEq(pool.commissionsClaimed(tokenId), 0, "burned position should not retain claim tracking");
     }

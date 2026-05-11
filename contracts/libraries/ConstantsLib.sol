@@ -50,6 +50,9 @@ library ConstantsLib {
     /// @notice Standard decimals for USD prices in oracles (8)
     /// @dev Used by CompositeOracle, ERC4626OracleFeed, ChainlinkOracleFeed, PythOracle
     uint8 public constant USD_DECIMALS = 8;
+    /// @notice Minimum ERC20 decimals supported for pool assets.
+    /// @dev Very low-decimal backing assets can make share-socialized dust material and unclaimable.
+    uint8 public constant MIN_POOL_TOKEN_DECIMALS = 6;
     /// @notice Maximum safe accumulation value to prevent overflow
     uint256 public constant MAX_SAFE_ACCUMULATION = type(uint128).max;
 
