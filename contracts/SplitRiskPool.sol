@@ -828,6 +828,63 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    function _redirectHistoricalEpochDust(uint256 epoch) internal {
+        uint256 orphanedCommissions = protectorEpochRemainingReserve[epoch];
+        if (orphanedCommissions == 0) {
+            return;
+        }
+
+        protectorEpochRemainingReserve[epoch] = 0;
+        if (orphanedCommissions > historicalCommissionReserve) {
+            orphanedCommissions = historicalCommissionReserve;
+        }
+        if (orphanedCommissions > accumulatedCommissions) {
+            orphanedCommissions = accumulatedCommissions;
+        }
+        if (orphanedCommissions == 0) {
+            return;
+        }
+
+        historicalCommissionReserve -= orphanedCommissions;
+        accumulatedCommissions -= orphanedCommissions;
+
+        uint256 redirectAmount = orphanedCommissions;
+        if (accumulatedProtocolFee + redirectAmount > ConstantsLib.MAX_SAFE_ACCUMULATION) {
+            redirectAmount = accumulatedProtocolFee < ConstantsLib.MAX_SAFE_ACCUMULATION
+                ? ConstantsLib.MAX_SAFE_ACCUMULATION - accumulatedProtocolFee
+                : 0;
+        }
+
+        if (redirectAmount != 0) {
+            accumulatedProtocolFee += redirectAmount;
+        }
+
+        if (redirectAmount != orphanedCommissions) {
+            emit EventsLib.FeeDropped(
+                "historicalOrphanedCommission", orphanedCommissions - redirectAmount, accumulatedProtocolFee
+            );
+        }
+    }
+
+    function _settleExpiredEpochPosition(uint256 tokenId, uint256 positionEpoch, uint256 positionShares_) internal {
+        if (positionEpoch >= protectorShareEpoch || protectorEpochPositionSettled[tokenId]) {
+            return;
+        }
+
+        protectorEpochPositionSettled[tokenId] = true;
+        uint256 remainingShares = protectorEpochRemainingShares[positionEpoch];
+        if (remainingShares == 0) {
+            return;
+        }
+
+        if (positionShares_ >= remainingShares) {
+            protectorEpochRemainingShares[positionEpoch] = 0;
+            _redirectHistoricalEpochDust(positionEpoch);
+        } else {
+            protectorEpochRemainingShares[positionEpoch] = remainingShares - positionShares_;
+        }
+    }
+
     /**
      * @dev Calculate and accumulate fees for a shielded position (USD-BASED for yield calculation)
      * @param tokenId The shield NFT token ID
@@ -1047,8 +1104,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @dev Ends the current share epoch when shield activation wipes all backing assets.
     function _expireProtectorShareEpochIfDrained() internal {
         if (totalProtectorTokens == 0 && totalProtectorShares != 0) {
-            protectorEpochFinalRewardPerShare[protectorShareEpoch] = rewardPerShareAccumulated;
+            uint256 expiredEpoch = protectorShareEpoch;
+            protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
+            protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
             if (currentEpochCommissionReserve != 0) {
+                protectorEpochRemainingReserve[expiredEpoch] += currentEpochCommissionReserve;
                 historicalCommissionReserve += currentEpochCommissionReserve;
                 currentEpochCommissionReserve = 0;
             }
@@ -1062,13 +1122,28 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 claimable)
     {
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
+        bool tracksExpiredEpoch =
+            protectorEpochRemainingShares[positionEpoch] != 0 || protectorEpochRemainingReserve[positionEpoch] != 0;
         claimable = _calculateClaimableCommission(tokenId, positionShares_);
         if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
-        if (claimable == 0) return 0;
+        if (isExpiredEpoch && tracksExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
+            claimable = protectorEpochRemainingReserve[positionEpoch];
+        }
+        if (claimable == 0) {
+            if (isExpiredEpoch && tracksExpiredEpoch) {
+                _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
+            }
+            return 0;
+        }
 
         commissionsClaimed[tokenId] += claimable;
         accumulatedCommissions -= claimable;
-        if (protectorShareEpochs[tokenId] < protectorShareEpoch) {
+        if (isExpiredEpoch && tracksExpiredEpoch) {
+            protectorEpochRemainingReserve[positionEpoch] = claimable >= protectorEpochRemainingReserve[positionEpoch]
+                ? 0
+                : protectorEpochRemainingReserve[positionEpoch] - claimable;
             historicalCommissionReserve =
                 claimable >= historicalCommissionReserve ? 0 : historicalCommissionReserve - claimable;
         } else {
@@ -1083,6 +1158,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         poolState.shieldedTokenBalance -= claimable;
         SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), recipient, claimable);
+        if (isExpiredEpoch && tracksExpiredEpoch) {
+            _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
+        }
 
         emit EventsLib.CommissionClaimed(recipient, tokenId, claimable);
     }
@@ -2119,5 +2197,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public currentEpochCommissionReserve;
     /// @notice Commissions still owed to expired protector share epochs
     uint256 public historicalCommissionReserve;
-    uint256[37] private __gap;
+    /// @notice share generation => shares that have not yet settled expired-epoch commissions
+    mapping(uint256 => uint256) public protectorEpochRemainingShares;
+    /// @notice share generation => expired-epoch commission reserve that can still be claimed or swept as dust
+    mapping(uint256 => uint256) public protectorEpochRemainingReserve;
+    /// @notice tokenId => whether its expired-epoch shares have been settled
+    mapping(uint256 => bool) public protectorEpochPositionSettled;
+    uint256[34] private __gap;
 }

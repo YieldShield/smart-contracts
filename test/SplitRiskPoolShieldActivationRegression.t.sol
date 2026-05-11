@@ -343,6 +343,56 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(pool.getClaimableCommission(oldProtectorTokenId), historicalClaim, "old protector can still claim");
     }
 
+    function test_expiredEpochCommissionDustRedirectsAfterHistoricalClaims() public {
+        uint256 backingAmount1 = 2e18;
+        uint256 backingAmount2 = 2e18 - 1e10;
+        uint256 shieldAmount = backingAmount1 + backingAmount2;
+
+        vm.prank(protector1);
+        uint256 protectorTokenId1 = pool.depositBackingAsset(address(backingToken), backingAmount1, 0);
+
+        vm.prank(protector2);
+        uint256 protectorTokenId2 = pool.depositBackingAsset(address(backingToken), backingAmount2, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), shieldAmount, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+        vm.prank(shieldedUser);
+        pool.claimRewards(shieldTokenId);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        uint256 historicalReserve = pool.historicalCommissionReserve();
+        uint256 claimable1 = pool.getClaimableCommission(protectorTokenId1);
+        uint256 claimable2 = pool.getClaimableCommission(protectorTokenId2);
+        assertGt(historicalReserve, claimable1 + claimable2, "test requires expired-epoch rounding dust");
+        uint256 dust = historicalReserve - claimable1 - claimable2;
+
+        uint256 protocolFeeBeforeClaims = pool.accumulatedProtocolFee();
+
+        vm.prank(protector1);
+        pool.claimCommission(protectorTokenId1);
+        assertEq(pool.historicalCommissionReserve(), historicalReserve - claimable1, "dust waits for final claimant");
+
+        vm.prank(protector2);
+        pool.claimCommission(protectorTokenId2);
+
+        assertEq(pool.historicalCommissionReserve(), 0, "expired-epoch dust should be redirected");
+        assertEq(pool.accumulatedCommissions(), 0, "historical commission reserve should be fully settled");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBeforeClaims + dust, "dust redirects to protocol");
+
+        pool.payPoolFee();
+        pool.payProtocolFee();
+
+        assertEq(pool.getReservedFees(), 0, "fee settlement should unblock pool closure accounting");
+        (uint256 shieldedPoolBalance, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(shieldedPoolBalance, 0, "all shielded fees and forfeitures should be paid out");
+        assertEq(backingPoolBalance, 0, "shield activation should have drained backing");
+    }
+
     function test_backingDustCanBeExitedWhenProtectorClaimsRoundToZero() public {
         (
             uint256 shieldedMinDepositAmount,
