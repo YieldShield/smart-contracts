@@ -790,17 +790,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         rewardPerShareAccumulated += (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
         accumulatedCommissions += rewardAmount;
+        currentEpochCommissionReserve += rewardAmount;
         totalCommissionsEverAccumulated += rewardAmount;
         return (rewardAmount, 0);
     }
 
     function _redirectCurrentEpochOrphanedCommissions() internal {
-        if (protectorShareEpoch != 0 || totalProtectorShares != 0 || accumulatedCommissions == 0) {
+        if (totalProtectorShares != 0 || currentEpochCommissionReserve == 0) {
             return;
         }
 
-        uint256 orphanedCommissions = accumulatedCommissions;
-        accumulatedCommissions = 0;
+        uint256 orphanedCommissions = currentEpochCommissionReserve;
+        currentEpochCommissionReserve = 0;
+        if (orphanedCommissions > accumulatedCommissions) {
+            orphanedCommissions = accumulatedCommissions;
+        }
+        if (orphanedCommissions == 0) {
+            return;
+        }
+        accumulatedCommissions -= orphanedCommissions;
 
         uint256 redirectAmount = orphanedCommissions;
         if (accumulatedProtocolFee + redirectAmount > ConstantsLib.MAX_SAFE_ACCUMULATION) {
@@ -1041,6 +1049,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function _expireProtectorShareEpochIfDrained() internal {
         if (totalProtectorTokens == 0 && totalProtectorShares != 0) {
             protectorEpochFinalRewardPerShare[protectorShareEpoch] = rewardPerShareAccumulated;
+            if (currentEpochCommissionReserve != 0) {
+                historicalCommissionReserve += currentEpochCommissionReserve;
+                currentEpochCommissionReserve = 0;
+            }
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
         }
@@ -1057,6 +1069,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         commissionsClaimed[tokenId] += claimable;
         accumulatedCommissions -= claimable;
+        if (protectorShareEpochs[tokenId] < protectorShareEpoch) {
+            historicalCommissionReserve =
+                claimable >= historicalCommissionReserve ? 0 : historicalCommissionReserve - claimable;
+        } else {
+            currentEpochCommissionReserve =
+                claimable >= currentEpochCommissionReserve ? 0 : currentEpochCommissionReserve - claimable;
+        }
 
         uint256 actualBalance = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
         if (actualBalance < claimable) {
@@ -1491,12 +1510,22 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
         uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
         uint256 positionAmount = _getProtectorPositionAmountFromShares(positionShares_);
-        if (positionAmount == 0) revert ErrorsLib.InsufficientTokenBalance();
+        if (positionAmount == 0 && !_isProtectorDustExitAvailable(positionShares_, positionAmount)) {
+            revert ErrorsLib.InsufficientTokenBalance();
+        }
         if (pos.unlockRequestTime != 0) revert ErrorsLib.UnlockProcessAlreadyStarted();
 
         IProtectorReceiptNFT(protectorReceiptNFT)
             .setUnlockRequestTime(tokenId, uint64(block.timestamp + poolConfig.unlockDuration));
         emit EventsLib.UnlockProcessStarted(msg.sender, tokenId, positionAmount);
+    }
+
+    function _isProtectorDustExitAvailable(uint256 positionShares_, uint256 positionAmount)
+        internal
+        view
+        returns (bool)
+    {
+        return positionAmount == 0 && positionShares_ != 0 && totalProtectorTokens != 0 && totalValueAtDeposit == 0;
     }
 
     /**
@@ -1576,7 +1605,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         whenNotPaused
         onlyProtectorNFTOwner(tokenId)
     {
-        if (amount == 0) revert ErrorsLib.NoTokensToWithdraw();
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
@@ -1594,14 +1622,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
         uint256 positionAmount = _assetsFromProtectorShares(positionShares_, totalProtectorTokens, currentTotalShares);
 
+        bool dustExit;
+        if (amount == 0) {
+            if (!_isProtectorDustExitAvailable(positionShares_, positionAmount)) {
+                revert ErrorsLib.NoTokensToWithdraw();
+            }
+            dustExit = true;
+            if (positionShares_ == currentTotalShares) {
+                amount = totalProtectorTokens;
+            }
+        }
+
         if (pos.unlockRequestTime == 0 || pos.unlockRequestTime > block.timestamp) {
             revert ErrorsLib.InsufficientUnlockedTokens();
         }
 
         // Unlock completion removes the time gate but never bypasses collateral requirements.
-        uint256 available = getAvailableForWithdrawal(tokenId);
+        uint256 available = dustExit ? amount : getAvailableForWithdrawal(tokenId);
 
-        if (amount > positionAmount) {
+        if (!dustExit && amount > positionAmount) {
             revert ErrorsLib.InsufficientTokenBalance();
         } else if (amount > available) {
             revert ErrorsLib.InsufficientUnlockedTokens();
@@ -1657,7 +1696,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InsufficientTokenBalance();
         }
 
-        uint256 actualReceived = _transferOutAndGetReceived(preferredAsset, msg.sender, amount);
+        uint256 actualReceived;
+        if (amount != 0) {
+            actualReceived = _transferOutAndGetReceived(preferredAsset, msg.sender, amount);
+        }
         SlippageLib.enforceMinReceived(actualReceived, minAmountOut);
 
         emit EventsLib.ShieldActivated(msg.sender, amount, 0, amount);
@@ -2074,5 +2116,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
     /// @notice True when the active ACL was installed by governance and may gate withdrawals
     bool public accessControlCanGateWithdrawals;
-    uint256[39] private __gap;
+    /// @notice Commissions owed to the current active protector share epoch
+    uint256 public currentEpochCommissionReserve;
+    /// @notice Commissions still owed to expired protector share epochs
+    uint256 public historicalCommissionReserve;
+    uint256[37] private __gap;
 }

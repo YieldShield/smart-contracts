@@ -290,6 +290,127 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(shieldedToken.balanceOf(protector1) - balanceBefore, claimableAfterWipe);
     }
 
+    function test_postEpochCommissionDustRedirectPreservesHistoricalClaims() public {
+        vm.prank(protector1);
+        uint256 oldProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 oldShieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+        vm.prank(shieldedUser);
+        pool.claimRewards(oldShieldTokenId);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(oldShieldTokenId, address(backingToken), 0);
+
+        uint256 historicalClaim = pool.getClaimableCommission(oldProtectorTokenId);
+        assertGt(historicalClaim, 0, "test requires an expired-epoch commission claim");
+
+        oracle.setPrice(address(shieldedToken), 1e8);
+
+        vm.prank(protector2);
+        uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 3e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 newShieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+        vm.prank(shieldedUser);
+        pool.claimRewards(newShieldTokenId);
+
+        uint256 currentReserveBeforeExit = pool.currentEpochCommissionReserve();
+        uint256 currentClaimableBeforeExit = pool.getClaimableCommission(newProtectorTokenId);
+        uint256 currentEpochDust = currentReserveBeforeExit - currentClaimableBeforeExit;
+        assertGt(currentEpochDust, 0, "test requires current-epoch rounding dust");
+
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(newShieldTokenId, address(shieldedToken), 0);
+
+        vm.prank(protector2);
+        pool.startUnlockProcess(newProtectorTokenId);
+        vm.warp(block.timestamp + 29 days);
+
+        uint256 protocolFeeBeforeExit = pool.accumulatedProtocolFee();
+        vm.prank(protector2);
+        pool.protectorWithdraw(newProtectorTokenId, 3e18, address(backingToken), 0);
+
+        assertEq(pool.currentEpochCommissionReserve(), 0, "current-epoch dust should be redirected");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBeforeExit + currentEpochDust, "dust redirects to protocol");
+        assertEq(pool.accumulatedCommissions(), historicalClaim, "historical claim should remain reserved");
+        assertEq(pool.historicalCommissionReserve(), historicalClaim, "historical reserve should be untouched");
+        assertEq(pool.getClaimableCommission(oldProtectorTokenId), historicalClaim, "old protector can still claim");
+    }
+
+    function test_backingDustCanBeExitedWhenProtectorClaimsRoundToZero() public {
+        (
+            uint256 shieldedMinDepositAmount,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            ,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address protocolFeeRecipient,
+            uint256 protocolFee,
+            address priceOracle
+        ) = pool.poolConfig();
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            type(uint256).max,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            protocolFeeRecipient,
+            priceOracle
+        );
+
+        oracle.setPrice(address(shieldedToken), 1e18);
+        oracle.setPrice(address(backingToken), 1e18);
+
+        vm.prank(protector1);
+        uint256 protectorTokenId1 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(protector2);
+        uint256 protectorTokenId2 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 200e18 - 1, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), 1, "activation should leave one wei backing dust");
+        assertEq(pool.getProtectorPositionAmount(protectorTokenId1), 0, "dust rounds position 1 to zero");
+        assertEq(pool.getProtectorPositionAmount(protectorTokenId2), 0, "dust rounds position 2 to zero");
+
+        vm.prank(protector1);
+        pool.startUnlockProcess(protectorTokenId1);
+        vm.prank(protector2);
+        pool.startUnlockProcess(protectorTokenId2);
+
+        vm.warp(block.timestamp + 29 days);
+
+        vm.prank(protector1);
+        pool.protectorWithdraw(protectorTokenId1, 0, address(backingToken), 0);
+
+        assertEq(pool.totalProtectorTokens(), 1, "non-final zero claim should not take the dust");
+        assertEq(pool.getProtectorPositionAmount(protectorTokenId2), 1, "final position should inherit the dust");
+
+        uint256 balanceBefore = backingToken.balanceOf(protector2);
+        vm.prank(protector2);
+        pool.protectorWithdraw(protectorTokenId2, 1, address(backingToken), 0);
+
+        assertEq(backingToken.balanceOf(protector2) - balanceBefore, 1, "final dust holder should receive the dust");
+        assertEq(pool.totalProtectorTokens(), 0, "backing dust should be cleared");
+        (, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, 0, "tracked backing balance should be cleared");
+    }
+
     function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {
         vm.prank(protector1);
         uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
