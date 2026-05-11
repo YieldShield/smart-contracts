@@ -85,7 +85,7 @@ function loadDeployment() {
 function getFactoryAddress(deployment) {
     for (const [address, name] of Object.entries(deployment)) {
         if (name === "SplitRiskPoolFactory") {
-            return ethers.utils.getAddress(address);
+            return ethers.getAddress(address);
         }
     }
 
@@ -95,13 +95,13 @@ function getFactoryAddress(deployment) {
 async function waitForTransaction(txPromise, label) {
     const tx = await txPromise;
     const receipt = await tx.wait();
-    console.log(`  ${label} (${receipt.transactionHash})`);
+    console.log(`  ${label} (${receipt.hash ?? receipt.transactionHash})`);
     return receipt;
 }
 
 async function getHistoricalPools(factory) {
     const poolCount = await factory.poolCount();
-    if (poolCount.lt(5)) {
+    if (poolCount < 5n) {
         throw new Error(
             `Expected at least 5 pools, found ${poolCount.toString()}`,
         );
@@ -121,17 +121,15 @@ async function createProtectorPosition(
     const wallet = new ethers.Wallet(account.privateKey, provider);
     const token = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
     const poolWithSigner = pool.connect(wallet);
+    const poolAddress = await pool.getAddress();
 
     await waitForTransaction(
-        token.approve(pool.address, amount),
+        token.approve(poolAddress, amount),
         `${label}: approved backing token`,
     );
     await waitForTransaction(
         poolWithSigner.depositBackingAsset(tokenAddress, amount, 0),
-        `${label}: deposited backing asset ${ethers.utils.formatUnits(
-            amount,
-            18,
-        )}`,
+        `${label}: deposited backing asset ${ethers.formatUnits(amount, 18)}`,
     );
 }
 
@@ -146,23 +144,21 @@ async function createShieldedPosition(
     const wallet = new ethers.Wallet(account.privateKey, provider);
     const token = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
     const poolWithSigner = pool.connect(wallet);
+    const poolAddress = await pool.getAddress();
 
     await waitForTransaction(
-        token.approve(pool.address, amount),
+        token.approve(poolAddress, amount),
         `${label}: approved shielded token`,
     );
     await waitForTransaction(
         poolWithSigner.depositShieldedAsset(tokenAddress, amount, 0),
-        `${label}: deposited shielded asset ${ethers.utils.formatUnits(
-            amount,
-            18,
-        )}`,
+        `${label}: deposited shielded asset ${ethers.formatUnits(amount, 18)}`,
     );
 }
 
 async function main() {
     const deployment = loadDeployment();
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const factoryAddress = getFactoryAddress(deployment);
     const factory = new ethers.Contract(factoryAddress, FACTORY_ABI, provider);
     const poolAddresses = await getHistoricalPools(factory);
@@ -173,7 +169,7 @@ async function main() {
 
     const existingInsured = await pools[0].totalShieldedTokens();
     const existingUnderwriter = await pools[0].totalProtectorTokens();
-    if (!existingInsured.isZero() && !existingUnderwriter.isZero()) {
+    if (existingInsured !== 0n && existingUnderwriter !== 0n) {
         console.log(
             `Positions already exist (insured=${existingInsured.toString()}, underwriter=${existingUnderwriter.toString()}), skipping.`,
         );
@@ -202,7 +198,7 @@ async function main() {
         ACCOUNTS[2],
         pool1,
         gtusdcAddr,
-        ethers.utils.parseUnits("200", 18),
+        ethers.parseUnits("200", 18),
         "Account #2 / Pool 1",
     );
 
@@ -211,7 +207,7 @@ async function main() {
         ACCOUNTS[4],
         pool1,
         gtusdcAddr,
-        ethers.utils.parseUnits("1000", 18),
+        ethers.parseUnits("1000", 18),
         "Account #4 / Pool 1",
     );
     await createProtectorPosition(
@@ -219,7 +215,7 @@ async function main() {
         ACCOUNTS[4],
         pool2,
         usdyAddr,
-        ethers.utils.parseUnits("1000", 18),
+        ethers.parseUnits("1000", 18),
         "Account #4 / Pool 2",
     );
     await createProtectorPosition(
@@ -227,7 +223,7 @@ async function main() {
         ACCOUNTS[4],
         pool3,
         stoneAddr,
-        ethers.utils.parseUnits("1000", 18),
+        ethers.parseUnits("1000", 18),
         "Account #4 / Pool 3",
     );
     await createProtectorPosition(
@@ -235,7 +231,7 @@ async function main() {
         ACCOUNTS[4],
         pool4,
         ustbAddr,
-        ethers.utils.parseUnits("1000", 18),
+        ethers.parseUnits("1000", 18),
         "Account #4 / Pool 4",
     );
 
@@ -244,7 +240,7 @@ async function main() {
         ACCOUNTS[5],
         pool1,
         gtusdcAddr,
-        ethers.utils.parseUnits("600", 18),
+        ethers.parseUnits("600", 18),
         "Account #5 / Pool 1 protector",
     );
     await createProtectorPosition(
@@ -252,7 +248,7 @@ async function main() {
         ACCOUNTS[5],
         pool2,
         usdyAddr,
-        ethers.utils.parseUnits("600", 18),
+        ethers.parseUnits("600", 18),
         "Account #5 / Pool 2 protector",
     );
 
@@ -261,7 +257,7 @@ async function main() {
         ACCOUNTS[7],
         pool1,
         gtusdcAddr,
-        ethers.utils.parseUnits("10000", 18),
+        ethers.parseUnits("10000", 18),
         "Account #7 / Pool 1",
     );
 
@@ -270,7 +266,7 @@ async function main() {
         ACCOUNTS[8],
         pool3,
         stoneAddr,
-        ethers.utils.parseUnits("400", 18),
+        ethers.parseUnits("400", 18),
         "Account #8 / Pool 3 protector",
     );
 
@@ -279,7 +275,7 @@ async function main() {
         ACCOUNTS[1],
         pool1,
         susdeAddr,
-        ethers.utils.parseUnits("100", 18),
+        ethers.parseUnits("100", 18),
         "Account #1 / Pool 1",
     );
 
@@ -288,7 +284,7 @@ async function main() {
         ACCOUNTS[3],
         pool1,
         susdeAddr,
-        ethers.utils.parseUnits("500", 18),
+        ethers.parseUnits("500", 18),
         "Account #3 / Pool 1",
     );
     await createShieldedPosition(
@@ -296,7 +292,7 @@ async function main() {
         ACCOUNTS[3],
         pool2,
         sdaiAddr,
-        ethers.utils.parseUnits("500", 18),
+        ethers.parseUnits("500", 18),
         "Account #3 / Pool 2",
     );
     await createShieldedPosition(
@@ -304,7 +300,7 @@ async function main() {
         ACCOUNTS[3],
         pool3,
         stethAddr,
-        ethers.utils.parseUnits("500", 18),
+        ethers.parseUnits("500", 18),
         "Account #3 / Pool 3",
     );
     await createShieldedPosition(
@@ -312,7 +308,7 @@ async function main() {
         ACCOUNTS[3],
         pool4,
         jaaaAddr,
-        ethers.utils.parseUnits("500", 18),
+        ethers.parseUnits("500", 18),
         "Account #3 / Pool 4",
     );
 
@@ -321,7 +317,7 @@ async function main() {
         ACCOUNTS[5],
         pool1,
         susdeAddr,
-        ethers.utils.parseUnits("300", 18),
+        ethers.parseUnits("300", 18),
         "Account #5 / Pool 1 shielded",
     );
     await createShieldedPosition(
@@ -329,7 +325,7 @@ async function main() {
         ACCOUNTS[5],
         pool2,
         sdaiAddr,
-        ethers.utils.parseUnits("300", 18),
+        ethers.parseUnits("300", 18),
         "Account #5 / Pool 2 shielded",
     );
 
@@ -338,7 +334,7 @@ async function main() {
         ACCOUNTS[6],
         pool1,
         susdeAddr,
-        ethers.utils.parseUnits("8000", 18),
+        ethers.parseUnits("8000", 18),
         "Account #6 / Pool 1",
     );
 
@@ -347,7 +343,7 @@ async function main() {
         ACCOUNTS[8],
         pool3,
         stethAddr,
-        ethers.utils.parseUnits("200", 18),
+        ethers.parseUnits("200", 18),
         "Account #8 / Pool 3 shielded",
     );
 

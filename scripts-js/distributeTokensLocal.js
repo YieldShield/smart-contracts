@@ -32,10 +32,10 @@ const ACCOUNTS = [
 ];
 
 const DEPLOYER_ADDRESS = ACCOUNTS[9].toLowerCase();
-const STANDARD_AMOUNT = ethers.utils.parseUnits("10000", 18);
-const USDC_AMOUNT = ethers.utils.parseUnits("10000", 6);
-const WHALE_MULTIPLIER = ethers.BigNumber.from(10);
-const YS_STANDARD_AMOUNT = ethers.utils.parseUnits("10000", 18);
+const STANDARD_AMOUNT = ethers.parseUnits("10000", 18);
+const USDC_AMOUNT = ethers.parseUnits("10000", 6);
+const WHALE_MULTIPLIER = 10n;
+const YS_STANDARD_AMOUNT = ethers.parseUnits("10000", 18);
 
 const ERC20_ABI = [
     "function balanceOf(address) view returns (uint256)",
@@ -61,7 +61,7 @@ function dedupeAddresses(addresses) {
         const normalized = address.toLowerCase();
         if (seen.has(normalized)) continue;
         seen.add(normalized);
-        result.push(ethers.utils.getAddress(address));
+        result.push(ethers.getAddress(address));
     }
 
     return result;
@@ -72,9 +72,7 @@ function getFirstContractAddress(broadcast, contractName) {
         (transaction) => transaction.contractName === contractName,
     );
 
-    return tx?.contractAddress
-        ? ethers.utils.getAddress(tx.contractAddress)
-        : null;
+    return tx?.contractAddress ? ethers.getAddress(tx.contractAddress) : null;
 }
 
 function getAllContractAddresses(broadcast, contractName) {
@@ -86,13 +84,19 @@ function getAllContractAddresses(broadcast, contractName) {
 }
 
 function formatUnits(value, decimals) {
-    return ethers.utils.commify(ethers.utils.formatUnits(value, decimals));
+    return commify(ethers.formatUnits(value, decimals));
+}
+
+function commify(value) {
+    const [whole, fractional] = value.split(".");
+    const formattedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return fractional ? `${formattedWhole}.${fractional}` : formattedWhole;
 }
 
 async function waitForTransaction(txPromise, label) {
     const tx = await txPromise;
     const receipt = await tx.wait();
-    console.log(`  ${label} (${receipt.transactionHash})`);
+    console.log(`  ${label} (${receipt.hash ?? receipt.transactionHash})`);
     return receipt;
 }
 
@@ -112,11 +116,11 @@ async function topUpTokenBalances({
         const targetAmount = index === 0 ? whaleAmount : standardAmount;
         const currentBalance = await contract.balanceOf(account);
 
-        if (currentBalance.gte(targetAmount)) {
+        if (currentBalance >= targetAmount) {
             continue;
         }
 
-        const topUpAmount = targetAmount.sub(currentBalance);
+        const topUpAmount = targetAmount - currentBalance;
         await waitForTransaction(
             contract[mintMethod](account, topUpAmount),
             `${label}: topped up account #${index} by ${formatUnits(
@@ -130,31 +134,28 @@ async function topUpTokenBalances({
 async function distributeYSTokens(ysToken, walletAddress) {
     console.log("\nSeeding YS token balances...");
 
-    let requiredStandardTopUp = ethers.BigNumber.from(0);
+    let requiredStandardTopUp = 0n;
     for (let index = 1; index < ACCOUNTS.length; index += 1) {
         const account = ACCOUNTS[index];
         if (account.toLowerCase() === walletAddress) continue;
 
         const currentBalance = await ysToken.balanceOf(account);
-        if (currentBalance.lt(YS_STANDARD_AMOUNT)) {
-            requiredStandardTopUp = requiredStandardTopUp.add(
-                YS_STANDARD_AMOUNT.sub(currentBalance),
-            );
+        if (currentBalance < YS_STANDARD_AMOUNT) {
+            requiredStandardTopUp += YS_STANDARD_AMOUNT - currentBalance;
         }
     }
 
     const deployerBalance = await ysToken.balanceOf(walletAddress);
-    if (deployerBalance.lt(requiredStandardTopUp)) {
+    if (deployerBalance < requiredStandardTopUp) {
         throw new Error("Insufficient YS balance for standard accounts");
     }
 
     const governanceBalance = await ysToken.balanceOf(ACCOUNTS[0]);
-    const governanceTarget = governanceBalance.add(
-        deployerBalance.sub(requiredStandardTopUp),
-    );
+    const governanceTarget =
+        governanceBalance + deployerBalance - requiredStandardTopUp;
 
-    if (governanceBalance.lt(governanceTarget)) {
-        const amountToTransfer = governanceTarget.sub(governanceBalance);
+    if (governanceBalance < governanceTarget) {
+        const amountToTransfer = governanceTarget - governanceBalance;
         await waitForTransaction(
             ysToken.transfer(ACCOUNTS[0], amountToTransfer),
             `YS: funded account #0 with ${formatUnits(amountToTransfer, 18)}`,
@@ -166,11 +167,11 @@ async function distributeYSTokens(ysToken, walletAddress) {
         if (account.toLowerCase() === walletAddress) continue;
 
         const currentBalance = await ysToken.balanceOf(account);
-        if (currentBalance.gte(YS_STANDARD_AMOUNT)) {
+        if (currentBalance >= YS_STANDARD_AMOUNT) {
             continue;
         }
 
-        const amountToTransfer = YS_STANDARD_AMOUNT.sub(currentBalance);
+        const amountToTransfer = YS_STANDARD_AMOUNT - currentBalance;
         await waitForTransaction(
             ysToken.transfer(account, amountToTransfer),
             `YS: topped up account #${index} by ${formatUnits(
@@ -183,7 +184,7 @@ async function distributeYSTokens(ysToken, walletAddress) {
 
 async function main() {
     const broadcast = loadBroadcast();
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(DEPLOYER_PRIVATE_KEY, provider);
     const walletAddress = wallet.address.toLowerCase();
 
@@ -231,7 +232,7 @@ async function main() {
         await topUpTokenBalances({
             contract: token,
             accounts: ACCOUNTS,
-            whaleAmount: STANDARD_AMOUNT.mul(WHALE_MULTIPLIER),
+            whaleAmount: STANDARD_AMOUNT * WHALE_MULTIPLIER,
             standardAmount: STANDARD_AMOUNT,
             mintMethod: "mint",
             decimals: 18,
@@ -242,7 +243,7 @@ async function main() {
     await topUpTokenBalances({
         contract: usdc,
         accounts: ACCOUNTS,
-        whaleAmount: USDC_AMOUNT.mul(WHALE_MULTIPLIER),
+        whaleAmount: USDC_AMOUNT * WHALE_MULTIPLIER,
         standardAmount: USDC_AMOUNT,
         mintMethod: "mint",
         decimals: 6,
@@ -252,7 +253,7 @@ async function main() {
     await topUpTokenBalances({
         contract: gtusdc,
         accounts: ACCOUNTS,
-        whaleAmount: STANDARD_AMOUNT.mul(WHALE_MULTIPLIER),
+        whaleAmount: STANDARD_AMOUNT * WHALE_MULTIPLIER,
         standardAmount: STANDARD_AMOUNT,
         mintMethod: "mintShares",
         decimals: 18,

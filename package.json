@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/YieldShield/smart-contracts#readme",
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=22.14.0 <25"
   },
   "scripts": {
     "account": "make account",
@@ -37,6 +37,7 @@
     "verify": "make verify RPC_URL=${1:-localhost}"
   },
   "dependencies": {
+    "@pythnetwork/hermes-client": "^2.1.0",
     "@pythnetwork/pyth-evm-js": "^2.0.0",
     "axios": "^1.15.0",
     "dotenv": "~17.4.2",

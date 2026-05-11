@@ -12,9 +12,9 @@
  *   node scripts-js/pyth-keeper.js --check-stale --oracle <address> --tokens <token1>,<token2>
  */
 
-const { ethers } = require("ethers");
-const https = require("https");
-const http = require("http");
+import { ethers } from "ethers";
+import https from "https";
+import { pathToFileURL } from "url";
 
 // Pyth Hermes API endpoints
 const PYTH_HERMES_MAINNET = "https://hermes.pyth.network";
@@ -87,7 +87,7 @@ async function checkPriceStaleness(oracleContract, tokenAddresses) {
             results.push({
                 address: tokenAddress,
                 isStale,
-                publishTime: publishTime.toNumber(),
+                publishTime: Number(publishTime),
             });
             if (isStale) {
                 hasStale = true;
@@ -121,10 +121,10 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
     try {
         // Get the required fee
         const fee = await oracleContract.getUpdateFee(priceUpdateData);
-        console.log(`Update fee: ${ethers.utils.formatEther(fee)} ETH`);
+        console.log(`Update fee: ${ethers.formatEther(fee)} ETH`);
 
         // Estimate gas
-        const gasEstimate = await oracleContract.estimateGas.updatePriceFeeds(
+        const gasEstimate = await oracleContract.updatePriceFeeds.estimateGas(
             priceUpdateData,
             {
                 value: fee,
@@ -137,7 +137,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
             .connect(signer)
             .updatePriceFeeds(priceUpdateData, {
                 value: fee,
-                gasLimit: gasEstimate.mul(120).div(100), // Add 20% buffer
+                gasLimit: (gasEstimate * 120n) / 100n, // Add 20% buffer
             });
 
         console.log(`Transaction sent: ${tx.hash}`);
@@ -166,7 +166,7 @@ async function runKeeper(config) {
     } = config;
 
     // Setup provider and signer
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const signer = new ethers.Wallet(privateKey, provider);
 
     // Load PythOracle ABI (simplified - in production, load from artifacts)
@@ -216,7 +216,7 @@ async function runKeeper(config) {
 
                 // Convert to hex strings for contract call
                 const priceUpdateData = vaaBytes.map((vaa) =>
-                    ethers.utils.hexlify(vaa),
+                    ethers.hexlify(vaa),
                 );
 
                 // Update prices on-chain
@@ -238,7 +238,7 @@ async function runKeeper(config) {
 async function checkStalenessOnly(config) {
     const { rpcUrl, oracleAddress, tokenAddresses } = config;
 
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const oracleAbi = [
         "function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime)",
     ];
@@ -263,7 +263,10 @@ async function getPriceUpdateData(priceFeedIds, network = "testnet") {
 }
 
 // CLI interface
-if (require.main === module) {
+if (
+    process.argv[1] &&
+    import.meta.url === pathToFileURL(process.argv[1]).href
+) {
     const args = process.argv.slice(2);
     const config = {};
 
@@ -311,7 +314,7 @@ if (require.main === module) {
     }
 }
 
-module.exports = {
+export {
     fetchPriceUpdateData,
     checkPriceStaleness,
     updatePriceFeeds,

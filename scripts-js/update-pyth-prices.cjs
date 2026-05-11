@@ -15,11 +15,11 @@
  */
 
 const { ethers } = require("ethers");
-const { HermesClient } = require("@pythnetwork/hermes-client");
 const { spawn } = require("child_process");
 const { readdirSync, existsSync } = require("fs");
 const { join } = require("path");
 const readline = require("readline");
+const { resolvePythTokenConfigs } = require("./pyth-token-registry.cjs");
 
 // Load environment variables from .env file
 // __dirname is automatically available in CommonJS
@@ -52,19 +52,7 @@ function getOracleAddress() {
 }
 
 // Deployment addresses (Arbitrum Sepolia)
-// Note: These are the actual token addresses used by pools
 const ORACLE_ADDRESS = getOracleAddress();
-const SUSDE_ADDRESS = "0x1d804cd133b3cf35cff4b2cc19d7e6deefcd644a"; // Mock SUSDE
-const SDAI_ADDRESS = "0x6D59F75Cb4367299B6887C726d46805D7acd8ad0"; // Mock SDAI
-const USDY_ADDRESS = "0x4C53E534fD51127c1923d63261e5c1cd4a1d3580"; // Mock USDY
-
-// Feed IDs from PythConfig
-const SUSDE_FEED_ID =
-    "0xca3ba9a619a4b3755c10ac7d5e760275aa95e9823d38a84fedd416856cdba37c";
-const SDAI_FEED_ID =
-    "0x710659c5a68e2416ce4264ca8d50d34acc20041d91289110eea152c52ff3dc39";
-const USDY_FEED_ID =
-    "0xe393449f6aff8a4b6d3e1165a7c9ebec103685f3b41e60db4277b5b6d10e7326";
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
 const PYTH_HERMES_URL = "https://hermes.pyth.network/";
@@ -269,13 +257,16 @@ async function fetchPriceUpdateData(
 ) {
     // If contract expects VAAs, use the VAA endpoint
     if (useVAAs) {
-        return await fetchWormholeVAAs(priceIds, hermesUrl);
+        throw new Error(
+            "Wormhole VAA fetching is not implemented for this script",
+        );
     }
     console.log(`Connecting to Pyth Hermes: ${hermesUrl}`);
     console.log(`Fetching price updates for ${priceIds.length} feed(s)...`);
 
     try {
         // Create Hermes client connection with binary option enabled
+        const { HermesClient } = await import("@pythnetwork/hermes-client");
         const client = new HermesClient(hermesUrl, {
             priceFeedRequestConfig: {
                 binary: true,
@@ -446,7 +437,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         // Get the required fee
         console.log("\nCalculating update fee...");
         const fee = await oracleContract.getUpdateFee(priceUpdateData);
-        console.log(`Update fee: ${ethers.utils.formatEther(fee)} ETH`);
+        console.log(`Update fee: ${ethers.formatEther(fee)} ETH`);
         console.log(`Update fee (wei): ${fee.toString()}`);
 
         // Try to estimate gas, but if it fails, use a manual gas limit
@@ -454,12 +445,12 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         try {
             console.log("\nEstimating gas...");
             const gasEstimate =
-                await oracleContract.estimateGas.updatePriceFeeds(
+                await oracleContract.updatePriceFeeds.estimateGas(
                     priceUpdateData,
                     { value: fee },
                 );
             console.log(`Estimated gas: ${gasEstimate.toString()}`);
-            gasLimit = gasEstimate.mul(120).div(100); // Add 20% buffer
+            gasLimit = (gasEstimate * 120n) / 100n; // Add 20% buffer
             console.log(`Gas limit (with 20% buffer): ${gasLimit.toString()}`);
         } catch (estimateError) {
             console.warn("\n⚠ Gas estimation failed, using manual gas limit");
@@ -473,7 +464,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
                 }
             }
             // Use a large gas limit for price updates (typically 500k-1M)
-            gasLimit = ethers.BigNumber.from("1000000");
+            gasLimit = 1_000_000n;
             console.log(`Using manual gas limit: ${gasLimit.toString()}`);
         }
 
@@ -616,7 +607,7 @@ async function main() {
     }
 
     // Setup provider and signer
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const signer = new ethers.Wallet(privateKey, provider);
 
     // PythOracle ABI (minimal for updatePriceFeeds)
@@ -670,14 +661,19 @@ async function main() {
 
     // Check token configuration
     console.log("Checking token configuration...");
-    const tokensToCheck = [
-        { address: SUSDE_ADDRESS, name: "SUSDE", feedId: SUSDE_FEED_ID },
-        { address: SDAI_ADDRESS, name: "SDAI", feedId: SDAI_FEED_ID },
-        { address: USDY_ADDRESS, name: "USDY", feedId: USDY_FEED_ID },
-    ];
+    const tokensToCheck = resolvePythTokenConfigs({
+        rootDir: join(__dirname, ".."),
+    });
 
     const missingConfigs = [];
     for (const token of tokensToCheck) {
+        if (!token.address) {
+            console.warn(
+                `  ⚠ ${token.name}: no token address resolved; skipping config check`,
+            );
+            continue;
+        }
+
         try {
             const [isSupported, feedId] = await Promise.all([
                 oracleContract.isTokenSupported(token.address),
@@ -686,7 +682,13 @@ async function main() {
 
             const zeroHash =
                 "0x0000000000000000000000000000000000000000000000000000000000000000";
-            if (!isSupported || feedId === zeroHash) {
+            const expectedFeedId = token.feedId.toLowerCase();
+            const actualFeedId = feedId.toLowerCase();
+            if (
+                !isSupported ||
+                actualFeedId === zeroHash ||
+                actualFeedId !== expectedFeedId
+            ) {
                 console.warn(
                     `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`,
                 );
@@ -726,8 +728,7 @@ async function main() {
         console.log("\n✓ All tokens are properly configured\n");
     }
 
-    // Fetch price update data for all three tokens
-    const priceIds = [SUSDE_FEED_ID, SDAI_FEED_ID, USDY_FEED_ID];
+    const priceIds = [...new Set(tokensToCheck.map((token) => token.feedId))];
     console.log("\nFetching price update data from Pyth Hermes...");
     console.log("Feed IDs:", priceIds);
 
@@ -753,10 +754,10 @@ async function main() {
         await updatePriceFeeds(oracleContract, priceUpdateData, signer);
 
         console.log("\n✅ Price feeds updated successfully!");
-        console.log("\nYou can now use the oracle to get prices for:");
-        console.log(`  - SUSDE: ${SUSDE_ADDRESS}`);
-        console.log(`  - SDAI: ${SDAI_ADDRESS}`);
-        console.log(`  - USDY: ${USDY_ADDRESS}`);
+        console.log("\nRefreshed Pyth feeds for:");
+        tokensToCheck.forEach((token) => {
+            console.log(`  - ${token.name}: ${token.feedId}`);
+        });
     } catch (error) {
         console.error("\n❌ Failed to update price feeds:", error.message);
         process.exit(1);

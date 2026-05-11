@@ -18,33 +18,9 @@ const { existsSync, readdirSync } = require("fs");
 const { join } = require("path");
 const { execSync } = require("child_process");
 const readline = require("readline");
+const { resolvePythTokenConfigs } = require("./pyth-token-registry.cjs");
 
 require("dotenv").config({ path: join(__dirname, "..", ".env") });
-
-// Token configuration mapping
-const TOKEN_CONFIG = {
-    // SUSDE mock token
-    "0x1d804cd133b3cf35cff4b2cc19d7e6deefcd644a": {
-        name: "SUSDE",
-        feedId: "0xca3ba9a619a4b3755c10ac7d5e760275aa95e9823d38a84fedd416856cdba37c",
-    },
-    // SDAI mock token
-    "0x6D59F75Cb4367299B6887C726d46805D7acd8ad0": {
-        name: "SDAI",
-        feedId: "0x710659c5a68e2416ce4264ca8d50d34acc20041d91289110eea152c52ff3dc39",
-    },
-    // USDY mock token (if needed)
-    "0x4C53E534fD51127c1923d63261e5c1cd4a1d3580": {
-        name: "USDY",
-        feedId: "0xe393449f6aff8a4b6d3e1165a7c9ebec103685f3b41e60db4277b5b6d10e7326",
-    },
-    // gtUSDC mock token (Gauntlet USDC Prime vault)
-    // Uses USDC/USD feed since it's a vault backed by USDC
-    "0xa20bca225ec2251d60e995a1613790d8a3511b39": {
-        name: "gtUSDC",
-        feedId: "0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a", // USDC/USD feed
-    },
-};
 
 /**
  * Get Oracle address from deployment file
@@ -256,7 +232,7 @@ async function main() {
         process.exit(1);
     }
 
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const oracleAddress = getOracleAddress();
 
     // PythOracle ABI
@@ -273,15 +249,21 @@ async function main() {
     console.log("Oracle:", oracleAddress);
     console.log("Network:", (await provider.getNetwork()).name);
 
+    const pythTokenConfigs = resolvePythTokenConfigs({
+        rootDir: join(__dirname, ".."),
+    });
+
     // Check if we need to configure tokens from a pool
-    let tokensToCheck = Object.keys(TOKEN_CONFIG);
+    let tokensToCheck = pythTokenConfigs
+        .map((token) => token.address)
+        .filter(Boolean);
 
     if (poolAddress) {
         console.log(`\nReading tokens from pool: ${poolAddress}`);
         const poolTokens = await getPoolTokens(poolAddress, provider);
         if (poolTokens) {
             tokensToCheck = poolTokens.filter(
-                (t) => t && t !== ethers.constants.AddressZero,
+                (t) => t && t !== ethers.ZeroAddress,
             );
             console.log(`  Found tokens: ${tokensToCheck.join(", ")}`);
         }
@@ -291,10 +273,11 @@ async function main() {
     console.log("\n=== Checking Token Configuration ===");
     const tokensToConfigure = [];
 
-    // Normalize TOKEN_CONFIG keys to lowercase for lookup
+    // Normalize token config keys to lowercase for lookup
     const normalizedTokenConfig = {};
-    for (const [key, value] of Object.entries(TOKEN_CONFIG)) {
-        normalizedTokenConfig[key.toLowerCase()] = value;
+    for (const tokenConfig of pythTokenConfigs) {
+        if (!tokenConfig.address) continue;
+        normalizedTokenConfig[tokenConfig.address.toLowerCase()] = tokenConfig;
     }
 
     for (const tokenAddress of tokensToCheck) {
@@ -311,7 +294,11 @@ async function main() {
             tokenAddress,
         );
 
-        if (!isSupported || feedId === ethers.constants.HashZero) {
+        if (
+            !isSupported ||
+            feedId.toLowerCase() !== tokenInfo.feedId.toLowerCase() ||
+            feedId === ethers.ZeroHash
+        ) {
             console.warn(
                 `  ⚠ ${tokenInfo.name} (${tokenAddress}): NOT CONFIGURED`,
             );

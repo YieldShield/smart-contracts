@@ -55,13 +55,11 @@ async function getBalanceForEachNetwork(address) {
             console.log(`\n--${networkName}-- 📡`);
 
             try {
-                const provider = new ethers.providers.JsonRpcProvider(
-                    networkUrl,
-                );
+                const provider = new ethers.JsonRpcProvider(networkUrl);
 
                 // Get balance and format it
                 const balance = await provider.getBalance(address);
-                const formattedBalance = +ethers.utils.formatUnits(balance);
+                const formattedBalance = +ethers.formatUnits(balance);
 
                 console.log("   Balance:", formattedBalance);
                 console.log(

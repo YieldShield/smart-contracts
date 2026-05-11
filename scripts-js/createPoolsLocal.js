@@ -79,7 +79,7 @@ function dedupeAddresses(addresses) {
         const normalized = address.toLowerCase();
         if (seen.has(normalized)) continue;
         seen.add(normalized);
-        result.push(ethers.utils.getAddress(address));
+        result.push(ethers.getAddress(address));
     }
 
     return result;
@@ -94,7 +94,7 @@ function getDeploymentFactoryAddress() {
         const deployment = JSON.parse(readFileSync(DEPLOYMENT_PATH, "utf8"));
         for (const [address, name] of Object.entries(deployment)) {
             if (name === "SplitRiskPoolFactory") {
-                return ethers.utils.getAddress(address);
+                return ethers.getAddress(address);
             }
         }
     } catch {
@@ -109,9 +109,7 @@ function getFirstContractAddress(broadcast, contractName) {
         (transaction) => transaction.contractName === contractName,
     );
 
-    return tx?.contractAddress
-        ? ethers.utils.getAddress(tx.contractAddress)
-        : null;
+    return tx?.contractAddress ? ethers.getAddress(tx.contractAddress) : null;
 }
 
 function getAllContractAddresses(broadcast, contractName) {
@@ -125,7 +123,7 @@ function getAllContractAddresses(broadcast, contractName) {
 async function waitForTransaction(txPromise, label) {
     const tx = await txPromise;
     const receipt = await tx.wait();
-    console.log(`  ${label} (${receipt.transactionHash})`);
+    console.log(`  ${label} (${receipt.hash ?? receipt.transactionHash})`);
     return receipt;
 }
 
@@ -135,8 +133,8 @@ async function getCreationBondAmount(factory, provider, tokenAddress) {
         factory.compositeOracle(),
     ]);
 
-    if (minimumCreationBondUsd.isZero()) {
-        return ethers.constants.Zero;
+    if (minimumCreationBondUsd === 0n) {
+        return 0n;
     }
 
     const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
@@ -146,14 +144,14 @@ async function getCreationBondAmount(factory, provider, tokenAddress) {
         token.decimals(),
         oracle.getPrice(tokenAddress),
     ]);
-    const scale = ethers.BigNumber.from(10).pow(decimals);
+    const scale = 10n ** BigInt(decimals);
 
-    return minimumCreationBondUsd.mul(scale).add(price).sub(1).div(price);
+    return (minimumCreationBondUsd * scale + price - 1n) / price;
 }
 
 async function getHistoricalPools(factory) {
     const poolCount = await factory.poolCount();
-    if (poolCount.isZero()) {
+    if (poolCount === 0n) {
         return [];
     }
 
@@ -162,11 +160,12 @@ async function getHistoricalPools(factory) {
 
 async function main() {
     const broadcast = loadBroadcast();
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(DEPLOYER_PRIVATE_KEY, provider);
 
     const factoryAddress =
         getDeploymentFactoryAddress() ||
+        getFirstContractAddress(broadcast, "ERC1967Proxy") ||
         getFirstContractAddress(broadcast, "SplitRiskPoolFactory");
     const mockERC20Addresses = getAllContractAddresses(broadcast, "MockERC20");
     const gtusdcAddress = getFirstContractAddress(
@@ -216,7 +215,7 @@ async function main() {
             wallet,
         );
 
-        if (!creationBondAmount.isZero()) {
+        if (creationBondAmount !== 0n) {
             await waitForTransaction(
                 backingTokenContract.approve(
                     factoryAddress,
