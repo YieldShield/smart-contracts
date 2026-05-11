@@ -16,6 +16,10 @@ contract PythConfigHarness {
     function getFeedIdBySymbol(string memory symbol) external pure returns (bytes32) {
         return PythConfig.getFeedIdBySymbol(symbol);
     }
+
+    function getQuoteFeedIdBySymbol(string memory symbol) external pure returns (bytes32) {
+        return PythConfig.getQuoteFeedIdBySymbol(symbol);
+    }
 }
 
 /// @title Tests for oracle and factory bug fixes
@@ -112,6 +116,17 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertEq(usd0FeedId, PythConfig.USD0_USD_FEED_ID, "USD0 should use direct Pyth feed");
         assertEq(harness.getFeedIdBySymbol("usd0"), PythConfig.USD0_USD_FEED_ID, "lowercase USD0 should work");
         assertTrue(usd0FeedId != PythConfig.USDC_USD_FEED_ID, "USD0 should not reuse USDC feed");
+    }
+
+    function test_PythConfig_SusdsUsesComposedUsdsFeed() public {
+        PythConfigHarness harness = new PythConfigHarness();
+
+        bytes32 susdsFeedId = harness.getFeedIdBySymbol("SUSDS");
+        assertEq(susdsFeedId, PythConfig.SUSDS_USDS_FEED_ID, "SUSDS should use redemption-rate feed");
+        assertEq(harness.getQuoteFeedIdBySymbol("SUSDS"), PythConfig.USDS_USD_FEED_ID, "SUSDS should compose USDS/USD");
+        assertEq(harness.getFeedIdBySymbol("susds"), PythConfig.SUSDS_USDS_FEED_ID, "lowercase SUSDS should work");
+        assertEq(harness.getQuoteFeedIdBySymbol("susds"), PythConfig.USDS_USD_FEED_ID, "lowercase quote should work");
+        assertTrue(susdsFeedId != PythConfig.USDC_USD_FEED_ID, "SUSDS should not reuse USDC feed");
     }
 
     // ============ Bug 7: Factory removeToken Cleanup Tests ============

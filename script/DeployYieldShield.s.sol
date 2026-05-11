@@ -603,7 +603,8 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             compositeOracle.setTokenOracleFeedWithType(address(rlp), underlyingOracleAddr, "pyth");
 
             bytes32 susdsFeedId = PythConfig.getFeedIdBySymbol("SUSDS");
-            pythOracle.setTokenPriceFeed(address(susds), susdsFeedId);
+            bytes32 usdsUsdFeedId = PythConfig.getQuoteFeedIdBySymbol("SUSDS");
+            pythOracle.setTokenCompositePriceFeed(address(susds), susdsFeedId, usdsUsdFeedId);
             compositeOracle.setTokenOracleFeedWithType(address(susds), underlyingOracleAddr, "pyth");
 
             // USDC also uses Pyth (as underlying for gtUSDC)

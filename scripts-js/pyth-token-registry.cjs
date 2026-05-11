@@ -80,6 +80,8 @@ const PYTH_TOKEN_CONFIGS = [
     {
         name: "SUSDS",
         feedId: "0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f",
+        quoteFeedId:
+            "0x77f0971af11cc8bac224917275c1bf55f2319ed5c654a1ca955c82fa2d297ea1",
         contractName: "MockERC20",
         broadcastIndex: 10,
         env: "SUSDS_ADDRESS",

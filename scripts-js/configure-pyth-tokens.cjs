@@ -157,13 +157,19 @@ function getKeystoreAddress(keystoreName) {
  */
 async function checkTokenConfig(oracle, tokenAddress) {
     try {
-        const [isSupported, feedId] = await Promise.all([
+        const [isSupported, feedId, quoteFeedId] = await Promise.all([
             oracle.isTokenSupported(tokenAddress),
             oracle.tokenToPriceFeedId(tokenAddress),
+            oracle.tokenToQuotePriceFeedId(tokenAddress),
         ]);
-        return { isSupported, feedId };
+        return { isSupported, feedId, quoteFeedId };
     } catch (error) {
-        return { isSupported: false, feedId: null, error: error.message };
+        return {
+            isSupported: false,
+            feedId: null,
+            quoteFeedId: ethers.ZeroHash,
+            error: error.message,
+        };
     }
 }
 
@@ -175,14 +181,23 @@ async function configureToken(
     keystoreName,
     tokenAddress,
     feedId,
+    quoteFeedId,
     tokenName,
     rpcUrl,
 ) {
     try {
         console.log(`  Configuring ${tokenName} (${tokenAddress})...`);
 
-        // Use cast send with the keystore
-        const cmd = `cast send ${oracleAddress} "setTokenPriceFeed(address,bytes32)" ${tokenAddress} ${feedId} --account ${keystoreName} --rpc-url "${rpcUrl}"`;
+        const hasQuoteFeed =
+            quoteFeedId &&
+            quoteFeedId.toLowerCase() !== ethers.ZeroHash.toLowerCase();
+        const signature = hasQuoteFeed
+            ? "setTokenCompositePriceFeed(address,bytes32,bytes32)"
+            : "setTokenPriceFeed(address,bytes32)";
+        const args = hasQuoteFeed
+            ? `${tokenAddress} ${feedId} ${quoteFeedId}`
+            : `${tokenAddress} ${feedId}`;
+        const cmd = `cast send ${oracleAddress} "${signature}" ${args} --account ${keystoreName} --rpc-url "${rpcUrl}"`;
 
         console.log(`    Sending transaction...`);
         const output = execSync(cmd, {
@@ -238,8 +253,10 @@ async function main() {
     // PythOracle ABI
     const oracleAbi = [
         "function setTokenPriceFeed(address token, bytes32 feedId) external",
+        "function setTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external",
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
+        "function tokenToQuotePriceFeedId(address) external view returns (bytes32)",
         "function owner() external view returns (address)",
     ];
 
@@ -289,14 +306,21 @@ async function main() {
             continue;
         }
 
-        const { isSupported, feedId } = await checkTokenConfig(
+        const { isSupported, feedId, quoteFeedId } = await checkTokenConfig(
             oracle,
             tokenAddress,
         );
+        const expectedQuoteFeedId = (
+            tokenInfo.quoteFeedId || ethers.ZeroHash
+        ).toLowerCase();
+        const actualQuoteFeedId = (
+            quoteFeedId || ethers.ZeroHash
+        ).toLowerCase();
 
         if (
             !isSupported ||
             feedId.toLowerCase() !== tokenInfo.feedId.toLowerCase() ||
+            actualQuoteFeedId !== expectedQuoteFeedId ||
             feedId === ethers.ZeroHash
         ) {
             console.warn(
@@ -306,6 +330,9 @@ async function main() {
         } else {
             console.log(`  ✓ ${tokenInfo.name} (${tokenAddress}): configured`);
             console.log(`    Feed ID: ${feedId}`);
+            if (actualQuoteFeedId !== ethers.ZeroHash.toLowerCase()) {
+                console.log(`    Quote Feed ID: ${quoteFeedId}`);
+            }
         }
     }
 
@@ -352,6 +379,7 @@ async function main() {
             selectedKeystore,
             token.address,
             token.feedId,
+            token.quoteFeedId,
             token.name,
             rpcUrl,
         );

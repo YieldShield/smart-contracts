@@ -75,10 +75,17 @@ library PythConfig {
     /// @dev Feed ID: 0x796bcb684fdfbba2b071c165251511ab61f08c8949afd9e05665a26f69d9a839
     bytes32 public constant RLP_USD_FEED_ID = 0x796bcb684fdfbba2b071c165251511ab61f08c8949afd9e05665a26f69d9a839;
 
-    /// @notice Price feed ID for SUSDS/USD (Staked USD from Sky Protocol)
+    /// @notice Price feed ID for USDS/USD (Sky Protocol stablecoin)
+    /// @dev Feed available at: https://insights.pyth.network/price-feeds/Crypto.USDS%2FUSD
+    /// @dev Feed ID: 0x77f0971af11cc8bac224917275c1bf55f2319ed5c654a1ca955c82fa2d297ea1
+    bytes32 public constant USDS_USD_FEED_ID = 0x77f0971af11cc8bac224917275c1bf55f2319ed5c654a1ca955c82fa2d297ea1;
+
+    /// @notice Price feed ID for SUSDS/USDS (Staked USD from Sky Protocol redemption rate)
     /// @dev Feed available at: https://insights.pyth.network/price-feeds/Crypto.SUSDS%2FUSDS.RR
     /// @dev Feed ID: 0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f
-    bytes32 public constant SUSDS_USD_FEED_ID = 0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f;
+    bytes32 public constant SUSDS_USDS_FEED_ID = 0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f;
+    /// @dev Deprecated compatibility alias. This feed is SUSDS/USDS, not a direct USD quote.
+    bytes32 public constant SUSDS_USD_FEED_ID = SUSDS_USDS_FEED_ID;
 
     /// @notice Get Pyth contract address for a given chain ID
     /// @param chainId The chain ID to get the Pyth contract address for
@@ -101,7 +108,7 @@ library PythConfig {
     /// @dev JAAA uses DEJAAA/USD feed, USTB uses NAV.USTB/USD feed, USYC uses USYC/USD feed
     /// @dev STONE uses STONE/USD feed (direct USD price feed)
     /// @dev RLP uses RLP/USD feed (direct USD price feed)
-    /// @dev SUSDS uses SUSDS/USD feed (Sky Protocol staked USD)
+    /// @dev SUSDS uses SUSDS/USDS redemption-rate feed composed with USDS/USD by PythOracle
     /// @dev USDC uses USDC/USD feed, GTUSDC/gtUSDC uses USDC/USD feed (backed by USDC)
     /// @dev USD0 uses USD0/USD feed (Usual Protocol stablecoin)
     function getFeedIdBySymbol(string memory symbol) internal pure returns (bytes32 feedId) {
@@ -133,9 +140,9 @@ library PythConfig {
         } else if (symbolHash == keccak256(bytes("RLP"))) {
             // RLP uses RLP/USD feed (direct USD price feed)
             return RLP_USD_FEED_ID;
-        } else if (symbolHash == keccak256(bytes("SUSDS"))) {
-            // SUSDS uses SUSDS/USD feed (Sky Protocol staked USD)
-            return SUSDS_USD_FEED_ID;
+        } else if (symbolHash == keccak256(bytes("SUSDS")) || symbolHash == keccak256(bytes("susds"))) {
+            // SUSDS uses SUSDS/USDS feed, composed with USDS/USD by PythOracle.
+            return SUSDS_USDS_FEED_ID;
         } else if (symbolHash == keccak256(bytes("USDC"))) {
             // USDC uses USDC/USD feed
             return USDC_USD_FEED_ID;
@@ -148,5 +155,18 @@ library PythConfig {
         } else {
             revert("Unsupported token symbol");
         }
+    }
+
+    /// @notice Get optional quote/USD feed ID for symbols whose primary feed is not USD-denominated
+    /// @param symbol The token symbol
+    /// @return feedId The quote/USD feed ID, or bytes32(0) when no composition is needed
+    function getQuoteFeedIdBySymbol(string memory symbol) internal pure returns (bytes32 feedId) {
+        bytes32 symbolHash = keccak256(bytes(symbol));
+
+        if (symbolHash == keccak256(bytes("SUSDS")) || symbolHash == keccak256(bytes("susds"))) {
+            return USDS_USD_FEED_ID;
+        }
+
+        return bytes32(0);
     }
 }

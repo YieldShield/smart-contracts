@@ -617,6 +617,7 @@ async function main() {
         "function pyth() external view returns (address)",
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
+        "function tokenToQuotePriceFeedId(address) external view returns (bytes32)",
     ];
 
     const oracleContract = new ethers.Contract(
@@ -679,15 +680,30 @@ async function main() {
                 oracleContract.isTokenSupported(token.address),
                 oracleContract.tokenToPriceFeedId(token.address),
             ]);
+            let quoteFeedId = ethers.ZeroHash;
+            try {
+                quoteFeedId = await oracleContract.tokenToQuotePriceFeedId(
+                    token.address,
+                );
+            } catch (_) {
+                quoteFeedId = ethers.ZeroHash;
+            }
 
             const zeroHash =
                 "0x0000000000000000000000000000000000000000000000000000000000000000";
             const expectedFeedId = token.feedId.toLowerCase();
             const actualFeedId = feedId.toLowerCase();
+            const expectedQuoteFeedId = (
+                token.quoteFeedId || zeroHash
+            ).toLowerCase();
+            const actualQuoteFeedId = (
+                quoteFeedId || zeroHash
+            ).toLowerCase();
             if (
                 !isSupported ||
                 actualFeedId === zeroHash ||
-                actualFeedId !== expectedFeedId
+                actualFeedId !== expectedFeedId ||
+                actualQuoteFeedId !== expectedQuoteFeedId
             ) {
                 console.warn(
                     `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`,
@@ -714,8 +730,11 @@ async function main() {
         console.warn("    node scripts-js/configure-pyth-tokens.cjs");
         console.warn("\n  Missing configurations:");
         missingConfigs.forEach((token) => {
+            const quoteSuffix = token.quoteFeedId
+                ? `, Quote Feed ID: ${token.quoteFeedId}`
+                : "";
             console.warn(
-                `    - ${token.name} (${token.address}) → Feed ID: ${token.feedId}`,
+                `    - ${token.name} (${token.address}) → Feed ID: ${token.feedId}${quoteSuffix}`,
             );
         });
         console.warn(
@@ -728,7 +747,15 @@ async function main() {
         console.log("\n✓ All tokens are properly configured\n");
     }
 
-    const priceIds = [...new Set(tokensToCheck.map((token) => token.feedId))];
+    const priceIds = [
+        ...new Set(
+            tokensToCheck.flatMap((token) =>
+                token.quoteFeedId
+                    ? [token.feedId, token.quoteFeedId]
+                    : [token.feedId],
+            ),
+        ),
+    ];
     console.log("\nFetching price update data from Pyth Hermes...");
     console.log("Feed IDs:", priceIds);
 
@@ -757,6 +784,9 @@ async function main() {
         console.log("\nRefreshed Pyth feeds for:");
         tokensToCheck.forEach((token) => {
             console.log(`  - ${token.name}: ${token.feedId}`);
+            if (token.quoteFeedId) {
+                console.log(`    quote: ${token.quoteFeedId}`);
+            }
         });
     } catch (error) {
         console.error("\n❌ Failed to update price feeds:", error.message);

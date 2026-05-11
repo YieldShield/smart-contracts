@@ -35,11 +35,17 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Mapping from token address to Pyth price feed ID
     mapping(address => bytes32) public tokenToPriceFeedId;
 
+    /// @notice Optional quote/USD feed for redemption-rate feeds (e.g. token/USDS * USDS/USD)
+    mapping(address => bytes32) public tokenToQuotePriceFeedId;
+
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
     /// @notice Emitted when a token's price feed ID is set or updated
     event TokenPriceFeedSet(address indexed token, bytes32 indexed feedId);
+
+    /// @notice Emitted when a token's composite price feed IDs are set or updated
+    event TokenCompositePriceFeedSet(address indexed token, bytes32 indexed baseFeedId, bytes32 indexed quoteFeedId);
 
     /// @notice Emitted when max price age is updated
     event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
@@ -141,15 +147,33 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         if (feedId == bytes32(0)) revert InvalidPriceFeedId(feedId);
 
         tokenToPriceFeedId[token] = feedId;
+        tokenToQuotePriceFeedId[token] = bytes32(0);
         isTokenSupported[token] = true;
 
         emit TokenPriceFeedSet(token, feedId);
+    }
+
+    /// @notice Set a composite price feed for a token quoted against a non-USD asset
+    /// @param token The token address
+    /// @param baseFeedId The Pyth feed ID for token/quote
+    /// @param quoteUsdFeedId The Pyth feed ID for quote/USD
+    function setTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external onlyOwner {
+        if (token == address(0)) revert("Invalid token address");
+        if (baseFeedId == bytes32(0)) revert InvalidPriceFeedId(baseFeedId);
+        if (quoteUsdFeedId == bytes32(0)) revert InvalidPriceFeedId(quoteUsdFeedId);
+
+        tokenToPriceFeedId[token] = baseFeedId;
+        tokenToQuotePriceFeedId[token] = quoteUsdFeedId;
+        isTokenSupported[token] = true;
+
+        emit TokenCompositePriceFeedSet(token, baseFeedId, quoteUsdFeedId);
     }
 
     /// @notice Remove support for a token
     /// @param token The token address to remove
     function removeToken(address token) external onlyOwner {
         delete tokenToPriceFeedId[token];
+        delete tokenToQuotePriceFeedId[token];
         isTokenSupported[token] = false;
 
         emit TokenPriceFeedSet(token, bytes32(0));
@@ -193,10 +217,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @return price The price in USD with 8 decimals
     /// @dev Reverts if token is not supported or price is stale
     function getPrice(address token) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
-        bytes32 feedId = _getFeedId(token);
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, priceData);
-        return _convertPrice(token, priceData);
+        return _getPythPrice(token, false);
     }
 
     /// @notice Calculate the value of an amount of tokens in USD (8 decimals)
@@ -235,15 +256,16 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @return publishTime The publish time of the current price
     function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
         bytes32 feedId = _getFeedId(token);
-        try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
-            uint256 rawPublishTime = priceData.publishTime;
-            uint256 currentTime = block.timestamp;
-            isStale = (currentTime > rawPublishTime) && ((currentTime - rawPublishTime) > maxPriceAge);
-            publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
-        } catch {
-            isStale = true;
-            publishTime = 0;
+        bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
+
+        (bool baseStale, uint64 basePublishTime) = _isFeedStale(feedId);
+        if (quoteFeedId == bytes32(0)) {
+            return (baseStale, basePublishTime);
         }
+
+        (bool quoteStale, uint64 quotePublishTime) = _isFeedStale(quoteFeedId);
+        uint64 oldestPublishTime = basePublishTime < quotePublishTime ? basePublishTime : quotePublishTime;
+        return (baseStale || quoteStale, oldestPublishTime);
     }
 
     /// @notice Get the update fee for price feeds
@@ -301,6 +323,42 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         }
     }
 
+    function _getPythPrice(address token, bool useEma) internal view returns (uint256) {
+        bytes32 feedId = _getFeedId(token);
+        uint256 basePrice = _readPythPrice(token, feedId, useEma);
+
+        bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
+        if (quoteFeedId == bytes32(0)) {
+            return basePrice;
+        }
+
+        uint256 quoteUsdPrice = _readPythPrice(token, quoteFeedId, useEma);
+        return Math.mulDiv(basePrice, quoteUsdPrice, 1e8);
+    }
+
+    function _readPythPrice(address token, bytes32 feedId, bool useEma) internal view returns (uint256) {
+        PythStructs.Price memory priceData;
+        if (useEma) {
+            priceData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        } else {
+            priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        }
+        _validateConfidence(token, priceData);
+        return _convertPrice(token, priceData);
+    }
+
+    function _isFeedStale(bytes32 feedId) internal view returns (bool isStale, uint64 publishTime) {
+        try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
+            uint256 rawPublishTime = priceData.publishTime;
+            uint256 currentTime = block.timestamp;
+            isStale = (currentTime > rawPublishTime) && ((currentTime - rawPublishTime) > maxPriceAge);
+            publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
+        } catch {
+            isStale = true;
+            publishTime = 0;
+        }
+    }
+
     /// @dev Calculate price deviation in basis points using OracleValidationLib
     /// @param spotPrice The spot price
     /// @param emaPrice The EMA price
@@ -316,15 +374,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @param token The token address
     /// @return price The spot price in USD with 8 decimals (if within deviation threshold)
     function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
-        bytes32 feedId = _getFeedId(token);
-
-        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, spotData);
-        uint256 spotPrice = _convertPrice(token, spotData);
-
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, emaData);
-        uint256 emaPrice = _convertPrice(token, emaData);
+        uint256 spotPrice = _getPythPrice(token, false);
+        uint256 emaPrice = _getPythPrice(token, true);
 
         // Prevent division by zero in deviation calculation
         if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
@@ -369,16 +420,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @return price The price in USD with 8 decimals
     /// @return isReliable True if spot price passed circuit breaker, false if using EMA fallback
     function getPriceWithFallback(address token) external view returns (uint256 price, bool isReliable) {
-        bytes32 feedId = _getFeedId(token);
-
-        // Get both spot and EMA prices
-        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, spotData);
-        uint256 spotPrice = _convertPrice(token, spotData);
-
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, emaData);
-        uint256 emaPrice = _convertPrice(token, emaData);
+        uint256 spotPrice = _getPythPrice(token, false);
+        uint256 emaPrice = _getPythPrice(token, true);
 
         // Prevent division by zero in deviation calculation
         if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
@@ -411,10 +454,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @param token The token address
     /// @return price The EMA price in USD with 8 decimals
     function getEmaPrice(address token) external view returns (uint256) {
-        bytes32 feedId = _getFeedId(token);
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
-        _validateConfidence(token, emaData);
-        return _convertPrice(token, emaData);
+        return _getPythPrice(token, true);
     }
 
     // ============ IOracleFeed Interface Implementation ============
