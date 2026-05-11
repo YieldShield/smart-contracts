@@ -128,13 +128,15 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         timelock.grantRole(timelock.PROPOSER_ROLE(), governor);
         timelock.grantRole(timelock.EXECUTOR_ROLE(), governor);
-        timelock.grantRole(timelock.CANCELLER_ROLE(), governor);
 
         assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
         assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(timelock)));
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(0)));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(0)));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(0)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), governor));
 
+        timelock.grantRole(timelock.CANCELLER_ROLE(), governor);
         timelock.revokeRole(timelock.PROPOSER_ROLE(), address(0));
         timelock.revokeRole(timelock.EXECUTOR_ROLE(), address(0));
         timelock.revokeRole(timelock.CANCELLER_ROLE(), address(0));

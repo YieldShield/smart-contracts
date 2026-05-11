@@ -37,6 +37,11 @@ contract RenounceLegacySepoliaTimelockAdmin is Script {
             revert BroadcasterMustBeLegacyAdmin(broadcaster);
         }
 
+        // The live 421614 timelock was deployed with open roles and without the
+        // governor as canceller. Repair the governor role before closing the
+        // public role so governance keeps a complete TimelockController role set.
+        _grantGovernorRoleIfMissing(timelock, timelock.CANCELLER_ROLE());
+
         _revokeOpenRoleIfPresent(timelock, timelock.PROPOSER_ROLE());
         _revokeOpenRoleIfPresent(timelock, timelock.EXECUTOR_ROLE());
         _revokeOpenRoleIfPresent(timelock, timelock.CANCELLER_ROLE());
@@ -58,7 +63,6 @@ contract RenounceLegacySepoliaTimelockAdmin is Script {
 
         _requireGovernorRole(timelock, timelock.PROPOSER_ROLE());
         _requireGovernorRole(timelock, timelock.EXECUTOR_ROLE());
-        _requireGovernorRole(timelock, timelock.CANCELLER_ROLE());
     }
 
     function _validatePostconditions(TimelockController timelock) internal view {
@@ -74,6 +78,8 @@ contract RenounceLegacySepoliaTimelockAdmin is Script {
         if (timelock.hasRole(timelock.CANCELLER_ROLE(), address(0))) {
             revert TimelockRoleStillOpen(timelock.CANCELLER_ROLE());
         }
+
+        _requireGovernorRole(timelock, timelock.CANCELLER_ROLE());
     }
 
     function _requireGovernorRole(TimelockController timelock, bytes32 role) internal view {
@@ -85,6 +91,12 @@ contract RenounceLegacySepoliaTimelockAdmin is Script {
     function _revokeOpenRoleIfPresent(TimelockController timelock, bytes32 role) internal {
         if (timelock.hasRole(role, address(0))) {
             timelock.revokeRole(role, address(0));
+        }
+    }
+
+    function _grantGovernorRoleIfMissing(TimelockController timelock, bytes32 role) internal {
+        if (!timelock.hasRole(role, LEGACY_GOVERNOR)) {
+            timelock.grantRole(role, LEGACY_GOVERNOR);
         }
     }
 }
