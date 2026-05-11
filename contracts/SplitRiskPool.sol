@@ -831,11 +831,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
-        IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
-
-        if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
-        if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
-
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
         // Probe the protected shielded price up-front. Same-asset exits burn the receipt
@@ -844,6 +839,33 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (!priceAvailable) {
             revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
         }
+
+        return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
+    }
+
+    /// @dev Best-effort fee accrual for shield activation. If protected shielded
+    ///      pricing is unavailable, the coverage path continues and forfeits the
+    ///      full shielded position to protectors.
+    function _tryCalculateAndAccumulateFees(uint256 tokenId)
+        internal
+        returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
+    {
+        if (_hasOraclePendingChallenge(SHIELDED_TOKEN)) return (0, 0, 0);
+
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
+        if (!priceAvailable) return (0, 0, 0);
+
+        return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
+    }
+
+    function _calculateAndAccumulateFeesAtPrice(uint256 tokenId, uint256 currentPrice)
+        internal
+        returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
+    {
+        IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
+
+        if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
+        if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
 
         // Get current USD value (USD-BASED for yield calculation)
         uint256 currentValue = Math.mulDiv(pos.amount, currentPrice, shieldedTokenScale);
@@ -1289,6 +1311,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
                 _calculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
+        } else {
+            // Shield activation should not be blocked by a broken shielded-token
+            // price path, but it should still collect yield fees when protected
+            // fee pricing is currently available.
+            (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
+                _tryCalculateAndAccumulateFees(tokenId);
+            totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         }
 
         // Burn NFT (position data is deleted by burn, no need to update first)
@@ -1314,7 +1343,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             _ensureProtectorSharesInitialized();
-            uint256 forfeitedShieldedAmount = pos.amount;
+            uint256 forfeitedShieldedAmount = pos.amount - totalFees;
             (uint256 accumulatedReward, uint256 redirectedReward) =
                 _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
             if (accumulatedReward + redirectedReward != forfeitedShieldedAmount) {

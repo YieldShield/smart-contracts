@@ -315,6 +315,25 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(shieldedPoolBalance, 0, "claimed forfeiture should clear shielded pool balance");
     }
 
+    function test_crossAssetShieldActivationAccruesYieldFeesWhenProtectedPriceAvailable() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        assertEq(pool.accumulatedPoolFee(), 25e17, "pool fee should accrue on activation yield");
+        assertEq(pool.accumulatedProtocolFee(), 5e17, "protocol fee should accrue on activation yield");
+        assertEq(pool.getClaimableCommission(protectorTokenId), 97e18, "commission plus forfeiture goes to protector");
+        assertEq(pool.getReservedFees(), 100e18, "forfeiture and fees should stay fully reserved");
+    }
+
     function test_crossAssetShieldActivationDoesNotRequireCurrentShieldedPrice() public {
         vm.prank(protector1);
         uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
