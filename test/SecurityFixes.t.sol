@@ -283,8 +283,7 @@ contract SecurityFixesTest is Test {
 
     function test_UpdatePoolConfigRejectsMaxDepositsAboveAccumulatorCap() public {
         (
-            uint256 shieldedMinDepositAmount,
-            ,
+            uint256 shieldedMinDepositAmount,,
             uint256 backingMinDepositAmount,
             uint256 backingMaxDepositAmount,
             uint256 maxTotalValueLockedUsd,

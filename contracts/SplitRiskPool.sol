@@ -2172,8 +2172,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         if (
-            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS
-                || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
+            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
         ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
