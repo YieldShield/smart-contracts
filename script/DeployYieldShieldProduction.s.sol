@@ -60,9 +60,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             revert ProductionTimelockTooShort(timelockDelay, MIN_PRODUCTION_TIMELOCK_DELAY);
         }
         bootstrapHolder = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER");
-        if (bootstrapHolder == address(0)) {
-            revert InvalidProductionBootstrapHolder(bootstrapHolder);
-        }
+        _validateProductionBootstrapHolder(bootstrapHolder);
 
         address[] memory emptyAccounts = new address[](0);
         TimelockController timelock = new TimelockController(timelockDelay, emptyAccounts, emptyAccounts, deployer);
@@ -190,5 +188,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _isLocalNetwork() internal view returns (bool) {
         return block.chainid == 31337 || block.chainid == 1337;
+    }
+
+    function _validateProductionBootstrapHolder(address holder) internal view {
+        if (holder == address(0) || holder.code.length == 0) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
     }
 }

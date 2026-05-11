@@ -11,8 +11,17 @@ import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { DeployYieldShieldProduction } from "../script/DeployYieldShieldProduction.s.sol";
 import { FinalizeYieldShieldProductionGovernance } from "../script/FinalizeYieldShieldProductionGovernance.s.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
+
+contract ProductionDeployHarness is DeployYieldShieldProduction {
+    function validateProductionBootstrapHolder(address holder) external view {
+        _validateProductionBootstrapHolder(holder);
+    }
+}
+
+contract ContractBootstrapHolder { }
 
 contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     uint256 internal constant TIMELOCK_DELAY = 2 days;
@@ -41,6 +50,24 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         vm.warp(block.timestamp + 1);
 
         assertGe(ysToken.getVotes(bootstrapHolder), governor.proposalThreshold());
+    }
+
+    function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, bootstrapHolder
+            )
+        );
+        harness.validateProductionBootstrapHolder(bootstrapHolder);
+    }
+
+    function test_ProductionBootstrap_AllowsContractBootstrapHolder() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        ContractBootstrapHolder contractHolder = new ContractBootstrapHolder();
+
+        harness.validateProductionBootstrapHolder(address(contractHolder));
     }
 
     function test_ProductionBootstrap_FinalizerRequiresPastVotesCheckpoint() public {
