@@ -59,6 +59,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
+    /// @notice Minimum harmonic-average pool liquidity required across the TWAP window
+    uint128 public minimumAverageLiquidity;
+
     /// @notice Quote token for USD conversion (e.g., USDC)
     /// @dev I-5 FIX: Made immutable for gas optimization (set only in constructor)
     address public immutable quoteToken;
@@ -78,8 +81,14 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Emitted when quote token oracle is updated
     event QuoteTokenOracleUpdated(address indexed oldOracle, address indexed newOracle);
 
+    /// @notice Emitted when minimum average liquidity is updated
+    event MinimumAverageLiquidityUpdated(uint128 oldMinimum, uint128 newMinimum);
+
     /// @notice Minimum allowed TWAP period (5 minutes)
     uint32 public constant MIN_TWAP_PERIOD = 300;
+
+    /// @notice Default minimum harmonic-average liquidity across the TWAP window
+    uint128 public constant DEFAULT_MINIMUM_AVERAGE_LIQUIDITY = 1_000_000;
 
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
@@ -96,6 +105,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Custom error for token decimal configurations that overflow scaling math
     error UnsupportedTokenDecimals(address token, uint8 decimals);
 
+    /// @notice Custom error for pools below the configured average-liquidity floor
+    error InsufficientTWAPLiquidity(address pool, uint128 observedLiquidity, uint128 minimumLiquidity);
+
     /// @notice Constructor
     /// @param _twapPeriod TWAP observation period in seconds
     /// @param _quoteToken Quote token address (e.g., USDC)
@@ -109,6 +121,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         quoteToken = _quoteToken;
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
         quoteTokenScale = _getTokenScale(_quoteToken);
+        minimumAverageLiquidity = DEFAULT_MINIMUM_AVERAGE_LIQUIDITY;
     }
 
     /// @notice Set the Uniswap V3 pool for a token
@@ -133,19 +146,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
             revert InvalidPool(pool);
         }
 
-        // Probe `observe` for the current TWAP period so that pools with insufficient
-        // observation cardinality are rejected at registration rather than later
-        // bricking `getPrice`. This isn't a manipulation defence (low-liquidity pools
-        // are still movable over short periods — operators must choose pools with
-        // adequate liquidity for the chosen TWAP period); it just catches grossly
-        // underprovisioned pools.
-        uint32[] memory secondsAgos = new uint32[](2);
-        secondsAgos[0] = twapPeriod;
-        secondsAgos[1] = 0;
-        try v3Pool.observe(secondsAgos) returns (int56[] memory, uint160[] memory) { }
-        catch {
-            revert InvalidPool(pool);
-        }
+        (, uint160[] memory secondsPerLiquidityCumulativeX128s) = _safeObserveTwapWindow(v3Pool, pool);
+        _validateAverageLiquidity(pool, secondsPerLiquidityCumulativeX128s);
 
         tokenPools[token] = pool;
         isToken0[token] = _isToken0;
@@ -174,6 +176,14 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         emit TWAPPeriodUpdated(oldPeriod, _twapPeriod);
     }
 
+    /// @notice Set the minimum harmonic-average liquidity required across the TWAP window
+    /// @dev Setting this to zero disables the liquidity floor, which should only be used for testing or emergencies.
+    function setMinimumAverageLiquidity(uint128 newMinimum) external onlyOwner {
+        uint128 oldMinimum = minimumAverageLiquidity;
+        minimumAverageLiquidity = newMinimum;
+        emit MinimumAverageLiquidityUpdated(oldMinimum, newMinimum);
+    }
+
     /// @notice Set the quote token oracle
     /// @param _quoteTokenOracle New quote token oracle address
     function setQuoteTokenOracle(address _quoteTokenOracle) external onlyOwner {
@@ -192,7 +202,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         address pool = tokenPools[token];
         bool _isToken0 = isToken0[token];
 
-        // Get TWAP tick
+        // Get liquidity-validated TWAP tick
         int24 twapTick = _getTWAPTick(pool);
 
         // Convert tick to price
@@ -227,13 +237,34 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     }
 
     /// @notice Check if a price is stale for a given token
-    /// @dev TWAP feeds are inherently fresh if pool.observe() succeeds, so always return not-stale.
-    ///      This ensures ERC4626OracleFeed can query staleness on TWAP-backed vaults.
-    ///      The address parameter is unused but kept for interface compatibility.
-    /// @return isStale Always false (TWAP is computed on-chain from recent observations)
-    /// @return publishTime Current block timestamp
-    function isPriceStale(address) external view returns (bool isStale, uint64 publishTime) {
-        return (false, uint64(block.timestamp));
+    /// @dev Returns stale if the pool can no longer serve the TWAP window or falls below the liquidity floor.
+    /// @return isStale True when the TWAP window is unavailable or below the liquidity floor
+    /// @return publishTime Current block timestamp when fresh, zero when stale
+    function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
+        if (!isTokenSupported[token]) {
+            return (true, 0);
+        }
+
+        address pool = tokenPools[token];
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = twapPeriod;
+        secondsAgos[1] = 0;
+
+        try IUniswapV3Pool(pool).observe(secondsAgos) returns (
+            int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s
+        ) {
+            if (tickCumulatives.length != 2 || secondsPerLiquidityCumulativeX128s.length != 2) {
+                return (true, 0);
+            }
+            uint128 averageLiquidity = _getAverageLiquidity(secondsPerLiquidityCumulativeX128s);
+            uint128 minimumLiquidity = minimumAverageLiquidity;
+            if (minimumLiquidity != 0 && averageLiquidity < minimumLiquidity) {
+                return (true, 0);
+            }
+            return (false, uint64(block.timestamp));
+        } catch {
+            return (true, 0);
+        }
     }
 
     /// @notice Get the current spot tick from a pool
@@ -247,11 +278,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @param pool The Uniswap V3 pool address
     /// @return tick The TWAP tick
     function _getTWAPTick(address pool) internal view returns (int24) {
-        uint32[] memory secondsAgos = new uint32[](2);
-        secondsAgos[0] = twapPeriod;
-        secondsAgos[1] = 0;
-
-        (int56[] memory tickCumulatives,) = IUniswapV3Pool(pool).observe(secondsAgos);
+        (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) =
+            _safeObserveTwapWindow(IUniswapV3Pool(pool), pool);
+        _validateAverageLiquidity(pool, secondsPerLiquidityCumulativeX128s);
 
         int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
         int24 twapTick = int24(tickCumulativesDelta / int56(int32(twapPeriod)));
@@ -290,6 +319,54 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         }
 
         return FullMath.mulDiv(rawPriceX18, tokenScale, quoteScale);
+    }
+
+    function _safeObserveTwapWindow(IUniswapV3Pool pool, address poolAddress)
+        internal
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
+    {
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = twapPeriod;
+        secondsAgos[1] = 0;
+
+        try pool.observe(secondsAgos) returns (
+            int56[] memory observedTickCumulatives, uint160[] memory observedSecondsPerLiquidityCumulativeX128s
+        ) {
+            tickCumulatives = observedTickCumulatives;
+            secondsPerLiquidityCumulativeX128s = observedSecondsPerLiquidityCumulativeX128s;
+        } catch {
+            revert InvalidPool(poolAddress);
+        }
+
+        if (tickCumulatives.length != 2 || secondsPerLiquidityCumulativeX128s.length != 2) {
+            revert InvalidPool(poolAddress);
+        }
+    }
+
+    function _validateAverageLiquidity(address pool, uint160[] memory secondsPerLiquidityCumulativeX128s)
+        internal
+        view
+    {
+        uint128 minimumLiquidity = minimumAverageLiquidity;
+        if (minimumLiquidity == 0) {
+            return;
+        }
+
+        uint128 averageLiquidity = _getAverageLiquidity(secondsPerLiquidityCumulativeX128s);
+        if (averageLiquidity < minimumLiquidity) {
+            revert InsufficientTWAPLiquidity(pool, averageLiquidity, minimumLiquidity);
+        }
+    }
+
+    function _getAverageLiquidity(uint160[] memory secondsPerLiquidityCumulativeX128s) internal view returns (uint128) {
+        uint160 delta = secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
+        if (delta == 0) {
+            return type(uint128).max;
+        }
+
+        uint256 averageLiquidity = (uint256(twapPeriod) << 128) / uint256(delta);
+        return averageLiquidity > type(uint128).max ? type(uint128).max : uint128(averageLiquidity);
     }
 
     function _getTokenScale(address token) internal view returns (uint256) {

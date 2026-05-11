@@ -20,6 +20,51 @@ contract UniswapV3TWAPHarness is UniswapV3TWAPFeed {
     }
 }
 
+contract MockUniswapV3Pool {
+    address public token0;
+    address public token1;
+    int24 public tick;
+    uint128 public averageLiquidity;
+    bool public shouldRevertObserve;
+
+    constructor(address token0_, address token1_, int24 tick_, uint128 averageLiquidity_) {
+        token0 = token0_;
+        token1 = token1_;
+        tick = tick_;
+        averageLiquidity = averageLiquidity_;
+    }
+
+    function setAverageLiquidity(uint128 averageLiquidity_) external {
+        averageLiquidity = averageLiquidity_;
+    }
+
+    function setShouldRevertObserve(bool shouldRevertObserve_) external {
+        shouldRevertObserve = shouldRevertObserve_;
+    }
+
+    function observe(uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
+    {
+        if (shouldRevertObserve) revert("observe unavailable");
+
+        uint32 period = secondsAgos[0];
+        tickCumulatives = new int56[](2);
+        tickCumulatives[0] = 0;
+        tickCumulatives[1] = int56(tick) * int56(uint56(period));
+
+        secondsPerLiquidityCumulativeX128s = new uint160[](2);
+        secondsPerLiquidityCumulativeX128s[0] = 0;
+        secondsPerLiquidityCumulativeX128s[1] =
+            averageLiquidity == 0 ? type(uint160).max : uint160((uint256(period) << 128) / averageLiquidity);
+    }
+
+    function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint8, bool) {
+        return (0, tick, 0, 0, 0, 0, true);
+    }
+}
+
 contract UniswapV3TWAPFeedTest is Test {
     UniswapV3TWAPHarness public harness;
     MockOracle public quoteOracle;
@@ -87,5 +132,65 @@ contract UniswapV3TWAPFeedTest is Test {
 
         assertEq(humanUnitPrice, rawUnitPrice / 1e12, "6/18 pair must scale raw pool ratio down");
         assertApproxEqRel(humanUnitPrice, 1e18, 1e15, "one whole token should price near one whole quote");
+    }
+
+    function test_setTokenPool_RevertsWhenAverageLiquidityBelowFloor() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool = new MockUniswapV3Pool(
+            address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.InsufficientTWAPLiquidity.selector,
+                address(pool),
+                harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1,
+                harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
+            )
+        );
+        harness.setTokenPool(address(token), address(pool));
+    }
+
+    function test_getPrice_RevertsWhenRegisteredPoolLiquidityFallsBelowFloor() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+
+        harness.setTokenPool(address(token), address(pool));
+        assertEq(harness.getPrice(address(token)), 1e8);
+
+        pool.setAverageLiquidity(harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.InsufficientTWAPLiquidity.selector,
+                address(pool),
+                harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1,
+                harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
+            )
+        );
+        harness.getPrice(address(token));
+    }
+
+    function test_isPriceStale_ReflectsObserveAndLiquidityFailures() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+
+        (bool isStale, uint64 publishTime) = harness.isPriceStale(address(token));
+        assertFalse(isStale);
+        assertEq(publishTime, uint64(block.timestamp));
+
+        pool.setAverageLiquidity(harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1);
+        (isStale, publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+
+        pool.setAverageLiquidity(harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        pool.setShouldRevertObserve(true);
+        (isStale, publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
     }
 }
