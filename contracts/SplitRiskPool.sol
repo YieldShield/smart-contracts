@@ -909,13 +909,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Best-effort fee accrual for shield activation. If protected shielded
-    ///      pricing is unavailable, the coverage path continues and forfeits the
-    ///      full shielded position to protectors. Pending oracle challenges do not
-    ///      bypass fee pricing when the active protected price is still available.
+    ///      pricing is unavailable, or the shielded token's active feed is under
+    ///      challenge, the coverage path continues and forfeits the full shielded
+    ///      position to protectors instead of pricing fees from a suspect feed.
     function _tryCalculateAndAccumulateFees(uint256 tokenId)
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
+        if (_hasOraclePendingChallenge(SHIELDED_TOKEN)) return (0, 0, 0);
+
         (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
         if (!priceAvailable) return (0, 0, 0);
 
