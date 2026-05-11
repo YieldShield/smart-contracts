@@ -46,8 +46,11 @@ contract PythEMAOracleFeedTest is Test {
         feed.getPrice(address(token));
     }
 
-    function testGetPriceWithCircuitBreaker_ReturnsEmaPrice() public view {
-        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 1e8);
+    function testGetPriceWithCircuitBreakerSelectorFailsClosed() public view {
+        (bool success,) =
+            address(feed).staticcall(abi.encodeWithSignature("getPriceWithCircuitBreaker(address)", address(token)));
+
+        assertFalse(success);
     }
 
     function testGetPrice_RevertsWhenConfidenceTooWide() public {
@@ -69,11 +72,14 @@ contract PythEMAOracleFeedTest is Test {
         assertEq(feed.getPrice(address(token)), 1e8);
     }
 
-    function testCompositeOracleUsesEmaCircuitBreakerPrice() public {
+    function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(address(token), address(feed));
 
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), 1e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(feed))
+        );
+        compositeOracle.getPriceWithCircuitBreaker(address(token));
     }
 
     function testGetPriceWithPositiveExpo() public {
@@ -81,7 +87,6 @@ contract PythEMAOracleFeedTest is Test {
         _updatePriceFeed(FEED_ID, 123, 1, 2, uint64(block.timestamp));
 
         assertEq(feed.getPrice(address(token)), 12_300e8);
-        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 12_300e8);
     }
 
     function testGetPriceWithZeroExpo() public {
@@ -89,6 +94,5 @@ contract PythEMAOracleFeedTest is Test {
         _updatePriceFeed(FEED_ID, 1e8, 1e6, 0, uint64(block.timestamp));
 
         assertEq(feed.getPrice(address(token)), 1e16);
-        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 1e16);
     }
 }

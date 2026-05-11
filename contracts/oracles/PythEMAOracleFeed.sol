@@ -9,7 +9,9 @@ import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 /// @title PythEMAOracleFeed
 /// @author David Hawig
 /// @notice Oracle feed that returns Pyth EMA prices (stability-focused)
-/// @dev Used as primary feed in CompositeOracle dual-feed mode for smoother, more stable pricing
+/// @dev Used as a plain-price feed in CompositeOracle dual-feed mode for smoother, more stable pricing.
+///      EMA-only pricing intentionally does not expose getPriceWithCircuitBreaker(); protected pool paths
+///      must use a feed that validates spot/EMA deviation or another independent circuit breaker.
 ///      All price outputs are normalized to 8 decimals (USD format).
 /// - getPrice() returns: EMA price with 8 decimals (e.g., $1.00 = 1e8, $1234.56 = 123456000000)
 /// - Pyth native feeds may use different exponents (-8, -9, etc) but are normalized to 8 decimals
@@ -113,12 +115,6 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
     /// @inheritdoc IOracleFeed
     function getPrice(address token) external view override returns (uint256) {
-        return _getPrice(token);
-    }
-
-    /// @notice Get the EMA price through the protected-price selector used by CompositeOracle strict validation.
-    /// @dev EMA pricing is already the stability-focused path and is bounded by Pyth's staleness check.
-    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
         return _getPrice(token);
     }
 

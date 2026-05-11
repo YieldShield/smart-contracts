@@ -9,8 +9,10 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { PythEMAOracleFeed } from "../contracts/oracles/PythEMAOracleFeed.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
+import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 
 contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     SplitRiskPoolFactory public factory;
@@ -90,6 +92,13 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         vm.stopPrank();
     }
 
+    function _replaceShieldedTokenFeed(address feed) internal {
+        vm.startPrank(governance);
+        factory.removeToken(address(shieldedToken));
+        factory.addToken(address(shieldedToken), "Shielded Token", "SHT", feed, address(0), 10000);
+        vm.stopPrank();
+    }
+
     function testSetCompositeOracleRevertsWhenOracleLacksFeedConfigurationInterface() public {
         vm.expectRevert();
         factory.setCompositeOracle(address(priceOnlyOracle));
@@ -116,6 +125,21 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);
         _replaceBackingTokenFeed(address(noCircuitBreakerFeed));
+
+        _approveCreationBond();
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.createPool(
+            address(shieldedToken), "SHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
+        );
+    }
+
+    function testCreatePoolRevertsWhenShieldedFeedIsPythEmaOnly() public {
+        MockPyth mockPyth = new MockPyth(60, 1e15);
+        PythEMAOracleFeed emaFeed = new PythEMAOracleFeed(address(mockPyth), 60);
+        emaFeed.setTokenPriceFeed(
+            address(shieldedToken), 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        );
+        _replaceShieldedTokenFeed(address(emaFeed));
 
         _approveCreationBond();
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
