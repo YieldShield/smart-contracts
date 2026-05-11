@@ -450,9 +450,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
         _requireCircuitBreakerSupport(token, config.backupFeed);
 
-        uint256 deviation =
-            primarySuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
-        if (primarySuccess && deviation <= deviationThresholdBps) {
+        bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
+        uint256 deviation = primaryProtectedAvailable
+            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
+            : type(uint256).max;
+        if (deviation <= deviationThresholdBps) {
             revert ChallengeNotPossible(token, "Deviation below threshold");
         }
 
@@ -481,10 +483,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         // Verify deviation still persists unless the primary is unavailable. A broken primary
         // is itself sufficient reason to complete the timelocked failover to a healthy backup.
-        uint256 currentDeviation =
-            primarySuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
+        bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
+        uint256 currentDeviation = primaryProtectedAvailable
+            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
+            : type(uint256).max;
 
-        if (primarySuccess && currentDeviation <= deviationThresholdBps) {
+        if (currentDeviation <= deviationThresholdBps) {
             // Deviation resolved during timelock - cancel challenge instead.
             // Preserve `lastChallengeTime` set at challenge initiation; the cooldown
             // already runs from then, so resetting it here would only let any caller
@@ -526,8 +530,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert CancelNotPossible(token, "Oracle unavailable");
         }
 
-        // Check if deviation has resolved (decimal-normalized — see _calculateFeedDeviation).
-        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+        bool primaryProtectedAvailable = _supportsCircuitBreaker(config.primaryFeed, token);
+        uint256 currentDeviation = primaryProtectedAvailable
+            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
+            : type(uint256).max;
 
         if (currentDeviation > deviationThresholdBps) {
             revert CancelNotPossible(token, "Deviation still exceeds threshold");
@@ -556,8 +562,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert RevertNotPossible(token, "Oracle unavailable");
         }
 
-        // Check if deviation has returned to normal (decimal-normalized — see _calculateFeedDeviation).
-        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+        bool primaryProtectedAvailable = _supportsCircuitBreaker(config.primaryFeed, token);
+        uint256 currentDeviation = primaryProtectedAvailable
+            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
+            : type(uint256).max;
 
         if (currentDeviation > deviationThresholdBps) {
             revert RevertNotPossible(token, "Deviation still exceeds threshold");

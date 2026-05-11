@@ -23,6 +23,39 @@ contract NonReceiverDepositor {
     }
 }
 
+contract StrictBackingOwner {
+    address internal immutable strictToken;
+
+    constructor(address token) {
+        strictToken = token;
+    }
+
+    function tokenRequiresStrictProtectedPrice(address token) external view returns (bool) {
+        return token == strictToken;
+    }
+}
+
+contract SecurityFeedWithoutCircuitBreaker {
+    mapping(address => uint256) internal prices;
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        uint256 price = prices[token];
+        return price == 0 ? 1e8 : price;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Security Feed Without Circuit Breaker";
+    }
+}
+
 contract SecurityFixesTest is Test {
     SplitRiskPool internal pool;
     MockERC4626 internal shieldedToken;
@@ -248,7 +281,33 @@ contract SecurityFixesTest is Test {
         new ERC1967Proxy(address(implementation), initData);
     }
 
+    function test_StrictPoolValidationRejectsCompositeWithInactiveBackupLackingProtectedPrice() public {
+        StrictBackingOwner strictOwner = new StrictBackingOwner(address(backingToken));
+        SplitRiskPool strictPool = _deployPoolWithOwner(
+            address(shieldedToken), address(backingToken), address(compositeOracle), address(strictOwner)
+        );
+
+        CompositeOracle unsafeOracle = new CompositeOracle();
+        SecurityFeedWithoutCircuitBreaker fallbackOnlyBackup = new SecurityFeedWithoutCircuitBreaker();
+        fallbackOnlyBackup.setPrice(address(backingToken), 1e8);
+
+        unsafeOracle.setTokenOracleFeed(address(shieldedToken), address(primaryOracle));
+        unsafeOracle.setTokenOracleFeedDual(address(backingToken), address(primaryOracle), address(fallbackOnlyBackup));
+
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        strictPool.updatePoolConfig(
+            1e18, 1000e18, 1e18, 1000e18, 1000000e8, 1 days, 28 days, 100, address(0xFEE), address(unsafeOracle)
+        );
+    }
+
     function _deployPool(address shieldedAsset, address backingAsset, address oracleAddr)
+        internal
+        returns (SplitRiskPool deployedPool)
+    {
+        deployedPool = _deployPoolWithOwner(shieldedAsset, backingAsset, oracleAddr, address(this));
+    }
+
+    function _deployPoolWithOwner(address shieldedAsset, address backingAsset, address oracleAddr, address initialOwner)
         internal
         returns (SplitRiskPool deployedPool)
     {
@@ -286,7 +345,7 @@ contract SecurityFixesTest is Test {
             address(0xFEE),
             address(shieldNFT),
             address(protectorNFT),
-            address(this)
+            initialOwner
         );
 
         deployedPool = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));

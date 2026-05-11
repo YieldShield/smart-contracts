@@ -528,6 +528,28 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
     }
 
+    function test_Challenge_AllowsFailoverWhenPrimaryProtectedPriceRevertsDespiteMatchingSpot() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        primaryOracle.setShouldRevertOnCircuitBreaker(true);
+
+        compositeOracle.challengeForToken(address(token));
+        (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
+        assertTrue(isChallengePending);
+
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        compositeOracle.finalizeChallenge(address(token));
+
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.RevertNotPossible.selector, address(token), "Deviation still exceeds threshold"
+            )
+        );
+        compositeOracle.revertToPrimary(address(token));
+    }
+
     function test_Challenge_RevertsDuringCooldown() public {
         _initiateChallenge();
         // Resolve deviation to allow cancel

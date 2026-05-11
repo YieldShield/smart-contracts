@@ -44,6 +44,7 @@ library PoolOracleValidationLib {
 
             if (strictSuccess) {
                 _validateDecodedPrice(strictData);
+                _validateCompositeConfiguredProtectedPrices(oracle, backingToken);
                 return;
             }
 
@@ -53,6 +54,33 @@ library PoolOracleValidationLib {
         }
 
         _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken)));
+    }
+
+    /// @dev CompositeOracle strict pricing reads the active feed. For strict backing assets,
+    ///      also require every configured feed to expose a currently usable protected path
+    ///      before accepting the oracle for a pool.
+    function _validateCompositeConfiguredProtectedPrices(address oracle, address backingToken) private view {
+        (bool statusSuccess, bytes memory statusData) =
+            oracle.staticcall(abi.encodeCall(ICompositeOracle.getTokenDualFeedStatus, (backingToken)));
+
+        if (!statusSuccess || statusData.length < 192) {
+            return;
+        }
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            abi.decode(statusData, (bool, address, address, bool, bool, uint256));
+
+        if (primaryFeed != address(0)) {
+            _validateNonZeroOracleResponse(
+                primaryFeed, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken))
+            );
+        }
+
+        if (isDualFeed && backupFeed != address(0)) {
+            _validateNonZeroOracleResponse(
+                backupFeed, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken))
+            );
+        }
     }
 
     /// @dev Ensures the target oracle call succeeds and returns a non-zero uint256 price.
