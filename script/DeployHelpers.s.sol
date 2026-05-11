@@ -88,12 +88,16 @@ contract ScaffoldETHDeploy is Script {
         string memory chainIdStr = vm.toString(block.chainid);
         path = string.concat(path, string.concat(chainIdStr, ".json"));
 
-        string memory jsonWrite;
+        string memory jsonObjectKey = string.concat("deployment-export-", chainIdStr, "-", vm.toString(gasleft()));
+
+        try vm.readFile(path) returns (string memory existingJson) {
+            _mergeExistingDeploymentEntries(jsonObjectKey, existingJson);
+        } catch { }
 
         uint256 len = deployments.length;
 
         for (uint256 i = 0; i < len; i++) {
-            vm.serializeString(jsonWrite, vm.toString(deployments[i].addr), deployments[i].name);
+            vm.serializeString(jsonObjectKey, vm.toString(deployments[i].addr), deployments[i].name);
         }
 
         string memory chainName;
@@ -103,8 +107,22 @@ contract ScaffoldETHDeploy is Script {
         } catch {
             chainName = _fallbackChainName(block.chainid);
         }
-        jsonWrite = vm.serializeString(jsonWrite, "networkName", chainName);
-        vm.writeJson(jsonWrite, path);
+        string memory jsonWrite = vm.serializeString(jsonObjectKey, "networkName", chainName);
+        vm.writeFile(path, jsonWrite);
+    }
+
+    function _mergeExistingDeploymentEntries(string memory jsonObjectKey, string memory existingJson) internal {
+        try vm.parseJsonKeys(existingJson, ".") returns (string[] memory keys) {
+            for (uint256 i = 0; i < keys.length; i++) {
+                if (keccak256(bytes(keys[i])) == keccak256(bytes("networkName"))) {
+                    continue;
+                }
+
+                try vm.parseJsonString(existingJson, string.concat(".", keys[i])) returns (string memory value) {
+                    vm.serializeString(jsonObjectKey, keys[i], value);
+                } catch { }
+            }
+        } catch { }
     }
 
     function _fallbackChainName(uint256 chainId) internal pure returns (string memory) {
