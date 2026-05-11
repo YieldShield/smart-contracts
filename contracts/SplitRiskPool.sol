@@ -1288,7 +1288,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (!(preferredAsset == BACKING_TOKEN || preferredAsset == SHIELDED_TOKEN)) {
             revert ErrorsLib.UnsupportedAsset();
         }
-        if (accessControl != address(0) && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)) {
+        if (
+            accessControlCanGateWithdrawals && accessControl != address(0)
+                && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)
+        ) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawShielded");
         }
 
@@ -1405,7 +1408,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ) external nonReentrant whenNotPaused onlyShieldNFTOwner(tokenId) returns (uint256 newTokenId) {
         if (preferredAsset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset(); // Partial withdrawal only for same asset
         if (withdrawAmount == 0) revert ErrorsLib.NoTokensToWithdraw();
-        if (accessControl != address(0) && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)) {
+        if (
+            accessControlCanGateWithdrawals && accessControl != address(0)
+                && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)
+        ) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawShielded");
         }
 
@@ -1574,7 +1580,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
-        if (accessControl != address(0) && !IPoolAccessControl(accessControl).canWithdrawProtector(msg.sender)) {
+        if (
+            accessControlCanGateWithdrawals && accessControl != address(0)
+                && !IPoolAccessControl(accessControl).canWithdrawProtector(msg.sender)
+        ) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawProtector");
         }
 
@@ -1972,6 +1981,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         emit EventsLib.AccessControlUpdated(accessControl, newAccessControl);
         accessControl = newAccessControl;
+        accessControlCanGateWithdrawals = callerIsGovernance && newAccessControl != address(0);
     }
 
     function _validateAccessControl(address newAccessControl) internal view {
@@ -2034,7 +2044,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @dev Storage gap for future upgrades.
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
-     * Reserved 43 slots after adding launch-state tracking to follow OpenZeppelin's upgrade-safe pattern.
+     * The remaining slots shrink as upgrade state is appended below.
      */
     /// @notice Cached shielded token decimals for native-unit accounting
     uint8 public shieldedTokenDecimals;
@@ -2062,5 +2072,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorShareEpochs;
     /// @notice share generation => reward-per-share cap for historical commission claims
     mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
-    uint256[40] private __gap;
+    /// @notice True when the active ACL was installed by governance and may gate withdrawals
+    bool public accessControlCanGateWithdrawals;
+    uint256[39] private __gap;
 }

@@ -240,6 +240,7 @@ contract SplitRiskPoolFeeAccessControlTest is Test {
         pool.setAccessControl(address(accessControl));
 
         assertEq(pool.accessControl(), address(accessControl), "creator should configure ACL before launch");
+        assertFalse(pool.accessControlCanGateWithdrawals(), "creator-installed ACL should not gate withdrawals");
     }
 
     function testSetAccessControl_CreatorCannotChangeAfterLaunch() public {
@@ -263,13 +264,13 @@ contract SplitRiskPoolFeeAccessControlTest is Test {
         pool.setAccessControl(address(accessControl));
 
         assertEq(pool.accessControl(), address(accessControl), "governance should retain live ACL authority");
+        assertTrue(pool.accessControlCanGateWithdrawals(), "governance-installed ACL may gate withdrawals");
     }
 
-    function testPartialWithdrawShielded_RevertsWhenAclBlocksShieldedWithdrawals() public {
+    function testCreatorInstalledAcl_GatesDepositsButCannotBlockShieldedWithdrawals() public {
         AccessControlExample accessControl = new AccessControlExample(governance);
 
         vm.startPrank(governance);
-        accessControl.setWhitelisted(shielded, true);
         accessControl.setWhitelisted(protector, true);
         vm.stopPrank();
 
@@ -280,14 +281,65 @@ contract SplitRiskPoolFeeAccessControlTest is Test {
         pool.depositBackingAsset(address(backingToken), 10000e18, 0);
 
         vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, shielded, "depositShielded"));
+        pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        vm.prank(governance);
+        accessControl.setWhitelisted(shielded, true);
+
+        vm.prank(shielded);
         uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
 
         vm.prank(governance);
         accessControl.setWhitelisted(shielded, false);
 
         vm.prank(shielded);
+        uint256 newTokenId = pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+        assertGt(newTokenId, tokenId, "creator ACL should not trap shielded withdrawals");
+    }
+
+    function testGovernanceInstalledAcl_CanBlockShieldedWithdrawals() public {
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+
+        vm.prank(shielded);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        AccessControlExample accessControl = new AccessControlExample(governance);
+
+        vm.prank(governance);
+        pool.setAccessControl(address(accessControl));
+
+        vm.prank(shielded);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, shielded, "withdrawShielded"));
         pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+    }
+
+    function testCreatorInstalledAcl_CannotBlockProtectorWithdrawals() public {
+        AccessControlExample accessControl = new AccessControlExample(governance);
+
+        vm.prank(governance);
+        accessControl.setWhitelisted(protector, true);
+
+        vm.prank(poolCreator);
+        pool.setAccessControl(address(accessControl));
+
+        vm.startPrank(protector);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+        pool.startUnlockProcess(tokenId);
+        vm.stopPrank();
+
+        vm.prank(governance);
+        accessControl.setWhitelisted(protector, false);
+
+        (,,,,,, uint256 unlockDuration,,,) = pool.poolConfig();
+        vm.warp(block.timestamp + unlockDuration + 1);
+
+        uint256 balanceBefore = backingToken.balanceOf(protector);
+        vm.prank(protector);
+        pool.protectorWithdraw(tokenId, 10000e18, address(backingToken), 0);
+
+        assertEq(backingToken.balanceOf(protector) - balanceBefore, 10000e18);
     }
 
     function testSetAccessControl_CreatorCannotChangeAfterPoolHasEverLaunchedAndEmptied() public {
