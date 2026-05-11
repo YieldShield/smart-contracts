@@ -448,6 +448,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (!backupSuccess) {
             revert ChallengeNotPossible(token, "Backup oracle unavailable");
         }
+        _requireCircuitBreakerSupport(token, config.backupFeed);
 
         uint256 deviation =
             primarySuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
@@ -790,7 +791,6 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     function getPriceWithStrictCircuitBreaker(address token) external view override returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
-        _validateStrictCircuitBreakerConfig(token, config.primaryFeed, config.backupFeed, true);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;

@@ -871,24 +871,32 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), deviatedPrice);
     }
 
-    function test_FinalizeChallenge_RevertsWhenBackupLacksCircuitBreaker() public {
+    function test_Challenge_RevertsWhenBackupLacksCircuitBreaker() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
         noCircuitBreakerFeed.setPrice(address(token), deviatedPrice);
 
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
-        compositeOracle.challengeForToken(address(token));
-        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
-
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.finalizeChallenge(address(token));
+        compositeOracle.challengeForToken(address(token));
 
+        (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
+        assertFalse(isChallengePending);
         assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
         assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+    }
+
+    function test_StrictCircuitBreaker_UsesHealthyActiveFeedWhenInactiveBackupReverts() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+
+        backupOracle.setShouldRevertOnCircuitBreaker(true);
+
+        assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), PRIMARY_PRICE);
     }
 
     // BUG-2 FIX: Test reconfiguration emits challenge cancelled event
