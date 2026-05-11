@@ -7,6 +7,7 @@ import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
@@ -373,6 +374,47 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         // Verify the factory was updated
         assertEq(factory.defaultProtocolFeeRecipient(), newRecipient);
+    }
+
+    function test_SetGovernanceTimelock_RevertsForEOA() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+        address eoaCandidate = address(0xCAFE);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, eoaCandidate
+            )
+        );
+        factory.setGovernanceTimelock(eoaCandidate);
+    }
+
+    function test_SetGovernanceTimelock_RevertsForContractWithoutTimelockInterface() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(ysToken)
+            )
+        );
+        factory.setGovernanceTimelock(address(ysToken));
+    }
+
+    function test_SetGovernanceTimelock_RevertsForZeroDelayTimelock() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+        address[] memory emptyAddrs = new address[](0);
+        TimelockController zeroDelayTimelock = new TimelockController(0, emptyAddrs, emptyAddrs, deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector,
+                address(zeroDelayTimelock),
+                0
+            )
+        );
+        factory.setGovernanceTimelock(address(zeroDelayTimelock));
     }
 
     function test_Execute_RevertsWithoutQueue() public {

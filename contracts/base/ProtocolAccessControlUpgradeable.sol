@@ -19,12 +19,16 @@ abstract contract ProtocolAccessControlUpgradeable is
     error UnauthorizedGovernance(address caller);
     error NoPendingGovernance();
     error UnauthorizedPendingGovernance(address caller);
+    error InvalidGovernanceTimelock(address candidate);
+    error GovernanceTimelockDelayTooShort(address candidate, uint256 minDelay);
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
 
     address internal _governanceTimelock;
     address internal _pendingGovernanceTimelock;
+
+    bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
@@ -58,7 +62,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @notice Starts a two-step governance transfer by setting the pending governance address
     /// @param newGovernance The address of the proposed new governance timelock
     function setGovernanceTimelock(address newGovernance) public virtual onlyGovernanceOrOwner {
-        if (newGovernance == address(0)) revert GovernanceZeroAddress();
+        _validateGovernanceTimelock(newGovernance);
         _pendingGovernanceTimelock = newGovernance;
         emit GovernanceTimelockTransferStarted(_governanceTimelock, newGovernance);
     }
@@ -76,6 +80,18 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @notice Returns the pending governance timelock address
     function pendingGovernanceTimelock() public view virtual returns (address) {
         return _pendingGovernanceTimelock;
+    }
+
+    function _validateGovernanceTimelock(address candidate) internal view {
+        if (candidate == address(0)) revert GovernanceZeroAddress();
+        if (candidate.code.length == 0) revert InvalidGovernanceTimelock(candidate);
+
+        (bool success, bytes memory data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+
+        uint256 minDelay = abi.decode(data, (uint256));
+        if (minDelay == 0) revert GovernanceTimelockDelayTooShort(candidate, minDelay);
     }
 
     function pause() public virtual onlyGovernanceOrOwner {
