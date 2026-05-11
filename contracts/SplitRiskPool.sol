@@ -838,16 +838,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
-        // Probe the protected shielded price up-front. If the circuit breaker has tripped,
-        // skip fee accrual entirely so the same-asset shielded-withdraw path can still
-        // return the user's own principal — otherwise the user is locked out of their
-        // shielded position precisely when the oracle is most stressed. Fees are not
-        // forfeited: `feeValueBaselineUsd[tokenId]` is left untouched, so the next call
-        // after the CB clears computes the catch-up amount against the same high-water
-        // mark.
+        // Probe the protected shielded price up-front. Same-asset exits burn the receipt
+        // and delete the fee baseline, so they cannot proceed while fees cannot be priced.
         (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
         if (!priceAvailable) {
-            return (0, 0, 0);
+            revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
         }
 
         // Get current USD value (USD-BASED for yield calculation)
