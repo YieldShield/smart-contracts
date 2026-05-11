@@ -217,19 +217,19 @@ contract SetupPositions is ScaffoldETHDeploy {
             }
         } catch { }
 
-        // Fallback to broadcast file. New deployments write SplitRiskPoolFactory directly,
-        // while older local broadcasts used an ERC1967Proxy wrapper.
+        // Fallback to broadcast file. UUPS deployments include the implementation before
+        // the ERC1967Proxy, so prefer the proxy when it is present.
         (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
         if (!foundBroadcast) {
             return address(0);
         }
 
-        address broadcastFactoryAddr = _getAddressFromBroadcast(broadcastJson, "SplitRiskPoolFactory");
-        if (broadcastFactoryAddr != address(0)) {
-            return broadcastFactoryAddr;
+        address proxyAddr = _getAddressFromBroadcast(broadcastJson, "ERC1967Proxy");
+        if (proxyAddr != address(0)) {
+            return proxyAddr;
         }
 
-        return _getAddressFromBroadcast(broadcastJson, "ERC1967Proxy");
+        return _getAddressFromBroadcast(broadcastJson, "SplitRiskPoolFactory");
     }
 
     function _getAddressFromBroadcast(string memory content, string memory contractName)
