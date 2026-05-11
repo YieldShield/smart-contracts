@@ -295,18 +295,78 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testSetDefaultPriceOracle() public {
-        MockOracle newOracle = new MockOracle();
-        newOracle.setPrice(address(tokenA), 2e8); // $2 per token
-        newOracle.setPrice(address(tokenB), 2e8); // $2 per token
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.setAuthorizedCaller(address(factory), true);
+
+        (,,, address primaryFeedA,,) = factory.tokenInfo(address(tokenA));
+        assertEq(primaryFeedA, address(oracle), "Factory token feed should remain unchanged");
 
         factory.setCompositeOracle(address(newOracle));
         assertEq(factory.compositeOracle(), address(newOracle), "Composite oracle should be updated");
+        assertEq(newOracle.getTokenOracleFeed(address(tokenA)), address(oracle), "Token A feed should be replayed");
+        assertEq(newOracle.getTokenOracleFeed(address(tokenB)), address(oracle), "Token B feed should be replayed");
 
         // Create a pool with the new oracle
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
         SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
         (,,,,,,,,, address poolOracle) = pool.poolConfig();
         assertEq(poolOracle, address(newOracle), "Pool should use the new default oracle");
+    }
+
+    function testSetCompositeOracleReplaysStrictRequirement() public {
+        factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
+
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.setAuthorizedCaller(address(factory), true);
+
+        factory.setCompositeOracle(address(newOracle));
+
+        assertTrue(newOracle.strictCircuitBreakerRequired(address(tokenB)), "Strict flag should be replayed");
+        assertEq(newOracle.getPriceWithStrictCircuitBreaker(address(tokenB)), 1e8);
+    }
+
+    function testSetCompositeOracleReplaysDualFeedConfig() public {
+        MockERC20 dualFeedToken = new MockERC20("Dual Feed Token", "DFT");
+        MockOracle backupOracle = new MockOracle();
+        oracle.setPrice(address(dualFeedToken), 1e8);
+        backupOracle.setPrice(address(dualFeedToken), 1e8);
+
+        factory.addTokenInitial(
+            address(dualFeedToken), "Dual Feed Token", "DFT", address(oracle), address(backupOracle), 10000
+        );
+
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracle(address(newOracle));
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            newOracle.getTokenDualFeedStatus(address(dualFeedToken));
+
+        assertTrue(isDualFeed, "Dual-feed config should be replayed");
+        assertEq(primaryFeed, address(oracle), "Primary feed should be replayed");
+        assertEq(backupFeed, address(backupOracle), "Backup feed should be replayed");
+    }
+
+    function testSetCompositeOracleRevertsWhenFactoryNotAuthorized() public {
+        CompositeOracle newOracle = new CompositeOracle();
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.UnauthorizedCaller.selector, address(factory)));
+        factory.setCompositeOracle(address(newOracle));
+    }
+
+    function testFactoryInterfaceExposesAdminSurface() public {
+        ISplitRiskPoolFactory factoryInterface = ISplitRiskPoolFactory(address(factory));
+        SplitRiskPool newImplementation = new SplitRiskPool();
+
+        assertEq(factoryInterface.splitRiskPoolImplementation(), factory.splitRiskPoolImplementation());
+        assertEq(factoryInterface.defaultProtocolFeeRecipient(), address(this));
+
+        factoryInterface.setPoolImplementation(address(newImplementation));
+        assertEq(factoryInterface.splitRiskPoolImplementation(), address(newImplementation));
+
+        address newRecipient = address(0xFEE);
+        factoryInterface.setDefaultProtocolFeeRecipient(newRecipient);
+        assertEq(factoryInterface.defaultProtocolFeeRecipient(), newRecipient);
     }
 
     function testRevertCreatePoolWithoutDefaultOracle() public {

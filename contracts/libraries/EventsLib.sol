@@ -93,6 +93,9 @@ library EventsLib {
     event CreationBondPosted(address indexed pool, address indexed creator, address indexed token, uint256 amount);
     event CreationBondReturned(address indexed pool, address indexed creator, address indexed token, uint256 amount);
     event CreationBondForfeited(address indexed pool, address indexed recipient, address indexed token, uint256 amount);
+    event CreationBondShortfall(
+        address indexed pool, address indexed token, uint256 recordedAmount, uint256 paidAmount
+    );
     event MinimumCreationBondUsdUpdated(uint256 oldValue, uint256 newValue);
 
     // Fee overflow events

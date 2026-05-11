@@ -83,11 +83,16 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         fallbackCompositeOracle.setAuthorizedCaller(address(factory), true);
     }
 
-    function testCreatePoolRevertsWhenOracleLacksProtectedBackingPrice() public {
-        factory.setCompositeOracle(address(priceOnlyOracle));
+    function _replaceBackingTokenFeed(address feed) internal {
+        vm.startPrank(governance);
+        factory.removeToken(address(backingToken));
+        factory.addToken(address(backingToken), "Backing Token", "BKT", feed, address(0), 10000);
+        vm.stopPrank();
+    }
 
-        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
-        factory.createPool(address(shieldedToken), "SHT", address(backingToken), "BKT", 1000, 200, 15000, 0);
+    function testSetCompositeOracleRevertsWhenOracleLacksFeedConfigurationInterface() public {
+        vm.expectRevert();
+        factory.setCompositeOracle(address(priceOnlyOracle));
     }
 
     function testUpdatePoolConfigRevertsWhenOracleLacksProtectedBackingPrice() public {
@@ -108,8 +113,9 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     }
 
     function testCreatePoolRevertsWhenCompositeBackingFeedLacksCircuitBreaker() public {
-        CompositeOracle fallbackCompositeOracle = _deployFallbackCompositeOracle();
-        factory.setCompositeOracle(address(fallbackCompositeOracle));
+        MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
+        noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);
+        _replaceBackingTokenFeed(address(noCircuitBreakerFeed));
 
         _approveCreationBond();
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
@@ -119,24 +125,29 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     }
 
     function testSetTokenRequiresStrictProtectedPriceRevertsWhenCurrentOracleUsesFallbackOnly() public {
-        CompositeOracle fallbackCompositeOracle = _deployFallbackCompositeOracle();
-        factory.setCompositeOracle(address(fallbackCompositeOracle));
-        address backingFeed = fallbackCompositeOracle.getTokenOracleFeed(address(backingToken));
+        MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
+        noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);
+        _replaceBackingTokenFeed(address(noCircuitBreakerFeed));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CompositeOracle.CircuitBreakerNotSupported.selector, address(backingToken), backingFeed
+                CompositeOracle.CircuitBreakerNotSupported.selector,
+                address(backingToken),
+                address(noCircuitBreakerFeed)
             )
         );
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
     }
 
-    function testCreatePoolRevertsWhenStrictBackingPolicyRequiresUnsupportedCompositeFeed() public {
+    function testSetCompositeOracleReplaysStrictBackingPolicy() public {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
-        CompositeOracle fallbackCompositeOracle = _deployFallbackCompositeOracle();
-        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
-        factory.setCompositeOracle(address(fallbackCompositeOracle));
+        CompositeOracle newCompositeOracle = new CompositeOracle();
+        newCompositeOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracle(address(newCompositeOracle));
+
+        assertTrue(newCompositeOracle.strictCircuitBreakerRequired(address(backingToken)));
+        assertEq(newCompositeOracle.getTokenOracleFeed(address(backingToken)), address(oracle));
     }
 
     function testPoolStrictProtectedPriceRequirementReflectsFactoryPolicyWithoutSync() public {

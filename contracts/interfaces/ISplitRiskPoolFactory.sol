@@ -27,7 +27,9 @@ interface ISplitRiskPoolFactory {
 
     // State Variables (view functions)
     function governanceTimelock() external view returns (address);
+    function splitRiskPoolImplementation() external view returns (address);
     function compositeOracle() external view returns (address);
+    function defaultProtocolFeeRecipient() external view returns (address);
     function whitelistedTokens(uint256 index) external view returns (address);
     function isWhitelisted(address token) external view returns (bool);
     function tokenRequiresStrictProtectedPrice(address token) external view returns (bool);
@@ -74,6 +76,7 @@ interface ISplitRiskPoolFactory {
     function deactivatePool(address pool) external;
     function closePool(address pool) external;
     function setMinimumCreationBondUsd(uint256 newMinUsd) external;
+    function setPoolImplementation(address newImplementation) external;
     function removeToken(address token) external;
     function addToken(
         address token,
@@ -89,6 +92,7 @@ interface ISplitRiskPoolFactory {
     function acceptGovernanceTimelock() external;
     function pendingGovernanceTimelock() external view returns (address);
     function setCompositeOracle(address newOracle) external;
+    function setDefaultProtocolFeeRecipient(address newRecipient) external;
 
     // Owner Functions (initial deployment only)
     function addTokenInitial(

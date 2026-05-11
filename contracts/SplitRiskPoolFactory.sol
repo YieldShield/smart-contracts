@@ -165,6 +165,15 @@ contract SplitRiskPoolFactory is
         uint256 tokenCount = whitelistedTokens.length;
         for (uint256 i = 0; i < tokenCount;) {
             address token = whitelistedTokens[i];
+            TokenWhitelistLib.TokenInfo memory info = tokenInfo[token];
+
+            if (info.token != address(0)) {
+                _configureOracleFeedsForOracle(newOracle, token, info.primaryOracleFeed, info.backupOracleFeed);
+                _syncCompositeOracleStrictRequirementForOracle(
+                    newOracle, token, tokenRequiresStrictProtectedPrice[token]
+                );
+            }
+
             if (tokenRequiresStrictProtectedPrice[token]) {
                 PoolOracleValidationLib.validateBackingTokenOracle(newOracle, token, true);
             }
@@ -579,7 +588,9 @@ contract SplitRiskPoolFactory is
         } catch {
             revert ErrorsLib.InvalidTokenAddress();
         }
-        if (tokenDecimals > 77) revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
+        if (tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > 77) {
+            revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
+        }
     }
 
     /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for
@@ -648,8 +659,11 @@ contract SplitRiskPoolFactory is
         }
 
         delete creationBonds[pool];
-        IERC20(bond.token).safeTransfer(recipient, bond.amount);
-        emit EventsLib.CreationBondReturned(pool, recipient, bond.token, bond.amount);
+        uint256 payoutAmount = _availableBondPayout(pool, bond.token, bond.amount);
+        if (payoutAmount != 0) {
+            IERC20(bond.token).safeTransfer(recipient, payoutAmount);
+        }
+        emit EventsLib.CreationBondReturned(pool, recipient, bond.token, payoutAmount);
     }
 
     function _forfeitCreationBond(address pool) internal {
@@ -659,8 +673,20 @@ contract SplitRiskPoolFactory is
         }
 
         delete creationBonds[pool];
-        IERC20(bond.token).safeTransfer(defaultProtocolFeeRecipient, bond.amount);
-        emit EventsLib.CreationBondForfeited(pool, defaultProtocolFeeRecipient, bond.token, bond.amount);
+        uint256 payoutAmount = _availableBondPayout(pool, bond.token, bond.amount);
+        if (payoutAmount != 0) {
+            IERC20(bond.token).safeTransfer(defaultProtocolFeeRecipient, payoutAmount);
+        }
+        emit EventsLib.CreationBondForfeited(pool, defaultProtocolFeeRecipient, bond.token, payoutAmount);
+    }
+
+    function _availableBondPayout(address pool, address token, uint256 recordedAmount) internal returns (uint256) {
+        uint256 availableBalance = IERC20(token).balanceOf(address(this));
+        uint256 payoutAmount = recordedAmount < availableBalance ? recordedAmount : availableBalance;
+        if (payoutAmount != recordedAmount) {
+            emit EventsLib.CreationBondShortfall(pool, token, recordedAmount, payoutAmount);
+        }
+        return payoutAmount;
     }
 
     function _removeActivePool(address pool) internal {
@@ -713,10 +739,19 @@ contract SplitRiskPoolFactory is
             return;
         }
 
+        _configureOracleFeedsForOracle(compositeOracle, token, primaryOracleFeed, backupOracleFeed);
+    }
+
+    function _configureOracleFeedsForOracle(
+        address oracle,
+        address token,
+        address primaryOracleFeed,
+        address backupOracleFeed
+    ) internal {
         if (backupOracleFeed != address(0)) {
-            ICompositeOracle(compositeOracle).setTokenOracleFeedDual(token, primaryOracleFeed, backupOracleFeed);
+            ICompositeOracle(oracle).setTokenOracleFeedDual(token, primaryOracleFeed, backupOracleFeed);
         } else {
-            ICompositeOracle(compositeOracle).setTokenOracleFeed(token, primaryOracleFeed);
+            ICompositeOracle(oracle).setTokenOracleFeed(token, primaryOracleFeed);
         }
     }
 
@@ -725,8 +760,12 @@ contract SplitRiskPoolFactory is
             return;
         }
 
+        _syncCompositeOracleStrictRequirementForOracle(compositeOracle, token, required);
+    }
+
+    function _syncCompositeOracleStrictRequirementForOracle(address oracle, address token, bool required) internal {
         (bool success, bytes memory data) =
-            compositeOracle.call(abi.encodeCall(ICompositeOracle.setStrictCircuitBreakerRequired, (token, required)));
+            oracle.call(abi.encodeCall(ICompositeOracle.setStrictCircuitBreakerRequired, (token, required)));
 
         if (success) {
             return;
@@ -734,7 +773,7 @@ contract SplitRiskPoolFactory is
 
         if (data.length == 0) {
             if (required) {
-                PoolOracleValidationLib.validateBackingTokenOracle(compositeOracle, token, true);
+                PoolOracleValidationLib.validateBackingTokenOracle(oracle, token, true);
             }
             return;
         }
