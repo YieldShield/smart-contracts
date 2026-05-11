@@ -67,6 +67,26 @@ contract OracleBoundsTest is Test {
         assertEq(oracleMax.maxPriceAge(), 3600);
     }
 
+    function testPythOracle_SetMaxConfidenceBps_RevertsBelowMinimum() public {
+        PythOracle oracle = new PythOracle(address(mockPyth), 60);
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidConfidenceBps.selector, 9, 10, 5000));
+        oracle.setMaxConfidenceBps(9);
+    }
+
+    function testPythOracle_SetMaxConfidenceBps_RevertsAboveMaximum() public {
+        PythOracle oracle = new PythOracle(address(mockPyth), 60);
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidConfidenceBps.selector, 5001, 10, 5000));
+        oracle.setMaxConfidenceBps(5001);
+    }
+
+    function testPythOracle_SetMaxConfidenceBps_AcceptsBounds() public {
+        PythOracle oracle = new PythOracle(address(mockPyth), 60);
+        oracle.setMaxConfidenceBps(10);
+        assertEq(oracle.maxConfidenceBps(), 10);
+        oracle.setMaxConfidenceBps(5000);
+        assertEq(oracle.maxConfidenceBps(), 5000);
+    }
+
     // ============ PythEMAOracleFeed: maxPriceAge bounds ============
 
     function testPythEMA_SetMaxPriceAge_RevertsAboveMaximum() public {
@@ -97,6 +117,26 @@ contract OracleBoundsTest is Test {
 
         PythEMAOracleFeed feedMax = new PythEMAOracleFeed(address(mockPyth), 3600);
         assertEq(feedMax.maxPriceAge(), 3600);
+    }
+
+    function testPythEMA_SetMaxConfidenceBps_RevertsBelowMinimum() public {
+        PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidConfidenceBps.selector, 9, 10, 5000));
+        feed.setMaxConfidenceBps(9);
+    }
+
+    function testPythEMA_SetMaxConfidenceBps_RevertsAboveMaximum() public {
+        PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidConfidenceBps.selector, 5001, 10, 5000));
+        feed.setMaxConfidenceBps(5001);
+    }
+
+    function testPythEMA_SetMaxConfidenceBps_AcceptsBounds() public {
+        PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
+        feed.setMaxConfidenceBps(10);
+        assertEq(feed.maxConfidenceBps(), 10);
+        feed.setMaxConfidenceBps(5000);
+        assertEq(feed.maxConfidenceBps(), 5000);
     }
 
     // ============ ChainlinkOracleFeed: maxPriceAge bounds ============

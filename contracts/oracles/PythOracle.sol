@@ -29,6 +29,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @dev Used by circuit breaker to detect oracle manipulation attempts
     uint256 public maxPriceDeviation;
 
+    /// @notice Maximum allowed Pyth confidence interval relative to price (basis points, default: 200 = 2%)
+    uint256 public maxConfidenceBps;
+
     /// @notice Mapping from token address to Pyth price feed ID
     mapping(address => bytes32) public tokenToPriceFeedId;
 
@@ -93,6 +96,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Custom error for invalid price deviation setting
     error InvalidDeviation(uint256 provided, uint256 min, uint256 max);
 
+    /// @notice Custom error for invalid price confidence setting
+    error InvalidConfidenceBps(uint256 provided, uint256 min, uint256 max);
+
+    /// @notice Custom error for Pyth price confidence exceeding threshold
+    error PriceConfidenceTooWide(address token, uint256 confidence, uint256 price, uint256 maxConfidenceBps);
+
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract on the current network
     /// @param _maxPriceAge The maximum age of price data in seconds (default: 60)
@@ -103,6 +112,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         pyth = IPyth(_pythAddress);
         maxPriceAge = _maxPriceAge;
         maxPriceDeviation = 500; // Default 5% deviation threshold
+        maxConfidenceBps = 200; // Default 2% confidence threshold
     }
 
     /// @notice Update price feeds with given update data
@@ -169,6 +179,15 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         emit MaxPriceDeviationUpdated(oldDeviation, _maxPriceDeviation);
     }
 
+    /// @notice Set the maximum accepted Pyth confidence interval relative to price
+    /// @param _maxConfidenceBps Maximum confidence interval in basis points (0.1%-50%)
+    function setMaxConfidenceBps(uint256 _maxConfidenceBps) external onlyOwner {
+        if (_maxConfidenceBps < 10 || _maxConfidenceBps > 5000) {
+            revert InvalidConfidenceBps(_maxConfidenceBps, 10, 5000);
+        }
+        maxConfidenceBps = _maxConfidenceBps;
+    }
+
     /// @notice Get the price for a token in USD (8 decimals)
     /// @param token The token address
     /// @return price The price in USD with 8 decimals
@@ -176,6 +195,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     function getPrice(address token) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
         bytes32 feedId = _getFeedId(token);
         PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, priceData);
         return _convertPrice(token, priceData);
     }
 
@@ -270,6 +290,17 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         }
     }
 
+    function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {
+        if (priceData.price <= 0) {
+            return;
+        }
+        uint256 price = uint256(uint64(priceData.price));
+        uint256 confidence = uint256(priceData.conf);
+        if (confidence * 10_000 > price * maxConfidenceBps) {
+            revert PriceConfidenceTooWide(token, confidence, price, maxConfidenceBps);
+        }
+    }
+
     /// @dev Calculate price deviation in basis points using OracleValidationLib
     /// @param spotPrice The spot price
     /// @param emaPrice The EMA price
@@ -288,9 +319,11 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         bytes32 feedId = _getFeedId(token);
 
         PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, spotData);
         uint256 spotPrice = _convertPrice(token, spotData);
 
         PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, emaData);
         uint256 emaPrice = _convertPrice(token, emaData);
 
         // Prevent division by zero in deviation calculation
@@ -340,9 +373,11 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
         // Get both spot and EMA prices
         PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, spotData);
         uint256 spotPrice = _convertPrice(token, spotData);
 
         PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, emaData);
         uint256 emaPrice = _convertPrice(token, emaData);
 
         // Prevent division by zero in deviation calculation
@@ -378,6 +413,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     function getEmaPrice(address token) external view returns (uint256) {
         bytes32 feedId = _getFeedId(token);
         PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, emaData);
         return _convertPrice(token, emaData);
     }
 

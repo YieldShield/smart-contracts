@@ -50,6 +50,25 @@ contract PythEMAOracleFeedTest is Test {
         assertEq(feed.getPriceWithCircuitBreaker(address(token)), 1e8);
     }
 
+    function testGetPrice_RevertsWhenConfidenceTooWide() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, 1e8, 3e6, -8, uint64(block.timestamp));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PythEMAOracleFeed.PriceConfidenceTooWide.selector, address(token), 3e6, 1e8, 200)
+        );
+        feed.getPrice(address(token));
+    }
+
+    function testGetPrice_AcceptsConfiguredConfidenceBound() public {
+        feed.setMaxConfidenceBps(300);
+
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, 1e8, 3e6, -8, uint64(block.timestamp));
+
+        assertEq(feed.getPrice(address(token)), 1e8);
+    }
+
     function testCompositeOracleUsesEmaCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(address(token), address(feed));
@@ -59,7 +78,7 @@ contract PythEMAOracleFeedTest is Test {
 
     function testGetPriceWithPositiveExpo() public {
         vm.warp(block.timestamp + 1);
-        _updatePriceFeed(FEED_ID, 123, 1e6, 2, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID, 123, 1, 2, uint64(block.timestamp));
 
         assertEq(feed.getPrice(address(token)), 12_300e8);
         assertEq(feed.getPriceWithCircuitBreaker(address(token)), 12_300e8);

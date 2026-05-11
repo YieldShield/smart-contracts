@@ -304,7 +304,7 @@ contract PythOracleTest is Test {
         // price=123, expo=2 means the raw Pyth value is 123 * 10^2 = 12,300.
         // Normalized to 8 USD decimals, that is 12,300e8.
         vm.warp(block.timestamp + 1);
-        _updatePriceFeed(FEED_ID_1, 123, 1e6, 2, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID_1, 123, 1, 2, uint64(block.timestamp));
 
         uint256 price = oracle.getPrice(address(token1));
         assertEq(price, 12_300e8, "Price should convert correctly with positive expo");
@@ -318,6 +318,36 @@ contract PythOracleTest is Test {
 
         uint256 price = oracle.getPrice(address(token1));
         assertEq(price, 1e16, "Price should convert correctly with zero expo");
+    }
+
+    function testGetPrice_RevertsWhenConfidenceTooWide() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1e8, 3e6, -8, uint64(block.timestamp));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 1e8, 200)
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testGetPrice_AcceptsConfiguredConfidenceBound() public {
+        vm.prank(owner);
+        oracle.setMaxConfidenceBps(300);
+
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1e8, 3e6, -8, uint64(block.timestamp));
+
+        assertEq(oracle.getPrice(address(token1)), 1e8);
+    }
+
+    function testGetPriceWithCircuitBreaker_RevertsWhenEmaConfidenceTooWide() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1e8, 3e6, -8, uint64(block.timestamp));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 1e8, 200)
+        );
+        oracle.getPriceWithCircuitBreaker(address(token1));
     }
 
     function testGetPrice_NegativePrice_Reverts() public {

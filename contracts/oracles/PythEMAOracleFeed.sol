@@ -21,6 +21,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Maximum age of price data in seconds
     uint256 public maxPriceAge;
 
+    /// @notice Maximum allowed Pyth confidence interval relative to price (basis points, default: 200 = 2%)
+    uint256 public maxConfidenceBps;
+
     /// @notice Mapping from token address to Pyth price feed ID
     mapping(address => bytes32) public tokenToPriceFeedId;
 
@@ -50,6 +53,12 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Maximum allowed maxPriceAge value (1 hour)
     uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
 
+    /// @notice Custom error for invalid price confidence setting
+    error InvalidConfidenceBps(uint256 provided, uint256 min, uint256 max);
+
+    /// @notice Custom error for Pyth price confidence exceeding threshold
+    error PriceConfidenceTooWide(address token, uint256 confidence, uint256 price, uint256 maxConfidenceBps);
+
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract
     /// @param _maxPriceAge Maximum age of price data in seconds
@@ -59,6 +68,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
         pyth = IPyth(_pythAddress);
         maxPriceAge = _maxPriceAge;
+        maxConfidenceBps = 200;
     }
 
     /// @notice Set the price feed ID for a token
@@ -92,6 +102,15 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
     }
 
+    /// @notice Set the maximum accepted Pyth confidence interval relative to price
+    /// @param _maxConfidenceBps Maximum confidence interval in basis points (0.1%-50%)
+    function setMaxConfidenceBps(uint256 _maxConfidenceBps) external onlyOwner {
+        if (_maxConfidenceBps < 10 || _maxConfidenceBps > 5000) {
+            revert InvalidConfidenceBps(_maxConfidenceBps, 10, 5000);
+        }
+        maxConfidenceBps = _maxConfidenceBps;
+    }
+
     /// @inheritdoc IOracleFeed
     function getPrice(address token) external view override returns (uint256) {
         return _getPrice(token);
@@ -112,6 +131,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
         // Get EMA price (time-weighted average, more stable)
         PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        _validateConfidence(token, emaData);
         return _convertPrice(token, emaData);
     }
 
@@ -142,6 +162,17 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
             return uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
         } else {
             return uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
+        }
+    }
+
+    function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {
+        if (priceData.price <= 0) {
+            return;
+        }
+        uint256 price = uint256(uint64(priceData.price));
+        uint256 confidence = uint256(priceData.conf);
+        if (confidence * 10_000 > price * maxConfidenceBps) {
+            revert PriceConfidenceTooWide(token, confidence, price, maxConfidenceBps);
         }
     }
 }
