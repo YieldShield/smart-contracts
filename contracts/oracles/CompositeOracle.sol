@@ -397,11 +397,31 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         view
         returns (uint256)
     {
-        uint256 primaryPrice = IOracleFeed(primaryFeed).getPrice(token)
-            .normalize(IOracleFeed(primaryFeed).decimals(), ConstantsLib.USD_DECIMALS);
-        uint256 backupPrice = IOracleFeed(backupFeed).getPrice(token)
-            .normalize(IOracleFeed(backupFeed).decimals(), ConstantsLib.USD_DECIMALS);
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(backupFeed, token);
+        if (!primarySuccess || !backupSuccess) {
+            revert InvalidPrice(token, 0);
+        }
         return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+    }
+
+    function _tryGetNormalizedFeedPrice(address feed, address token)
+        internal
+        view
+        returns (bool success, uint256 normalizedPrice)
+    {
+        try IOracleFeed(feed).getPrice(token) returns (uint256 price) {
+            if (price == 0) {
+                return (false, 0);
+            }
+            try IOracleFeed(feed).decimals() returns (uint8 feedDecimals) {
+                return (true, price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
+            } catch {
+                return (false, 0);
+            }
+        } catch {
+            return (false, 0);
+        }
     }
 
     // ============ Challenge Mechanism ============
@@ -423,21 +443,22 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert ChallengeNotPossible(token, "Cooldown period not elapsed");
         }
 
-        uint256 deviation = _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
-        if (deviation <= deviationThresholdBps) {
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!backupSuccess) {
+            revert ChallengeNotPossible(token, "Backup oracle unavailable");
+        }
+
+        uint256 deviation =
+            primarySuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
+        if (primarySuccess && deviation <= deviationThresholdBps) {
             revert ChallengeNotPossible(token, "Deviation below threshold");
         }
 
         config.challengeStartTime = block.timestamp;
         config.lastChallengeTime = block.timestamp;
 
-        emit ChallengeInitiated(
-            token,
-            msg.sender,
-            IOracleFeed(config.primaryFeed).getPrice(token),
-            IOracleFeed(config.backupFeed).getPrice(token),
-            deviation
-        );
+        emit ChallengeInitiated(token, msg.sender, primarySuccess ? primaryPrice : 0, backupPrice, deviation);
     }
 
     /// @inheritdoc ICompositeOracle
@@ -451,10 +472,18 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert FinalizeNotPossible(token, "Timelock not elapsed");
         }
 
-        // Verify deviation still persists (decimal-normalized — see _calculateFeedDeviation).
-        uint256 currentDeviation = _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!backupSuccess) {
+            revert FinalizeNotPossible(token, "Backup oracle unavailable");
+        }
 
-        if (currentDeviation <= deviationThresholdBps) {
+        // Verify deviation still persists unless the primary is unavailable. A broken primary
+        // is itself sufficient reason to complete the timelocked failover to a healthy backup.
+        uint256 currentDeviation =
+            primarySuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
+
+        if (primarySuccess && currentDeviation <= deviationThresholdBps) {
             // Deviation resolved during timelock - cancel challenge instead.
             // Preserve `lastChallengeTime` set at challenge initiation; the cooldown
             // already runs from then, so resetting it here would only let any caller
@@ -492,8 +521,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert CancelNotPossible(token, "No challenge pending");
         }
 
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!primarySuccess || !backupSuccess) {
+            revert CancelNotPossible(token, "Oracle unavailable");
+        }
+
         // Check if deviation has resolved (decimal-normalized — see _calculateFeedDeviation).
-        uint256 currentDeviation = _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
+        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
 
         if (currentDeviation > deviationThresholdBps) {
             revert CancelNotPossible(token, "Deviation still exceeds threshold");
@@ -516,8 +551,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert RevertNotPossible(token, "Primary oracle already active");
         }
 
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!primarySuccess || !backupSuccess) {
+            revert RevertNotPossible(token, "Oracle unavailable");
+        }
+
         // Check if deviation has returned to normal (decimal-normalized — see _calculateFeedDeviation).
-        uint256 currentDeviation = _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
+        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
 
         if (currentDeviation > deviationThresholdBps) {
             revert RevertNotPossible(token, "Deviation still exceeds threshold");
@@ -852,10 +893,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             feed.staticcall(abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (token)));
 
         if (success) {
-            return data.length != 0;
+            if (data.length < 32) {
+                return false;
+            }
+            uint256 protectedPrice = abi.decode(data, (uint256));
+            return protectedPrice != 0;
         }
 
-        return data.length != 0;
+        return false;
     }
 
     /// @notice Detect oracle type from feed description

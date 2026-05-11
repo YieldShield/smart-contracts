@@ -352,6 +352,20 @@ contract MockStalenessOracleFeed is IOracleFeed {
     }
 }
 
+contract MockRevertingPriceFeed is IOracleFeed {
+    function getPrice(address) external pure returns (uint256) {
+        revert("price unavailable");
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Mock Reverting Price Feed";
+    }
+}
+
 // ============ Dual-Feed Tests ============
 
 contract CompositeOracleDualFeedTest is Test {
@@ -497,6 +511,21 @@ contract CompositeOracleDualFeedTest is Test {
             )
         );
         compositeOracle.challengeForToken(address(token));
+    }
+
+    function test_Challenge_AllowsTimelockedFailoverWhenPrimaryReverts() public {
+        MockRevertingPriceFeed revertingPrimary = new MockRevertingPriceFeed();
+        compositeOracle.setTokenOracleFeedDual(address(token), address(revertingPrimary), address(backupOracle));
+
+        compositeOracle.challengeForToken(address(token));
+        (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
+        assertTrue(isChallengePending);
+
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        compositeOracle.finalizeChallenge(address(token));
+
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
     }
 
     function test_Challenge_RevertsDuringCooldown() public {
@@ -795,6 +824,18 @@ contract CompositeOracleDualFeedTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(noCircuitBreakerFeed)
+            )
+        );
+        compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+    }
+
+    function test_SetStrictCircuitBreakerRequired_RevertsWhenProtectedPriceReverts() public {
+        primaryOracle.setShouldRevertOnCircuitBreaker(true);
+        compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(primaryOracle)
             )
         );
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
