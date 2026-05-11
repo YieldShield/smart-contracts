@@ -14,6 +14,7 @@ const args = process.argv.slice(2);
 let fileName = "Deploy.s.sol";
 let network = "localhost";
 let keystoreArg = null;
+const deployScriptFileNamePattern = /^[A-Za-z0-9_.-]+\.s\.sol$/u;
 
 // Show help message if --help is provided
 if (args.includes("--help") || args.includes("-h")) {
@@ -60,6 +61,27 @@ function validateKeystore(keystoreName) {
     );
     return existsSync(keystorePath);
 }
+
+function validateDeployScriptFileName(name) {
+    if (
+        !deployScriptFileNamePattern.test(name) ||
+        name.includes("/") ||
+        name.includes("\\")
+    ) {
+        console.log(
+            `\n❌ Error: Invalid deploy script filename '${name}'. Use a file like DeployYieldShieldProduction.s.sol from the script/ directory.`,
+        );
+        process.exit(1);
+    }
+
+    const deployScriptPath = join(__dirname, "..", "script", name);
+    if (!existsSync(deployScriptPath)) {
+        console.log(`\n❌ Error: Deploy script '${name}' not found in script/.`);
+        process.exit(1);
+    }
+}
+
+validateDeployScriptFileName(fileName);
 
 // Check if the network exists in rpc_endpoints
 try {
@@ -164,7 +186,6 @@ process.env.ETH_KEYSTORE_ACCOUNT = selectedKeystore;
 
 const result = spawnSync("make", ["deploy-and-generate-abis"], {
     stdio: "inherit",
-    shell: true,
 });
 
 process.exit(result.status);
