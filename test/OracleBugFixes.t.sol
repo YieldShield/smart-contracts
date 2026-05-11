@@ -4,12 +4,19 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
+import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
+
+contract PythConfigHarness {
+    function getFeedIdBySymbol(string memory symbol) external pure returns (bytes32) {
+        return PythConfig.getFeedIdBySymbol(symbol);
+    }
+}
 
 /// @title Tests for oracle and factory bug fixes
 /// @notice Verifies fixes for division by zero and stale data cleanup
@@ -96,6 +103,15 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         uint256 equivalentAmount =
             compositeOracle.getEquivalentAmountWithCircuitBreaker(address(tokenA), 10e18, address(tokenB));
         assertEq(equivalentAmount, 5e18, "Should return correct equivalent amount");
+    }
+
+    function test_PythConfig_Usd0UsesDirectFeed() public {
+        PythConfigHarness harness = new PythConfigHarness();
+
+        bytes32 usd0FeedId = harness.getFeedIdBySymbol("USD0");
+        assertEq(usd0FeedId, PythConfig.USD0_USD_FEED_ID, "USD0 should use direct Pyth feed");
+        assertEq(harness.getFeedIdBySymbol("usd0"), PythConfig.USD0_USD_FEED_ID, "lowercase USD0 should work");
+        assertTrue(usd0FeedId != PythConfig.USDC_USD_FEED_ID, "USD0 should not reuse USDC feed");
     }
 
     // ============ Bug 7: Factory removeToken Cleanup Tests ============

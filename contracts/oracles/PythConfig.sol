@@ -41,6 +41,10 @@ library PythConfig {
     /// @dev Get the feed ID from: https://pyth.network/developers/price-feed-ids
     bytes32 public constant USDC_USD_FEED_ID = 0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a;
 
+    /// @notice Price feed ID for USD0/USD (Usual USD)
+    /// @dev Feed available at: https://hermes.pyth.network/v2/price_feeds?query=USD0
+    bytes32 public constant USD0_USD_FEED_ID = 0x5e8c65917af89ed66d03d082b1ae5ac93b8ed8e32363a61842c33f7d66cb2e00;
+
     /// @notice Price feed ID for stETH/USD
     /// @dev Get the feed ID from: https://pyth.network/developers/price-feed-ids
     /// Search for "Crypto.STETH/USD" and convert the hex string to bytes32
@@ -99,7 +103,7 @@ library PythConfig {
     /// @dev RLP uses RLP/USD feed (direct USD price feed)
     /// @dev SUSDS uses SUSDS/USD feed (Sky Protocol staked USD)
     /// @dev USDC uses USDC/USD feed, GTUSDC/gtUSDC uses USDC/USD feed (backed by USDC)
-    /// @dev USD0 uses USDC/USD feed (Usual Protocol stablecoin pegged to $1)
+    /// @dev USD0 uses USD0/USD feed (Usual Protocol stablecoin)
     function getFeedIdBySymbol(string memory symbol) internal pure returns (bytes32 feedId) {
         bytes32 symbolHash = keccak256(bytes(symbol));
 
@@ -139,8 +143,8 @@ library PythConfig {
             // gtUSDC (Gauntlet USDC Prime vault) uses USDC/USD feed since it's backed by USDC
             return USDC_USD_FEED_ID;
         } else if (symbolHash == keccak256(bytes("USD0")) || symbolHash == keccak256(bytes("usd0"))) {
-            // USD0 (Usual Protocol stablecoin) uses USDC/USD feed as it's pegged to $1
-            return USDC_USD_FEED_ID;
+            // USD0 (Usual Protocol stablecoin) uses its direct USD0/USD feed.
+            return USD0_USD_FEED_ID;
         } else {
             revert("Unsupported token symbol");
         }

@@ -415,6 +415,18 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         console.log("  Registered skyUSDS vault with SUSDS underlying");
         deployments.push(Deployment("ERC4626OracleFeed", address(erc4626Feed)));
 
+        address backupErc4626FeedAddr = address(0);
+        if (isLocalNetwork) {
+            ERC4626OracleFeed backupErc4626Feed = new ERC4626OracleFeed(backupOracleAddr);
+            backupErc4626Feed.registerVault(address(gtusdc), address(usdc));
+            backupErc4626Feed.registerVault(address(mcusd0), address(usd0));
+            backupErc4626Feed.registerVault(address(steakusdc), address(usdc));
+            backupErc4626Feed.registerVault(address(skyusds), address(susds));
+            backupErc4626FeedAddr = address(backupErc4626Feed);
+            console.log("Backup ERC4626OracleFeed deployed at:", backupErc4626FeedAddr);
+            deployments.push(Deployment("BackupERC4626OracleFeed", backupErc4626FeedAddr));
+        }
+
         if (isLocalNetwork) {
             // For local network, set prices on BOTH primary and backup oracles
             MockOracle primaryOracle = MockOracle(underlyingOracleAddr);
@@ -471,7 +483,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             // Register tokens with DUAL-FEED mode in CompositeOracle
             // Based on ORACLE_RESEARCH.md recommendations:
             // - Most tokens: primary oracle (Pyth-like) + backup oracle (Chainlink-like)
-            // - gtUSDC: ERC4626 NAV primary + underlying price backup
+            // - ERC4626 vaults: NAV pricing via ERC4626OracleFeed
 
             console.log("\n=== Configuring Dual-Feed Oracle Mode ===");
 
@@ -523,27 +535,27 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             compositeOracle.setTokenOracleFeedDual(address(lbtc), underlyingOracleAddr, backupOracleAddr);
             console.log("  LBTC: dual-feed configured");
 
-            // gtUSDC: ERC4626 NAV primary, underlying USDC price backup
-            compositeOracle.setTokenOracleFeedDual(address(gtusdc), address(erc4626Feed), underlyingOracleAddr);
-            console.log("  gtUSDC: ERC4626 NAV primary, USDC price backup");
+            // gtUSDC: ERC4626 NAV primary, backup NAV feed
+            compositeOracle.setTokenOracleFeedDual(address(gtusdc), address(erc4626Feed), backupErc4626FeedAddr);
+            console.log("  gtUSDC: ERC4626 dual-feed configured");
 
             // USD0: Pyth primary, backup oracle
             compositeOracle.setTokenOracleFeedDual(address(usd0), underlyingOracleAddr, backupOracleAddr);
             console.log("  USD0: dual-feed configured");
 
-            // mcUSD0: ERC4626 NAV primary, underlying USD0 price backup
-            compositeOracle.setTokenOracleFeedDual(address(mcusd0), address(erc4626Feed), underlyingOracleAddr);
-            console.log("  mcUSD0: ERC4626 NAV primary, USD0 price backup");
+            // mcUSD0: ERC4626 NAV primary, backup NAV feed
+            compositeOracle.setTokenOracleFeedDual(address(mcusd0), address(erc4626Feed), backupErc4626FeedAddr);
+            console.log("  mcUSD0: ERC4626 dual-feed configured");
 
-            // steakUSDC: ERC4626 NAV primary, underlying USDC price backup
-            compositeOracle.setTokenOracleFeedDual(address(steakusdc), address(erc4626Feed), underlyingOracleAddr);
-            console.log("  steakUSDC: ERC4626 NAV primary, USDC price backup");
+            // steakUSDC: ERC4626 NAV primary, backup NAV feed
+            compositeOracle.setTokenOracleFeedDual(address(steakusdc), address(erc4626Feed), backupErc4626FeedAddr);
+            console.log("  steakUSDC: ERC4626 dual-feed configured");
 
-            // skyUSDS: ERC4626 NAV primary, underlying SUSDS price backup
-            compositeOracle.setTokenOracleFeedDual(address(skyusds), address(erc4626Feed), underlyingOracleAddr);
-            console.log("  skyUSDS: ERC4626 NAV primary, SUSDS price backup");
+            // skyUSDS: ERC4626 NAV primary, backup NAV feed
+            compositeOracle.setTokenOracleFeedDual(address(skyusds), address(erc4626Feed), backupErc4626FeedAddr);
+            console.log("  skyUSDS: ERC4626 dual-feed configured");
 
-            console.log("All 17 tokens configured with dual-feed oracle mode");
+            console.log("All 17 tokens configured with local oracle feeds");
         } else {
             // For testnet/mainnet, configure PythOracle and register feeds
             PythOracle pythOracle = PythOracle(underlyingOracleAddr);
@@ -605,7 +617,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             compositeOracle.setTokenOracleFeedWithType(address(gtusdc), address(erc4626Feed), "erc4626");
             console.log("Registered gtUSDC with ERC4626OracleFeed (NAV-based) in CompositeOracle");
 
-            // USD0 uses USDC feed (stablecoin pegged to $1)
+            // USD0 uses its direct USD0/USD Pyth feed.
             bytes32 usd0FeedId = PythConfig.getFeedIdBySymbol("USD0");
             pythOracle.setTokenPriceFeed(address(usd0), usd0FeedId);
             compositeOracle.setTokenOracleFeedWithType(address(usd0), underlyingOracleAddr, "pyth");
@@ -619,7 +631,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
 
         // Whitelist tokens with their oracle feeds
         // minCollateralRatioBp: 10000 = 100% (global minimum), 15000 = 150% for volatile assets
-        // For local networks: use dual-feed mode with backup oracle
+        // For local networks: direct-feed assets use dual-feed mode with backup oracle.
         // For testnet/mainnet: use single-feed mode (backup = address(0)), upgrade via governance later
         console.log("\n=== Whitelisting Tokens with Oracle Feeds ===");
 
@@ -645,9 +657,8 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         );
         // USDC remains an oracle underlying/backup asset, but direct 6-decimal pool assets are unsupported.
 
-        // gtUSDC uses ERC4626OracleFeed for NAV-based pricing
-        // Backup is underlying oracle (USDC price) for local, address(0) for testnet
-        address gtUsdcBackup = isLocalNetwork ? underlyingOracleAddr : address(0);
+        // gtUSDC uses ERC4626OracleFeed for NAV-based pricing.
+        address gtUsdcBackup = backupErc4626FeedAddr;
         factory.addTokenInitial(
             address(gtusdc), "Gauntlet USDC Prime", "gtUSDC", address(erc4626Feed), gtUsdcBackup, 10000
         );
@@ -655,8 +666,8 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         // USD0 underlying token
         factory.addTokenInitial(address(usd0), "USD0 Stablecoin", "USD0", underlyingOracleAddr, backupAddr, 10000);
 
-        // New Morpho vault tokens with ERC4626 NAV pricing
-        address vaultBackup = isLocalNetwork ? underlyingOracleAddr : address(0);
+        // New Morpho vault tokens with ERC4626 NAV pricing.
+        address vaultBackup = backupErc4626FeedAddr;
         factory.addTokenInitial(address(mcusd0), "MEV Capital USD0", "mcUSD0", address(erc4626Feed), vaultBackup, 10000);
         factory.addTokenInitial(
             address(steakusdc), "Steakhouse High Yield USDC", "steakUSDC", address(erc4626Feed), vaultBackup, 10000
@@ -671,7 +682,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         factory.addTokenInitial(address(lbtc), "Lightning Bitcoin", "LBTC", underlyingOracleAddr, backupAddr, 15000);
 
         if (isLocalNetwork) {
-            console.log("Whitelisted 17 tokens with DUAL-FEED oracle mode (local testing)");
+            console.log("Whitelisted 17 tokens with local oracle feeds");
         } else {
             console.log("Whitelisted 17 tokens with single-feed oracle mode (testnet/mainnet)");
         }
