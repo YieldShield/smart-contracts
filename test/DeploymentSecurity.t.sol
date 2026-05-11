@@ -78,21 +78,22 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertFalse(timelock.hasRole(adminRole, bootstrapHolder));
     }
 
-    function test_ProductionBootstrap_FinalizerDetectsBelowQuorumVotingPower() public {
+    function test_ProductionBootstrap_BurnCannotReduceBelowQuorumVotingPower() public {
         (YSToken ysToken,, YSGovernor governor) = _deployGovernanceWithBootstrapAdmin();
-        FinalizeYieldShieldProductionGovernance finalizer = new FinalizeYieldShieldProductionGovernance();
+        uint256 belowQuorumSupply = ysToken.MIN_GOVERNANCE_SUPPLY() - 1;
+        uint256 burnAmount = ysToken.INITIAL_SUPPLY() - belowQuorumSupply;
 
-        vm.startPrank(bootstrapHolder);
-        ysToken.burn(ysToken.INITIAL_SUPPLY() - governor.proposalThreshold());
-        ysToken.delegate(bootstrapHolder);
-        vm.stopPrank();
-        vm.warp(block.timestamp + 1);
+        vm.prank(bootstrapHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSToken.BurnWouldReduceSupplyBelowGovernanceQuorum.selector,
+                belowQuorumSupply,
+                ysToken.MIN_GOVERNANCE_SUPPLY()
+            )
+        );
+        ysToken.burn(burnAmount);
 
-        (uint256 proposalVotes, uint256 proposalThreshold, uint256 quorumVotes,) =
-            finalizer.getBootstrapProposalVotes(bootstrapHolder, address(ysToken), address(governor));
-
-        assertGe(proposalVotes, proposalThreshold, "bootstrap holder can still propose");
-        assertLt(proposalVotes, quorumVotes, "bootstrap holder cannot meet quorum");
+        assertLt(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
     }
 
     function test_ProductionProtocol_TransfersOwnershipToTimelock() public {

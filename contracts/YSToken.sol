@@ -13,12 +13,15 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /// @notice YieldShield governance token with voting capabilities
 contract YSToken is ERC20, ERC20Permit, ERC20Votes {
     uint256 public constant INITIAL_SUPPLY = 1_000_000 * 10 ** 18; // 1 million YS tokens
+    uint256 public constant MIN_GOVERNANCE_SUPPLY = 10_000 * 10 ** 18; // Matches YSGovernor minimum quorum
 
     error InvalidInitialHolder(address holder);
+    error BurnWouldReduceSupplyBelowGovernanceQuorum(uint256 supplyAfterBurn, uint256 minimumSupply);
 
     constructor(address initialHolder) ERC20("YieldShield", "YS") ERC20Permit("YieldShield") {
         if (initialHolder == address(0)) revert InvalidInitialHolder(initialHolder);
         _mint(initialHolder, INITIAL_SUPPLY);
+        _delegate(initialHolder, initialHolder);
     }
 
     // The functions below are overrides required by Solidity.
@@ -53,6 +56,12 @@ contract YSToken is ERC20, ERC20Permit, ERC20Votes {
      * @param amount Amount of tokens to burn
      */
     function burn(uint256 amount) external {
+        uint256 currentSupply = totalSupply();
+        uint256 supplyAfterBurn = amount < currentSupply ? currentSupply - amount : 0;
+        if (supplyAfterBurn < MIN_GOVERNANCE_SUPPLY) {
+            revert BurnWouldReduceSupplyBelowGovernanceQuorum(supplyAfterBurn, MIN_GOVERNANCE_SUPPLY);
+        }
+
         _burn(msg.sender, amount);
     }
 }

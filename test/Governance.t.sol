@@ -63,6 +63,20 @@ contract YSTokenTest is Test {
         assertEq(ysToken.balanceOf(deployer), 999_500e18);
     }
 
+    function test_BurnCannotReduceSupplyBelowGovernanceQuorumFloor() public {
+        ysToken.burn(ysToken.INITIAL_SUPPLY() - ysToken.MIN_GOVERNANCE_SUPPLY());
+        assertEq(ysToken.totalSupply(), ysToken.MIN_GOVERNANCE_SUPPLY());
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSToken.BurnWouldReduceSupplyBelowGovernanceQuorum.selector,
+                ysToken.MIN_GOVERNANCE_SUPPLY() - 1,
+                ysToken.MIN_GOVERNANCE_SUPPLY()
+            )
+        );
+        ysToken.burn(1);
+    }
+
     function test_Delegation() public {
         ysToken.delegate(deployer);
         vm.warp(block.timestamp + 1);
