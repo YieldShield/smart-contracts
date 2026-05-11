@@ -214,6 +214,16 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.createPool(address(0), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
     }
 
+    function testCreatePoolRevertsWhenShieldedSymbolDoesNotMatchWhitelist() public {
+        vm.expectRevert(ErrorsLib.InvalidShieldedTokenSymbol.selector);
+        factory.createPool(address(tokenA), "FAKE", address(tokenB), "TKNB", 500, 200, 15000, 0);
+    }
+
+    function testCreatePoolRevertsWhenBackingSymbolDoesNotMatchWhitelist() public {
+        vm.expectRevert(ErrorsLib.InvalidBackingTokenSymbols.selector);
+        factory.createPool(address(tokenA), "TKNA", address(tokenB), "FAKE", 500, 200, 15000, 0);
+    }
+
     function testRevertOnInvalidCommissionRate() public {
         vm.expectRevert(ErrorsLib.InvalidCommissionRate.selector);
         factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 5100, 200, 15000, 0);

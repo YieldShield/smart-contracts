@@ -259,6 +259,12 @@ contract SplitRiskPoolFactory is
         if (backingTokenInfo.token == address(0)) {
             revert ErrorsLib.TokenNotWhitelisted();
         }
+        if (keccak256(bytes(_shieldedTokenSymbol)) != keccak256(bytes(shieldedTokenInfo.symbol))) {
+            revert ErrorsLib.InvalidShieldedTokenSymbol();
+        }
+        if (keccak256(bytes(_backingTokenSymbol)) != keccak256(bytes(backingTokenInfo.symbol))) {
+            revert ErrorsLib.InvalidBackingTokenSymbols();
+        }
 
         _validateTokenDecimals(_shieldedToken);
         _validateTokenDecimals(_backingToken);
