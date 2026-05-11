@@ -130,6 +130,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         factoryAddr = address(proxy);
         console.log("SplitRiskPoolFactory proxy deployed at:", factoryAddr);
         console.log("Factory implementation:", address(factoryImplementation));
+        console.log("Pool implementation:", address(poolImplementation));
 
         SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
         uint256 actualMinimumCreationBondUsd = factory.minimumCreationBondUsd();
@@ -155,6 +156,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         deployments.push(Deployment("PythOracle", pythOracleAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
         deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
+        deployments.push(Deployment("SplitRiskPoolFactoryImplementation", address(factoryImplementation)));
+        deployments.push(Deployment("SplitRiskPoolImplementation", address(poolImplementation)));
         deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
     }
 

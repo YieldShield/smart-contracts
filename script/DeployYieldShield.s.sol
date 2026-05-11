@@ -218,6 +218,8 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         console.log("All configurations verified successfully!");
 
         // Add factory deployment to exports
+        deployments.push(Deployment("SplitRiskPoolFactoryImplementation", address(factoryImplementation)));
+        deployments.push(Deployment("SplitRiskPoolImplementation", address(poolImplementation)));
         deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
     }
 
