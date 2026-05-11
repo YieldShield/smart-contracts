@@ -6,8 +6,10 @@ import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
+import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
@@ -40,6 +42,53 @@ contract SplitRiskPoolTokenMetadataTest is Test {
         assertEq(pool.backingTokenDecimals(), 18);
         assertEq(pool.shieldedTokenScale(), 1e6);
         assertEq(pool.backingTokenScale(), 1e18);
+    }
+
+    function test_Initialize_RevertsForUnsafeHighDecimalTokenMetadata() public {
+        MockERC20Decimals highDecimalToken = new MockERC20Decimals("High Decimal Token", "HIGH", 33);
+        MockERC20 backingToken = new MockERC20("Backing Token", "BACK");
+        MockOracle oracle = new MockOracle();
+        oracle.setPrice(address(highDecimalToken), 1e8);
+        oracle.setPrice(address(backingToken), 1e8);
+
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "HIGH",
+            symbol: "HIGH",
+            token: address(highDecimalToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "BACK",
+            symbol: "BACK",
+            token: address(backingToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+
+        SplitRiskPool implementation = new SplitRiskPool();
+        ShieldReceiptNFT shieldNFT = new ShieldReceiptNFT("sHIGH", "sHIGH");
+        ProtectorReceiptNFT protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPool.initialize.selector,
+            shieldedTokenInfo,
+            backingTokenInfo,
+            1000,
+            500,
+            address(this),
+            15000,
+            address(this),
+            address(oracle),
+            address(0xdead),
+            address(shieldNFT),
+            address(protectorNFT),
+            address(this)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.InvalidTokenDecimals.selector, address(highDecimalToken), 33));
+        new ERC1967Proxy(address(implementation), initData);
     }
 
     function _deployPool(

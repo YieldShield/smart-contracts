@@ -281,6 +281,35 @@ contract SecurityFixesTest is Test {
         new ERC1967Proxy(address(implementation), initData);
     }
 
+    function test_UpdatePoolConfigRejectsMaxDepositsAboveAccumulatorCap() public {
+        (
+            uint256 shieldedMinDepositAmount,
+            ,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address protocolFeeRecipient,
+            uint256 protocolFee,
+            address priceOracle
+        ) = pool.poolConfig();
+
+        vm.expectRevert(ErrorsLib.DepositAmountTooLarge.selector);
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            uint256(type(uint128).max) + 1,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            maxTotalValueLockedUsd,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            protocolFeeRecipient,
+            priceOracle
+        );
+    }
+
     function test_StrictPoolValidationRejectsCompositeWithInactiveBackupLackingProtectedPrice() public {
         StrictBackingOwner strictOwner = new StrictBackingOwner(address(backingToken));
         SplitRiskPool strictPool = _deployPoolWithOwner(

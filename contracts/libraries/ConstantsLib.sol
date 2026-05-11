@@ -53,6 +53,9 @@ library ConstantsLib {
     /// @notice Minimum ERC20 decimals supported for pool assets.
     /// @dev Very low-decimal backing assets can make share-socialized dust material and unclaimable.
     uint8 public constant MIN_POOL_TOKEN_DECIMALS = 6;
+    /// @notice Maximum ERC20 decimals supported for pool assets.
+    /// @dev Keeps the default max deposit below MAX_SAFE_ACCUMULATION in native units.
+    uint8 public constant MAX_POOL_TOKEN_DECIMALS = 32;
     /// @notice Maximum safe accumulation value to prevent overflow
     uint256 public constant MAX_SAFE_ACCUMULATION = type(uint128).max;
 

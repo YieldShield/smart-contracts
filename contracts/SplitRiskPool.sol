@@ -710,6 +710,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         if (depositAmount < minDepositAmount) revert ErrorsLib.InsufficientDepositAmount();
         if (depositAmount > maxDepositAmount) revert ErrorsLib.DepositAmountTooLarge();
+        if (depositAmount > ConstantsLib.MAX_SAFE_ACCUMULATION) revert ErrorsLib.DepositAmountTooLarge();
         if (depositValueUsd == 0 && depositAmount > 0) revert ErrorsLib.InvalidOraclePrice();
         if (_getTotalPoolValueUsd(allowShieldedSpotFallback) + depositValueUsd > poolConfig.maxTotalValueLockedUsd) {
             revert ErrorsLib.TVLLimitExceeded();
@@ -1955,6 +1956,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidDepositAmountBounds();
         }
 
+        if (
+            newShieldedMaxDepositAmount > ConstantsLib.MAX_SAFE_ACCUMULATION
+                || newBackingMaxDepositAmount > ConstantsLib.MAX_SAFE_ACCUMULATION
+        ) {
+            revert ErrorsLib.DepositAmountTooLarge();
+        }
+
         if (newProtocolFee > ConstantsLib.MAX_PROTOCOL_FEE) {
             revert ErrorsLib.InvalidProtocolFee();
         }
@@ -2142,7 +2150,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidTokenAddress();
         }
 
-        if (tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > 77) {
+        if (
+            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS
+                || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
+        ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
 
