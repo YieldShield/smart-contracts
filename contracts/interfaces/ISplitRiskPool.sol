@@ -78,6 +78,7 @@ interface ISplitRiskPool {
     // Reward Functions
     function claimRewards(uint256 tokenId) external;
     function claimCommission(uint256 tokenId) external;
+    function settleExpiredProtectorPosition(uint256 tokenId) external;
 
     // View Functions
     function getUserNFTCounts(address user) external view returns (uint256 shieldNFTCount, uint256 protectorNFTCount);

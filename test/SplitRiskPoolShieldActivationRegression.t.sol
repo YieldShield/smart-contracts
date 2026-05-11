@@ -487,6 +487,30 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(shieldedPoolBalance, 0, "claimed forfeiture should clear shielded pool balance");
     }
 
+    function test_permissionlessExpiredProtectorSettlementClearsDrainedPoolReserve() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), 0, "activation should drain the protector epoch");
+        assertEq(pool.getReservedFees(), 100e18, "forfeited shielded assets should remain reserved");
+
+        uint256 ownerBalanceBefore = shieldedToken.balanceOf(protector1);
+        vm.prank(address(0xBEEF));
+        pool.settleExpiredProtectorPosition(protectorTokenId);
+
+        assertEq(shieldedToken.balanceOf(protector1) - ownerBalanceBefore, 100e18, "settlement pays NFT owner");
+        assertEq(pool.getReservedFees(), 0, "permissionless settlement should clear expired reserve");
+        (uint256 shieldedPoolBalance, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(shieldedPoolBalance, 0, "settlement should clear tracked shielded balance");
+        assertEq(backingPoolBalance, 0, "activation should have drained backing");
+    }
+
     function test_crossAssetShieldActivationAccruesYieldFeesWhenProtectedPriceAvailable() public {
         vm.prank(protector1);
         uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);

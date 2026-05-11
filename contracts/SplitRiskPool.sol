@@ -1192,6 +1192,27 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /**
+     * @notice Settles commission for an expired protector-share epoch without requiring the NFT owner to call
+     * @dev Pays any claimable commission to the current NFT owner. This lets keepers clear
+     *      drained-pool reserves after a full shield activation while preserving ownership of funds.
+     * @param tokenId The protector NFT token ID
+     */
+    function settleExpiredProtectorPosition(uint256 tokenId) external nonReentrant {
+        if (protectorShareEpochs[tokenId] >= protectorShareEpoch) {
+            revert ErrorsLib.InvalidTokenId();
+        }
+
+        address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
+        IProtectorReceiptNFT.ProtectorPosition memory pos =
+            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+
+        if (_claimCommissionTo(positionOwner, tokenId, positionShares_) == 0) {
+            emit EventsLib.NoCommissionToClaim(positionOwner, tokenId);
+        }
+    }
+
+    /**
      * @notice Get the claimable commission amount for a protector NFT position
      * @dev Calculates claimable commission using rewards-per-share pattern (MasterChef).
      *      Returns 0 if no commission is available or if there are no protector tokens.
