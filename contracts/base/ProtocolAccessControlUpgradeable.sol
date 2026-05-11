@@ -86,8 +86,7 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (candidate == address(0)) revert GovernanceZeroAddress();
         if (candidate.code.length == 0) revert InvalidGovernanceTimelock(candidate);
 
-        (bool success, bytes memory data) =
-            candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
+        (bool success, bytes memory data) = candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
         if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
 
         uint256 minDelay = abi.decode(data, (uint256));

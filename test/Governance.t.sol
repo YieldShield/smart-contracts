@@ -382,9 +382,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         address eoaCandidate = address(0xCAFE);
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, eoaCandidate
-            )
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, eoaCandidate)
         );
         factory.setGovernanceTimelock(eoaCandidate);
     }
@@ -409,9 +407,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector,
-                address(zeroDelayTimelock),
-                0
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector, address(zeroDelayTimelock), 0
             )
         );
         factory.setGovernanceTimelock(address(zeroDelayTimelock));

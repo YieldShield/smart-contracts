@@ -76,7 +76,9 @@ function validateDeployScriptFileName(name) {
 
     const deployScriptPath = join(__dirname, "..", "script", name);
     if (!existsSync(deployScriptPath)) {
-        console.log(`\n❌ Error: Deploy script '${name}' not found in script/.`);
+        console.log(
+            `\n❌ Error: Deploy script '${name}' not found in script/.`,
+        );
         process.exit(1);
     }
 }
