@@ -465,6 +465,20 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(challengeStartTime, block.timestamp);
     }
 
+    function test_Challenge_MakesProtectedPricingUnavailableUntilResolved() public {
+        _initiateChallenge();
+
+        (bool isStale, uint64 publishTime) = compositeOracle.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getPriceWithCircuitBreaker(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+    }
+
     function test_Challenge_RevertsWhenNotDualFeed() public {
         compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
 

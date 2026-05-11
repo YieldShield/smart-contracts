@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
@@ -132,6 +133,31 @@ contract ERC4626OracleFeedTest is Test {
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(underlyingAsset))
         );
         erc4626Feed.getPriceWithCircuitBreaker(address(vault));
+    }
+
+    function test_GetPriceWithCircuitBreaker_RevertsWhenUnderlyingChallengePending() public {
+        CompositeOracle compositeUnderlyingOracle = new CompositeOracle();
+        MockOracle primary = new MockOracle();
+        MockOracle backup = new MockOracle();
+        primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
+        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
+        compositeUnderlyingOracle.setTokenOracleFeedDual(address(underlyingAsset), address(primary), address(backup));
+
+        ERC4626OracleFeed challengedFeed = new ERC4626OracleFeed(address(compositeUnderlyingOracle));
+        challengedFeed.registerVault(address(vault), address(underlyingAsset));
+
+        compositeUnderlyingOracle.challengeForToken(address(underlyingAsset));
+
+        (bool isStale, uint64 publishTime) = challengedFeed.isPriceStale(address(vault));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.StaleUnderlyingPrice.selector, address(vault), address(underlyingAsset)
+            )
+        );
+        challengedFeed.getPriceWithCircuitBreaker(address(vault));
     }
 
     function test_GetPrice_CalculatesWithDeposit() public {

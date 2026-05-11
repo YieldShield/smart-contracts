@@ -139,6 +139,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Custom error when a strict circuit-breaker price is requested from an unsupported feed
     error CircuitBreakerNotSupported(address token, address feed);
 
+    /// @notice Custom error when protected pricing is requested while a challenge is pending
+    error OracleChallengePending(address token);
+
     /// @notice Constructor
     constructor() Ownable(msg.sender) { }
 
@@ -626,6 +629,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) return (true, 0);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) return (true, 0);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
@@ -781,6 +785,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
@@ -797,6 +802,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     function getPriceWithStrictCircuitBreaker(address token) external view override returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
