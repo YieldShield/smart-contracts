@@ -696,9 +696,7 @@ async function main() {
             const expectedQuoteFeedId = (
                 token.quoteFeedId || zeroHash
             ).toLowerCase();
-            const actualQuoteFeedId = (
-                quoteFeedId || zeroHash
-            ).toLowerCase();
+            const actualQuoteFeedId = (quoteFeedId || zeroHash).toLowerCase();
             if (
                 !isSupported ||
                 actualFeedId === zeroHash ||
