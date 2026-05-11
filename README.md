@@ -34,7 +34,6 @@ test/           Foundry test suite
 script/         Foundry deployment and verification scripts
 scripts-js/     Node.js helper scripts for deployments, accounts, and ABIs
 deployments/    Checked-in deployment metadata
-broadcast/      Checked-in Foundry broadcast records
 docs_ok/        Design notes, audit notes, and security follow-up documents
 lib/            Foundry dependencies tracked as Git submodules
 ```
