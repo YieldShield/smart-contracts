@@ -1280,6 +1280,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositProtector");
         }
 
+        // Backing deposits lock protector shares from protected backing value and TVL
+        // accounting, so both priced legs must be free of pending oracle challenges.
+        _requireNoOraclePendingChallenge(BACKING_TOKEN);
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+
         // Balance-delta deposit to support fee-on-transfer tokens
         uint256 received = _transferAndGetReceived(asset, depositAmount);
 

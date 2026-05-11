@@ -123,6 +123,10 @@ contract SecurityFixesTest is Test {
         vm.prank(shielded);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(backingToken)));
         pool.depositShieldedAsset(address(shieldedToken), 1e18, 0);
+
+        vm.prank(protector);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(backingToken)));
+        pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
     function test_ShieldedOracleChallengeBlocksFeeAccrualPaths() public {
@@ -145,6 +149,10 @@ contract SecurityFixesTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.claimRewards(shieldTokenId);
         vm.stopPrank();
+
+        vm.prank(protector);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
+        pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
     function test_ShieldedOracleChallengeSkipsCrossAssetActivationFees() public {
