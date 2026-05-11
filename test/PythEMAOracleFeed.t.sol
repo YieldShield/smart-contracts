@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { PythEMAOracleFeed } from "../contracts/oracles/PythEMAOracleFeed.sol";
 import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -43,5 +44,32 @@ contract PythEMAOracleFeedTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidPrice.selector, address(token), int256(-1)));
         feed.getPrice(address(token));
+    }
+
+    function testGetPriceWithCircuitBreaker_ReturnsEmaPrice() public view {
+        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 1e8);
+    }
+
+    function testCompositeOracleUsesEmaCircuitBreakerPrice() public {
+        CompositeOracle compositeOracle = new CompositeOracle();
+        compositeOracle.setTokenOracleFeed(address(token), address(feed));
+
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), 1e8);
+    }
+
+    function testGetPriceWithPositiveExpo() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, 123, 1e6, 2, uint64(block.timestamp));
+
+        assertEq(feed.getPrice(address(token)), 12_300e8);
+        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 12_300e8);
+    }
+
+    function testGetPriceWithZeroExpo() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, 1e8, 1e6, 0, uint64(block.timestamp));
+
+        assertEq(feed.getPrice(address(token)), 1e16);
+        assertEq(feed.getPriceWithCircuitBreaker(address(token)), 1e16);
     }
 }

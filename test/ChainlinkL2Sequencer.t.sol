@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test, console } from "forge-std/Test.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 
 /// @title MockChainlinkPriceFeed
@@ -77,6 +78,18 @@ contract ChainlinkL2SequencerTest is Test {
         // Without sequencer feed set, should work normally
         uint256 price = chainlinkFeed.getPrice(testToken);
         assertEq(price, uint256(ETH_PRICE));
+    }
+
+    function test_GetPriceWithCircuitBreaker_UsesChainlinkValidation() public view {
+        uint256 price = chainlinkFeed.getPriceWithCircuitBreaker(testToken);
+        assertEq(price, uint256(ETH_PRICE));
+    }
+
+    function test_CompositeOracleUsesChainlinkCircuitBreakerPrice() public {
+        CompositeOracle compositeOracle = new CompositeOracle();
+        compositeOracle.setTokenOracleFeed(testToken, address(chainlinkFeed));
+
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(testToken), uint256(ETH_PRICE));
     }
 
     function test_GetSequencerStatus_NoFeedConfigured() public view {

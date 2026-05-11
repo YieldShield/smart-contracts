@@ -301,22 +301,23 @@ contract PythOracleTest is Test {
     }
 
     function testPriceWithPositiveExpo() public {
-        // Test with expo = 10 (price stored as 1e-2 * 10^10 = 1e8)
-        // But we want $1.00, so actual = 1e-2
-        // To get $1.00 in 8 decimals: 1e-2 * 1e8 = 1e6, but we need 1e8
-        // So price should be 1e-2 * 10^10 = 1e8
-        // Actual: price * 10^10 = 1.0, so price = 1e-10 (not representable as int64)
-        // Let's use a different approach: price = 1e8, expo = 0 means actual = 1e8
-        // To get $1.00: 1e8 * 10^0 = 1e8, but we want 1.0, so we need expo = -8
-        // For expo = 0: price = 1e8 means actual = 1e8, to get 1.0 we divide by 1e8
-        // So in 8 decimals: (1e8 / 1e8) * 1e8 = 1e8 ✓
+        // price=123, expo=2 means the raw Pyth value is 123 * 10^2 = 12,300.
+        // Normalized to 8 USD decimals, that is 12,300e8.
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 123, 1e6, 2, uint64(block.timestamp));
+
+        uint256 price = oracle.getPrice(address(token1));
+        assertEq(price, 12_300e8, "Price should convert correctly with positive expo");
+    }
+
+    function testPriceWithZeroExpo() public {
+        // price=1e8, expo=0 means the raw Pyth value is 100,000,000.
+        // Normalized to 8 USD decimals, that is 1e8 * 1e8 = 1e16.
+        vm.warp(block.timestamp + 1);
         _updatePriceFeed(FEED_ID_1, 1e8, 1e6, 0, uint64(block.timestamp));
 
         uint256 price = oracle.getPrice(address(token1));
-        // Should convert: 1e8 / 10^(0 + 8) = 1e8 / 1e8 = 1
-        // But we want 8 decimals, so: 1 * 1e8 = 1e8
-        // Actually: (1e8 * 10^0) / 10^8 = 1e8 / 1e8 = 1, then * 1e8 = 1e8
-        assertEq(price, 1e8, "Price should convert correctly with expo = 0");
+        assertEq(price, 1e16, "Price should convert correctly with zero expo");
     }
 
     function testGetPrice_NegativePrice_Reverts() public {

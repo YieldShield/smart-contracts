@@ -94,6 +94,16 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
     /// @inheritdoc IOracleFeed
     function getPrice(address token) external view override returns (uint256) {
+        return _getPrice(token);
+    }
+
+    /// @notice Get the EMA price through the protected-price selector used by CompositeOracle strict validation.
+    /// @dev EMA pricing is already the stability-focused path and is bounded by Pyth's staleness check.
+    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
+        return _getPrice(token);
+    }
+
+    function _getPrice(address token) internal view returns (uint256) {
         if (!isTokenSupported[token]) {
             revert TokenNotSupported(token);
         }
