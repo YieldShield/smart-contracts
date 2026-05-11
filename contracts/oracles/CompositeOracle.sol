@@ -499,11 +499,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         // Once activated, the backup becomes the feed used by protected pool valuation paths.
+        // Do not re-check the primary protected path here: the challenge may be
+        // completing precisely because that path is now unusable.
         _requireCircuitBreakerSupport(token, config.backupFeed);
-
-        if (strictCircuitBreakerRequired[token]) {
-            _validateStrictCircuitBreakerConfig(token, config.primaryFeed, config.backupFeed, true);
-        }
 
         config.isBackupActive = true;
         config.challengeStartTime = 0;

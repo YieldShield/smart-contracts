@@ -871,6 +871,22 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), deviatedPrice);
     }
 
+    function test_StrictDualFeed_FinalizeChallengeSucceedsWhenPrimaryProtectedPriceReverts() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+
+        uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
+        backupOracle.setPrice(address(token), deviatedPrice);
+        primaryOracle.setShouldRevertOnCircuitBreaker(true);
+
+        compositeOracle.challengeForToken(address(token));
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        compositeOracle.finalizeChallenge(address(token));
+
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+        assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), deviatedPrice);
+    }
+
     function test_Challenge_RevertsWhenBackupLacksCircuitBreaker() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
