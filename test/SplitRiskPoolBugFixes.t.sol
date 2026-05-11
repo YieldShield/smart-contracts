@@ -270,9 +270,7 @@ contract SplitRiskPoolBugFixesTest is Test {
         oracle.setPrice(address(shieldedToken), 0);
 
         vm.prank(shielded1);
-        vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken))
-        );
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken)));
         pool.shieldedWithdraw(0, address(shieldedToken), 0);
 
         assertEq(shieldNFT.ownerOf(0), shielded1, "receipt should remain live");
