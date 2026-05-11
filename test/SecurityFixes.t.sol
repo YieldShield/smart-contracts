@@ -317,23 +317,18 @@ contract SecurityFixesTest is Test {
         );
     }
 
-    function test_StrictPoolValidationRejectsCompositeWithInactiveBackupLackingProtectedPrice() public {
-        StrictBackingOwner strictOwner = new StrictBackingOwner(address(backingToken));
-        SplitRiskPool strictPool = _deployPoolWithOwner(
-            address(shieldedToken), address(backingToken), address(compositeOracle), address(strictOwner)
-        );
-
+    function test_CompositeOracleRejectsInactiveBackupLackingProtectedPrice() public {
         CompositeOracle unsafeOracle = new CompositeOracle();
         SecurityFeedWithoutCircuitBreaker fallbackOnlyBackup = new SecurityFeedWithoutCircuitBreaker();
         fallbackOnlyBackup.setPrice(address(backingToken), 1e8);
 
         unsafeOracle.setTokenOracleFeed(address(shieldedToken), address(primaryOracle));
-        unsafeOracle.setTokenOracleFeedDual(address(backingToken), address(primaryOracle), address(fallbackOnlyBackup));
-
-        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
-        strictPool.updatePoolConfig(
-            1e18, 1000e18, 1e18, 1000e18, 1000000e8, 1 days, 28 days, 100, address(0xFEE), address(unsafeOracle)
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(backingToken), address(fallbackOnlyBackup)
+            )
         );
+        unsafeOracle.setTokenOracleFeedDual(address(backingToken), address(primaryOracle), address(fallbackOnlyBackup));
     }
 
     function _deployPool(address shieldedAsset, address backingAsset, address oracleAddr)

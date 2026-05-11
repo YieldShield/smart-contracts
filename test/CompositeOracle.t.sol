@@ -851,18 +851,16 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(primaryOracle));
     }
 
-    function test_SetStrictCircuitBreakerRequired_RevertsWhenBackupLacksSupport() public {
+    function test_SetDualFeed_RevertsWhenBackupLacksCircuitBreaker() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(token), PRIMARY_PRICE);
-
-        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
     }
 
     function test_SetStrictCircuitBreakerRequired_RevertsWhenProtectedPriceReverts() public {
@@ -928,18 +926,16 @@ contract CompositeOracleDualFeedTest is Test {
         uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
         noCircuitBreakerFeed.setPrice(address(token), deviatedPrice);
 
-        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.challengeForToken(address(token));
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
 
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertFalse(isChallengePending);
         assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
     }
 
     function test_StrictCircuitBreaker_UsesHealthyActiveFeedWhenInactiveBackupReverts() public {

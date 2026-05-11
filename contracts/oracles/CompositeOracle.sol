@@ -875,13 +875,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address backupFeed,
         bool requireStrictSupport
     ) internal view {
-        if (!requireStrictSupport) {
-            return;
-        }
-
-        _requireCircuitBreakerSupport(token, primaryFeed);
         if (backupFeed != address(0)) {
             _requireCircuitBreakerSupport(token, backupFeed);
+        }
+
+        if (requireStrictSupport) {
+            _requireCircuitBreakerSupport(token, primaryFeed);
         }
     }
 
