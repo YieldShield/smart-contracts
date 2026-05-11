@@ -349,13 +349,14 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
             uint256 shieldedMaxDepositAmount,
             uint256 backingMinDepositAmount,
             uint256 backingMaxDepositAmount,
-            ,
+            uint256 maxTotalValueLockedUsd,
             uint256 minimumPoolTime,
             uint256 unlockDuration,
             address protocolFeeRecipient,
             uint256 protocolFee,
             address priceOracle
         ) = pool.poolConfig();
+        assertGt(maxTotalValueLockedUsd, 0, "test fixture should have a TVL cap");
         pool.updatePoolConfig(
             shieldedMinDepositAmount,
             shieldedMaxDepositAmount,
