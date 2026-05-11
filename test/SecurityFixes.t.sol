@@ -114,6 +114,30 @@ contract SecurityFixesTest is Test {
         vm.stopPrank();
     }
 
+    function test_ShieldedOracleChallengeDoesNotSkipCrossAssetActivationFees() public {
+        vm.prank(protector);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
+
+        vm.prank(shielded);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
+
+        primaryOracle.setPrice(address(shieldedToken), 2e8);
+        compositeOracle.challengeForToken(address(shieldedToken));
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shielded);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+
+        assertEq(pool.accumulatedPoolFee(), 25e18, "pool fee should accrue from active protected price");
+        assertEq(pool.accumulatedProtocolFee(), 5e18, "protocol fee should accrue from active protected price");
+        assertEq(
+            pool.getClaimableCommission(protectorTokenId),
+            970e18,
+            "forfeiture plus commission should remain reserved for protectors"
+        );
+        assertEq(pool.getReservedFees(), 1_000e18, "all fees and forfeiture should remain reserved");
+    }
+
     function test_PartialWithdrawProratesRemainingPositionAfterFeeAccrual() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
