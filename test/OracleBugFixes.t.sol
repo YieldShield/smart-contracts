@@ -36,6 +36,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
     MockERC4626 public vaultB;
 
     address public owner = address(this);
+    address public governanceTimelock;
 
     function setUp() public {
         // Deploy tokens
@@ -63,7 +64,8 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
 
         // Deploy factory for tokenInfo cleanup tests
         SplitRiskPool poolImpl = new SplitRiskPool();
-        factory = _deployFactory(address(this), address(this), address(poolImpl));
+        governanceTimelock = address(_deployTestTimelock(address(this)));
+        factory = _deployFactory(address(this), governanceTimelock, address(poolImpl));
 
         // Set up factory
         factory.setCompositeOracle(address(compositeOracle));
@@ -152,7 +154,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertTrue(bytes(name).length > 0, "Name should be set");
         assertTrue(bytes(symbol).length > 0, "Symbol should be set");
 
-        // Remove the token (as governance - address(this) is governance in setUp)
+        vm.prank(governanceTimelock);
         factory.removeToken(address(vaultA));
 
         // Verify token is no longer whitelisted
@@ -178,6 +180,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertEq(minCollateral1, 15000, "Initial min collateral should be 15000");
 
         // Remove the token
+        vm.prank(governanceTimelock);
         factory.removeToken(address(vaultA));
 
         // Re-add with different params
@@ -201,6 +204,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isWhitelisted(address(vaultB)), "VaultB should be whitelisted");
 
         // Remove only vaultA
+        vm.prank(governanceTimelock);
         factory.removeToken(address(vaultA));
 
         // Verify vaultA is removed but vaultB is unaffected

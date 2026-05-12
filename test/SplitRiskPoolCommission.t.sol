@@ -15,10 +15,11 @@ import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for rewards-per-share commission distribution (MasterChef pattern)
 /// @notice Tests that new depositors cannot claim historical rewards (late-joiner exploit fix)
-contract SplitRiskPoolCommissionTest is Test {
+contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -35,6 +36,8 @@ contract SplitRiskPoolCommissionTest is Test {
     uint256 constant REWARD_PRECISION = 1e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "IBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "UBASE");
@@ -407,6 +410,7 @@ contract SplitRiskPoolCommissionTest is Test {
         _claimRewardsAsOwner(0);
 
         // Step 2: Migrate position (grandfather clause)
+        vm.prank(governance);
         pool.migrateExistingPosition(tokenId);
 
         // Step 3: Check that debt is set to 0 (allows claiming historical rewards)
@@ -438,6 +442,7 @@ contract SplitRiskPoolCommissionTest is Test {
         uint256 tokenId = pool.depositBackingAsset(address(backingToken), backingAmount, 0);
 
         // Step 4: Try to migrate - should revert because debt is already set
+        vm.prank(governance);
         vm.expectRevert(ErrorsLib.InvalidTokenId.selector);
         pool.migrateExistingPosition(tokenId);
     }

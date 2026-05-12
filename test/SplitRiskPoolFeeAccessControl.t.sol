@@ -14,10 +14,11 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for fee payment access control (NEW-1 FIX)
 /// @notice Tests that payPoolFee() and payProtocolFee() are restricted to authorized callers
-contract SplitRiskPoolFeeAccessControlTest is Test {
+contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -35,6 +36,8 @@ contract SplitRiskPoolFeeAccessControlTest is Test {
     uint256 constant INITIAL_BALANCE = 1000000e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "IBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "UBASE");

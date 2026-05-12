@@ -12,8 +12,9 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
-contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test {
+contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
@@ -53,6 +54,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSHT", "sSHT");
         protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
 
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
@@ -62,7 +64,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test {
             500,
             address(this),
             15000,
-            address(this),
+            governanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),

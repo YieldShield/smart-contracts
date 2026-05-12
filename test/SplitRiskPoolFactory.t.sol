@@ -39,6 +39,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     address public user1 = address(0x1);
     address public user2 = address(0x2);
+    address public governanceTimelock;
 
     event PoolCreated(
         address indexed poolAddress,
@@ -68,7 +69,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         compositeOracle.setTokenOracleFeedWithType(address(tokenB), address(oracle), "mock");
 
         SplitRiskPool poolImpl = new SplitRiskPool();
-        factory = _deployFactory(address(this), address(this), address(poolImpl));
+        governanceTimelock = address(_deployTestTimelock(address(this)));
+        factory = _deployFactory(address(this), governanceTimelock, address(poolImpl));
 
         // Set composite oracle first (required before adding tokens)
         factory.setCompositeOracle(address(compositeOracle));
@@ -371,6 +373,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factoryInterface.splitRiskPoolImplementation(), factory.splitRiskPoolImplementation());
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), address(this));
 
+        vm.prank(governanceTimelock);
         factoryInterface.setPoolImplementation(address(newImplementation));
         assertEq(factoryInterface.splitRiskPoolImplementation(), address(newImplementation));
 
@@ -382,7 +385,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     function testRevertCreatePoolWithoutDefaultOracle() public {
         // Create a new factory without setting default oracle
         SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory newFactory = _deployFactory(address(this), address(this), address(poolImpl));
+        SplitRiskPoolFactory newFactory =
+            _deployFactory(address(this), address(_deployTestTimelock(address(this))), address(poolImpl));
 
         // Whitelist tokens (without setting composite oracle first)
         newFactory.addTokenInitial(address(tokenA), "Token A", "TKNA", address(oracle), address(0), 10000);
@@ -406,6 +410,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         uint256 futureConfigValue = 1234;
 
         SplitRiskPoolFactoryV2Mock newImplementation = new SplitRiskPoolFactoryV2Mock();
+        vm.prank(governanceTimelock);
         factory.upgradeToAndCall(
             address(newImplementation), abi.encodeCall(SplitRiskPoolFactoryV2Mock.initializeV2, (futureConfigValue))
         );
@@ -415,7 +420,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         assertEq(upgradedFactory.version(), 2, "Factory should upgrade to new implementation");
         assertEq(upgradedFactory.owner(), address(this), "Owner should persist across upgrade");
-        assertEq(upgradedFactory.governanceTimelock(), address(this), "Governance timelock should persist");
+        assertEq(upgradedFactory.governanceTimelock(), governanceTimelock, "Governance timelock should persist");
         assertEq(upgradedFactory.compositeOracle(), address(compositeOracle), "Composite oracle should persist");
         assertEq(upgradedFactory.defaultProtocolFeeRecipient(), address(this), "Protocol fee recipient should persist");
         assertEq(
@@ -443,6 +448,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         uint256 minimumCreationBondUsdBefore = factory.minimumCreationBondUsd();
 
         SplitRiskPoolFactoryV2Mock newImplementation = new SplitRiskPoolFactoryV2Mock();
+        vm.prank(governanceTimelock);
         factory.upgradeToAndCall(address(newImplementation), bytes(""));
 
         SplitRiskPoolFactoryV2Mock upgradedFactory = SplitRiskPoolFactoryV2Mock(payable(address(factory)));
@@ -605,6 +611,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
 
         uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        vm.prank(governanceTimelock);
         factory.deactivatePool(poolAddress);
 
         assertEq(_historicalPoolCount(), 1, "Historical pool registry should remain intact");
@@ -661,6 +668,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address payable pool2 = payable(createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 1000, 300, 15000));
 
         // Pause pool1 - test contract is the owner/governance since it created the factory
+        vm.prank(governanceTimelock);
         SplitRiskPool(pool1).pause();
 
         // Pool2 deposits should still work
@@ -847,7 +855,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         (,,,,, uint256 initialMin) = factory.tokenInfo(address(tokenA));
         assertEq(initialMin, 10000, "Initial min collateral should be 10000");
 
-        // Update minimum collateral (factory owner is governance for tests)
+        // Update minimum collateral through the governance timelock
+        vm.prank(governanceTimelock);
         factory.updateMinimumCollateral(address(tokenA), 15000);
 
         // Verify the update
@@ -867,6 +876,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20 unknownToken = new MockERC20("Unknown Token", "UNK");
 
         vm.expectRevert(TokenWhitelistLib.TokenNotWhitelisted.selector);
+        vm.prank(governanceTimelock);
         factory.updateMinimumCollateral(address(unknownToken), 15000);
     }
 
@@ -996,7 +1006,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(govToken), 1e8);
         backupOracle.setPrice(address(govToken), 1e8);
 
-        // Test contract is governance (set in setUp), so call addToken directly
+        vm.prank(governanceTimelock);
         factory.addToken(address(govToken), "Governance Token", "GOV", address(oracle), address(backupOracle), 12000);
 
         // Verify dual-feed was configured
@@ -1022,6 +1032,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockUSDC usdc = new MockUSDC();
         oracle.setPrice(address(usdc), 1e8);
 
+        vm.prank(governanceTimelock);
         factory.addToken(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
 
         (,, address token,,,) = factory.tokenInfo(address(usdc));

@@ -54,6 +54,7 @@ contract LowSeverityFixesTest is Test, FactoryProxyTestBase {
 
         // Deploy factory
         SplitRiskPool poolImpl = new SplitRiskPool();
+        governance = address(_deployTestTimelock(address(this)));
         factory = _deployFactory(address(this), governance, address(poolImpl));
 
         // Set composite oracle first (required before adding tokens)

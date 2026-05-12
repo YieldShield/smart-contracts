@@ -29,6 +29,8 @@ abstract contract ProtocolAccessControlUpgradeable is
     address internal _pendingGovernanceTimelock;
 
     bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
+    bytes4 private constant HAS_ROLE_SELECTOR = bytes4(keccak256("hasRole(bytes32,address)"));
+    bytes32 private constant DEFAULT_ADMIN_ROLE_VALUE = 0x00;
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
@@ -37,7 +39,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     }
 
     function __ProtocolAccessControl_init_unchained(address governanceTimelock_) internal onlyInitializing {
-        if (governanceTimelock_ == address(0)) revert GovernanceZeroAddress();
+        _validateGovernanceTimelock(governanceTimelock_);
         _governanceTimelock = governanceTimelock_;
     }
 
@@ -91,6 +93,10 @@ abstract contract ProtocolAccessControlUpgradeable is
 
         uint256 minDelay = abi.decode(data, (uint256));
         if (minDelay == 0) revert GovernanceTimelockDelayTooShort(candidate, minDelay);
+
+        (success, data) =
+            candidate.staticcall(abi.encodeWithSelector(HAS_ROLE_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE, candidate));
+        if (!success || data.length < 32 || !abi.decode(data, (bool))) revert InvalidGovernanceTimelock(candidate);
     }
 
     function pause() public virtual onlyGovernanceOrOwner {

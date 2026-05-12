@@ -15,6 +15,7 @@ import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 contract NonReceiverDepositor {
     function depositBacking(SplitRiskPool pool, MockERC4626 token, uint256 amount) external {
@@ -56,7 +57,7 @@ contract SecurityFeedWithoutCircuitBreaker {
     }
 }
 
-contract SecurityFixesTest is Test {
+contract SecurityFixesTest is Test, TestTimelockHelper {
     SplitRiskPool internal pool;
     MockERC4626 internal shieldedToken;
     MockERC4626 internal backingToken;
@@ -69,6 +70,8 @@ contract SecurityFixesTest is Test {
     address internal governance = address(this);
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         MockERC20 shieldedBase = new MockERC20("Shielded Base", "SB");
         MockERC20 backingBase = new MockERC20("Backing Base", "BB");
         shieldedToken = new MockERC4626(shieldedBase, "Shielded Vault", "svTOKEN");
@@ -325,6 +328,7 @@ contract SecurityFixesTest is Test {
             address priceOracle
         ) = pool.poolConfig();
 
+        vm.prank(governance);
         vm.expectRevert(ErrorsLib.DepositAmountTooLarge.selector);
         pool.updatePoolConfig(
             shieldedMinDepositAmount,

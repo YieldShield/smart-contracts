@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
@@ -99,6 +100,12 @@ contract YSTokenTest is Test {
         vm.warp(block.timestamp + 1);
         assertEq(ysToken.getVotes(deployer), 800_000e18);
         assertEq(ysToken.getVotes(user1), 200_000e18);
+    }
+}
+
+contract FakeTimelockWithDelay {
+    function getMinDelay() external pure returns (uint256) {
+        return 1 days;
     }
 }
 
@@ -338,12 +345,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
     function test_Execute_ChangesFactoryParam() public {
         // Deploy a factory with the timelock as governance
         SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
-
-        // Set governance timelock on the factory (two-step transfer)
-        factory.setGovernanceTimelock(address(timelock));
-        vm.prank(address(timelock));
-        factory.acceptGovernanceTimelock();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
 
         address newRecipient = address(0xBEEF);
 
@@ -378,7 +380,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
     function test_SetGovernanceTimelock_RevertsForEOA() public {
         SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address eoaCandidate = address(0xCAFE);
 
         vm.expectRevert(
@@ -389,7 +391,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
     function test_SetGovernanceTimelock_RevertsForContractWithoutTimelockInterface() public {
         SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -399,9 +401,37 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         factory.setGovernanceTimelock(address(ysToken));
     }
 
+    function test_SetGovernanceTimelock_RevertsForFakeTimelockWithoutSelfAdmin() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+        FakeTimelockWithDelay fakeTimelock = new FakeTimelockWithDelay();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(fakeTimelock)
+            )
+        );
+        factory.setGovernanceTimelock(address(fakeTimelock));
+    }
+
+    function test_Initialize_RevertsForEOAGovernanceTimelock() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPoolFactory.initialize.selector, deployer, address(0xCAFE), address(poolImpl)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(0xCAFE)
+            )
+        );
+        new ERC1967Proxy(address(implementation), initData);
+    }
+
     function test_SetGovernanceTimelock_RevertsForZeroDelayTimelock() public {
         SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory factory = _deployFactory(deployer, deployer, address(poolImpl));
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
         TimelockController zeroDelayTimelock = new TimelockController(0, emptyAddrs, emptyAddrs, deployer);
 

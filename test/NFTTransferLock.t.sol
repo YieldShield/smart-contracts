@@ -13,10 +13,11 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IERC721 } from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title INFO-6 FIX: NFT Transfer Lock Boundary Tests
 /// @notice Tests for NFT transfer lock boundaries - exact timing at lock period boundaries
-contract NFTTransferLockTest is Test {
+contract NFTTransferLockTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
@@ -36,6 +37,8 @@ contract NFTTransferLockTest is Test {
     uint256 constant PROTECTOR_LOCK_PERIOD = 28 days;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "BBASE");

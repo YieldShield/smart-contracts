@@ -13,10 +13,11 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for totalShieldedTokens accounting consistency
 /// @notice Verifies that totalShieldedTokens always equals sum of active position amounts
-contract SplitRiskPoolAccountingTest is Test {
+contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
@@ -34,6 +35,8 @@ contract SplitRiskPoolAccountingTest is Test {
     uint256 constant INITIAL_BALANCE = 1000000e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "BBASE");

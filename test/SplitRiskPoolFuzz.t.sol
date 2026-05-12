@@ -15,11 +15,12 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Fuzz Tests for SplitRiskPool Edge Cases
 /// @notice Comprehensive fuzz tests to validate protocol behavior under extreme and randomized conditions
 /// @dev Tests deposit amount boundaries, fee accumulation limits, and multi-protector commission fairness
-contract SplitRiskPoolFuzzTest is Test {
+contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -49,6 +50,8 @@ contract SplitRiskPoolFuzzTest is Test {
     uint256 constant USD_ONE = 1e8;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Initialize protector array
         for (uint256 i = 1; i <= 50; i++) {
             protectors.push(address(uint160(i)));

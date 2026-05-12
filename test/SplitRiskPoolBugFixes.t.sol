@@ -17,6 +17,7 @@ import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
 import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 contract PartialAccessControl {
     function canDepositShielded(address) external pure returns (bool) {
@@ -26,7 +27,7 @@ contract PartialAccessControl {
 
 /// @title Tests for bug fixes in SplitRiskPool
 /// @notice Verifies fixes for commission rounding, zero price, state cleanup, and zero amount bugs
-contract SplitRiskPoolBugFixesTest is Test {
+contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
@@ -44,6 +45,8 @@ contract SplitRiskPoolBugFixesTest is Test {
     uint256 constant INITIAL_BALANCE = 1000000e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "IBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "UBASE");
@@ -430,6 +433,7 @@ contract SplitRiskPoolBugFixesTest is Test {
     function test_setAccessControl_RevertsForPartialImplementation() public {
         PartialAccessControl partialAccessControl = new PartialAccessControl();
 
+        vm.prank(governance);
         vm.expectRevert(ErrorsLib.InvalidAccessControlAddress.selector);
         pool.setAccessControl(address(partialAccessControl));
     }
@@ -438,6 +442,7 @@ contract SplitRiskPoolBugFixesTest is Test {
     function test_setAccessControl_AcceptsFullImplementation() public {
         AccessControlExample fullAccessControl = new AccessControlExample(address(this));
 
+        vm.prank(governance);
         vm.expectEmit(true, true, false, false);
         emit EventsLib.AccessControlUpdated(address(0), address(fullAccessControl));
         pool.setAccessControl(address(fullAccessControl));

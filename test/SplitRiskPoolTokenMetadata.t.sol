@@ -14,8 +14,9 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
-contract SplitRiskPoolTokenMetadataTest is Test {
+contract SplitRiskPoolTokenMetadataTest is Test, TestTimelockHelper {
     function test_Initialize_Caches18DecimalTokenMetadata() public {
         MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         MockERC20 backingBaseToken = new MockERC20("Backing Base Token", "BBASE");
@@ -71,6 +72,7 @@ contract SplitRiskPoolTokenMetadataTest is Test {
         SplitRiskPool implementation = new SplitRiskPool();
         ShieldReceiptNFT shieldNFT = new ShieldReceiptNFT("sHIGH", "sHIGH");
         ProtectorReceiptNFT protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
             shieldedTokenInfo,
@@ -79,7 +81,7 @@ contract SplitRiskPoolTokenMetadataTest is Test {
             500,
             address(this),
             15000,
-            address(this),
+            governanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
@@ -124,6 +126,7 @@ contract SplitRiskPoolTokenMetadataTest is Test {
             new ShieldReceiptNFT(string.concat("s", shieldedSymbol), string.concat("s", shieldedSymbol));
         ProtectorReceiptNFT protectorNFT =
             new ProtectorReceiptNFT(string.concat("p", backingSymbol), string.concat("p", backingSymbol));
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
 
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
@@ -133,7 +136,7 @@ contract SplitRiskPoolTokenMetadataTest is Test {
             500,
             address(this),
             15000,
-            address(this),
+            governanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),

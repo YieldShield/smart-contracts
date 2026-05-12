@@ -13,6 +13,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for fee reserve protection (MED-3 FIX)
 /// @notice Tests that withdrawals respect reserved fees and cannot drain fee funds
@@ -27,7 +28,7 @@ contract SplitRiskPoolFeeScalingHarness is SplitRiskPool {
     }
 }
 
-contract SplitRiskPoolFeeReserveProtectionTest is Test {
+contract SplitRiskPoolFeeReserveProtectionTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -44,6 +45,8 @@ contract SplitRiskPoolFeeReserveProtectionTest is Test {
     uint256 constant INITIAL_BALANCE = 1000000e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "IBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "UBASE");

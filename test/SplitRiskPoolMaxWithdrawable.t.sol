@@ -12,11 +12,12 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for max withdrawable calculation in protector positions
 /// @notice Verifies that getAvailableForWithdrawal returns the maximum amount
 ///         that can be withdrawn in a single transaction, accounting for utilization changes
-contract SplitRiskPoolMaxWithdrawableTest is Test {
+contract SplitRiskPoolMaxWithdrawableTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -33,6 +34,8 @@ contract SplitRiskPoolMaxWithdrawableTest is Test {
     uint256 constant DEPOSIT_AMOUNT = 100e18;
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "BBASE");

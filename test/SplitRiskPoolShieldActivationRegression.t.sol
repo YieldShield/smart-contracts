@@ -14,6 +14,7 @@ import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 contract ShieldActivationLossOracle is IPriceOracle {
     using Math for uint256;
@@ -71,7 +72,7 @@ contract ShieldActivationLossOracle is IPriceOracle {
     }
 }
 
-contract SplitRiskPoolShieldActivationRegressionTest is Test {
+contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper {
     using stdStorage for StdStorage;
 
     SplitRiskPool internal pool;
@@ -86,6 +87,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
     address internal protector1 = address(0x1001);
     address internal protector2 = address(0x1002);
     address internal shieldedUser = address(0x2001);
+    address internal governance;
 
     function setUp() public {
         shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
@@ -120,6 +122,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSHIELD", "sSHIELD");
         protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        governance = address(_deployTestTimelock(address(this)));
 
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
@@ -129,7 +132,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
             500,
             address(this),
             10000,
-            address(this),
+            governance,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
@@ -385,6 +388,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(pool.accumulatedProtocolFee(), protocolFeeBeforeClaims + dust, "dust redirects to protocol");
 
         pool.payPoolFee();
+        vm.prank(address(0xdead));
         pool.payProtocolFee();
 
         assertEq(pool.getReservedFees(), 0, "fee settlement should unblock pool closure accounting");
@@ -407,6 +411,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
             address priceOracle
         ) = pool.poolConfig();
         assertGt(maxTotalValueLockedUsd, 0, "test fixture should have a TVL cap");
+        vm.prank(governance);
         pool.updatePoolConfig(
             shieldedMinDepositAmount,
             shieldedMaxDepositAmount,

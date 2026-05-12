@@ -42,6 +42,7 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         compositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
 
         SplitRiskPool poolImpl = new SplitRiskPool();
+        governance = address(_deployTestTimelock(address(this)));
         factory = _deployFactory(address(this), governance, address(poolImpl));
 
         factory.setCompositeOracle(address(compositeOracle));

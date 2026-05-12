@@ -15,6 +15,7 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Handler Contract for SplitRiskPool Invariant Tests
 /// @notice Performs random valid operations on the pool for invariant testing
@@ -372,7 +373,7 @@ contract SplitRiskPoolHandler is Test {
 
 /// @title Invariant Tests for SplitRiskPool
 /// @notice Tests critical protocol invariants under random operations
-contract SplitRiskPoolInvariantTest is Test {
+contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     SplitRiskPoolHandler public handler;
     MockERC4626 public shieldedToken;
@@ -387,6 +388,8 @@ contract SplitRiskPoolInvariantTest is Test {
     address public protocolFeeRecipient = address(0xfee);
 
     function setUp() public {
+        governance = address(_deployTestTimelock(address(this)));
+
         // Deploy base ERC20 tokens
         shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         backingBaseToken = new MockERC20("Backing Base Token", "BBASE");

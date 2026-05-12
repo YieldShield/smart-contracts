@@ -14,10 +14,12 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
+import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
-contract SplitRiskPoolDecimalMathTest is Test {
+contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
     address internal constant PROTECTOR = address(0xA11CE);
     address internal constant SHIELDED_USER = address(0xB0B);
+    address internal lastGovernanceTimelock;
 
     function test_DepositShieldedAsset_StoresBackingCollateralInNativeUnits() public {
         MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
@@ -268,6 +270,7 @@ contract SplitRiskPoolDecimalMathTest is Test {
             address priceOracle
         ) = pool.poolConfig();
 
+        vm.prank(lastGovernanceTimelock);
         pool.updatePoolConfig(
             shieldedMinDepositAmount,
             shieldedMaxDepositAmount,
@@ -356,6 +359,7 @@ contract SplitRiskPoolDecimalMathTest is Test {
         shieldNFT = new ShieldReceiptNFT(string.concat("s", shieldedSymbol), string.concat("s", shieldedSymbol));
         ProtectorReceiptNFT protectorNFT =
             new ProtectorReceiptNFT(string.concat("p", backingSymbol), string.concat("p", backingSymbol));
+        lastGovernanceTimelock = address(_deployTestTimelock(address(this)));
 
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
@@ -365,7 +369,7 @@ contract SplitRiskPoolDecimalMathTest is Test {
             500,
             address(this),
             15000,
-            address(this),
+            lastGovernanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
