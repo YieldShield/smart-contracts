@@ -5,6 +5,7 @@ pragma solidity ^0.8.30;
 import { ISplitRiskPoolFactory } from "./interfaces/ISplitRiskPoolFactory.sol";
 import { ISplitRiskPool } from "./interfaces/ISplitRiskPool.sol";
 import { ICompositeOracle } from "./interfaces/ICompositeOracle.sol";
+import { SplitRiskPool } from "./SplitRiskPool.sol";
 import { TokenWhitelistLib } from "./libraries/TokenWhitelistLib.sol";
 import { ConstantsLib } from "./libraries/ConstantsLib.sol";
 import { ErrorsLib } from "./libraries/ErrorsLib.sol";
@@ -123,7 +124,7 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the governance timelock address
-     * @dev Only callable by governance or owner. Updates the timelock address used
+     * @dev Only callable by governance. Updates the timelock address used
      *      for governance-controlled operations.
      * @param newGovernanceTimelock The new governance timelock address
      * @custom:error GovernanceZeroAddress If new address is zero
@@ -131,7 +132,7 @@ contract SplitRiskPoolFactory is
     function setGovernanceTimelock(address newGovernanceTimelock)
         public
         override(ProtocolAccessControlUpgradeable, ISplitRiskPoolFactory)
-        onlyGovernanceOrOwner
+        onlyGovernance
     {
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
     }
@@ -154,12 +155,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the composite oracle address for all new pools
-     * @dev Only callable by governance or owner. This oracle routes pricing to
+     * @dev Only callable by governance. During first-time bootstrap, the current owner
+     *      may seed the oracle before any pools exist and before governance takes over.
+     *      This oracle routes pricing to
      *      per-token oracle feeds. All pools use this composite oracle.
      * @param newOracle Address of the new composite oracle
      * @custom:error InvalidAssetAddress If newOracle is zero address
      */
-    function setCompositeOracle(address newOracle) external onlyGovernanceOrOwner {
+    function setCompositeOracle(address newOracle) external {
+        _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && pools.length == 0);
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
 
         uint256 tokenCount = whitelistedTokens.length;
@@ -190,12 +194,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the default protocol fee recipient address for all new pools
-     * @dev Only callable by governance or owner. This recipient will receive protocol
+     * @dev Only callable by governance. During first-time bootstrap, the current owner
+     *      may seed the recipient before any pools exist and before governance takes over.
+     *      This recipient will receive protocol
      *      fees from all pools created after this update. Existing pools are not affected.
      * @param newRecipient Address of the new default protocol fee recipient
      * @custom:error InvalidAssetAddress If newRecipient is zero address
      */
-    function setDefaultProtocolFeeRecipient(address newRecipient) external onlyGovernanceOrOwner {
+    function setDefaultProtocolFeeRecipient(address newRecipient) external {
+        _requireGovernanceOrBootstrapOwner(defaultProtocolFeeRecipient == address(0) && pools.length == 0);
         if (newRecipient == address(0)) revert ErrorsLib.InvalidAssetAddress();
         address previousRecipient = defaultProtocolFeeRecipient;
         defaultProtocolFeeRecipient = newRecipient;
@@ -562,12 +569,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Updates whether a token must use the strict protected-price path when used as backing collateral
-     * @dev Only callable by governance or owner. If enabling strict mode and a default oracle is configured,
+     * @dev Only callable by governance. During first-time bootstrap, the current owner may seed
+     *      strict-price requirements before any pools exist and before governance takes over.
+     *      If enabling strict mode and a default oracle is configured,
      *      the current oracle must already satisfy the strict pricing requirement for that token.
      * @param token Address of the whitelisted token to update
      * @param required Whether strict protected pricing is required for this backing asset
      */
-    function setTokenRequiresStrictProtectedPrice(address token, bool required) external onlyGovernanceOrOwner {
+    function setTokenRequiresStrictProtectedPrice(address token, bool required) external {
+        _requireGovernanceOrBootstrapOwner(pools.length == 0);
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
 
         bool previousRequirement = tokenRequiresStrictProtectedPrice[token];
@@ -595,8 +605,7 @@ contract SplitRiskPoolFactory is
             revert ErrorsLib.InvalidTokenAddress();
         }
         if (
-            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS
-                || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
+            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
         ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
@@ -648,7 +657,7 @@ contract SplitRiskPoolFactory is
     function _pauseAndRequirePoolEmpty(address pool) internal {
         ISplitRiskPool targetPool = ISplitRiskPool(pool);
         if (!targetPool.paused()) {
-            targetPool.pause();
+            SplitRiskPool(payable(pool)).pauseFromFactory();
         }
 
         (uint256 shieldedTokenPoolBalance, uint256 totalBackingTokenPoolBalance) = targetPool.getPoolBalances();
@@ -696,6 +705,16 @@ contract SplitRiskPoolFactory is
             emit EventsLib.CreationBondShortfall(pool, token, recordedAmount, payoutAmount);
         }
         return payoutAmount;
+    }
+
+    function _requireGovernanceOrBootstrapOwner(bool ownerBootstrapAllowed) internal view {
+        if (msg.sender == _governanceTimelock) {
+            return;
+        }
+        if (msg.sender == owner() && ownerBootstrapAllowed) {
+            return;
+        }
+        revert UnauthorizedGovernance(msg.sender);
     }
 
     function _removeActivePool(address pool) internal {

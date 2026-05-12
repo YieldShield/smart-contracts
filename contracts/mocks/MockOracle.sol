@@ -47,11 +47,6 @@ contract MockOracle is IPriceOracle, IOracleFeed, Ownable {
         shouldRevertOnCircuitBreaker = _shouldRevert;
     }
 
-    /// @notice Public getter that returns actual price (for backwards compat)
-    function prices(address token) external view returns (uint256) {
-        return _prices[token];
-    }
-
     /**
      * @notice Set the price for a token
      * @param token The token address

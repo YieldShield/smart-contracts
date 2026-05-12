@@ -70,7 +70,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /* Pool-Level Accounting - Used for USD-based capacity checks via price oracle */
     /// @notice Sum of all active shielded position amounts in native shielded token units
-    /// @dev Invariant: totalShieldedTokens == sum of all pos.amount where !pos.isWithdrawn
+    /// @dev Invariant: totalShieldedTokens == sum of all extant shield receipt position amounts
     ///      Maintained by:
     ///      - depositShieldedAsset: += received
     ///      - shieldedWithdraw: -= pos.amount (full original amount)
@@ -80,7 +80,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public totalProtectorTokens; // Sum of all active protector backing claims in native backing token units
 
     /// @notice Sum of all active shielded position original deposit values (8 decimals, USD-based)
-    /// @dev Invariant: totalValueAtDeposit == sum of all pos.valueAtDeposit where !pos.isWithdrawn
+    /// @dev Invariant: totalValueAtDeposit == sum of all extant shield receipt position values
     ///      Used for collateralization checks based on original deposit values (not current token amounts).
     ///      Maintained by:
     ///      - depositShieldedAsset: += valueAtDeposit
@@ -190,6 +190,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         COMMISSION_RATE = _commissionRate;
         POOL_FEE = _poolFee;
         POOL_CREATOR = _poolCreator;
+        POOL_FACTORY = initialOwner;
         COLLATERAL_RATIO = _collateralRatio;
         BACKING_TOKEN = _backingTokenInfo.token;
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
@@ -234,39 +235,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return (totalShieldedTokens * COLLATERAL_RATIO) / totalProtectorTokens;
     }
 
-    /// @dev Returns the active protector-share supply, defaulting legacy pools to 1:1 accounting.
-    function _currentTotalProtectorShares() internal view returns (uint256) {
-        uint256 recordedShares = totalProtectorShares;
-        return recordedShares == 0 ? totalProtectorTokens : recordedShares;
-    }
-
-    /// @dev Initializes share supply for legacy pools before the first loss-socializing mutation.
-    function _ensureProtectorSharesInitialized() internal {
-        if (totalProtectorShares == 0 && totalProtectorTokens != 0) {
-            totalProtectorShares = totalProtectorTokens;
-        }
-    }
-
-    /// @dev Returns the protector shares for a token, treating legacy positions as 1:1 shares.
-    function _getProtectorPositionShares(uint256 tokenId, IProtectorReceiptNFT.ProtectorPosition memory pos)
-        internal
-        view
-        returns (uint256)
-    {
-        uint256 recordedShares = protectorShares[tokenId];
-        if (recordedShares == 0 && pos.amount != 0) {
-            return pos.amount;
-        }
-        return recordedShares;
+    /// @dev Returns the protector shares for a token.
+    function _getProtectorPositionShares(uint256 tokenId) internal view returns (uint256) {
+        return protectorShares[tokenId];
     }
 
     /// @dev Returns shares only when the position belongs to the current loss-socialization epoch.
-    function _getActiveProtectorPositionShares(uint256 tokenId, IProtectorReceiptNFT.ProtectorPosition memory pos)
-        internal
-        view
-        returns (uint256)
-    {
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+    function _getActiveProtectorPositionShares(uint256 tokenId) internal view returns (uint256) {
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
         if (positionShares_ == 0) {
             return 0;
         }
@@ -290,14 +266,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @dev Returns the current backing-token claim for a protector share balance.
     function _getProtectorPositionAmountFromShares(uint256 shares) internal view returns (uint256) {
-        return _assetsFromProtectorShares(shares, totalProtectorTokens, _currentTotalProtectorShares());
+        return _assetsFromProtectorShares(shares, totalProtectorTokens, totalProtectorShares);
     }
 
     /// @notice Returns the current backing-token claim for a protector position.
     function getProtectorPositionAmount(uint256 tokenId) public view returns (uint256) {
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 shares = _getActiveProtectorPositionShares(tokenId, pos);
+        uint256 shares = _getActiveProtectorPositionShares(tokenId);
         return _getProtectorPositionAmountFromShares(shares);
     }
 
@@ -437,12 +411,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @inheritdoc ISplitRiskPool
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
-        address poolOwner = owner();
-        if (poolOwner == address(0) || poolOwner.code.length == 0) {
+        address factory = _poolFactoryController();
+        if (factory == address(0) || factory.code.length == 0) {
             return false;
         }
 
-        (bool success, bytes memory data) = poolOwner.staticcall(
+        (bool success, bytes memory data) = factory.staticcall(
             abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
         );
 
@@ -454,7 +428,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Resolves whether backing-token pricing must use the strict protected-price path.
-    ///      Pools owned directly by EOAs or tests default to compatibility mode.
+    ///      Pools pin this policy to the deploying factory so later ownership changes
+    ///      cannot silently downgrade strict pricing.
     function _requiresStrictProtectedBackingPrice() internal view returns (bool) {
         return requiresStrictProtectedBackingPrice();
     }
@@ -585,9 +560,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @return availableAmount Maximum amount available for withdrawal
      */
     function getAvailableForWithdrawal(uint256 tokenId) public view returns (uint256) {
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId);
 
         // slither-disable-next-line incorrect-equality — empty-position guard, 0 shares = nothing to withdraw
         if (positionShares_ == 0) return 0;
@@ -781,7 +754,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (0, 0);
         }
 
-        uint256 currentTotalShares = _currentTotalProtectorShares();
+        uint256 currentTotalShares = totalProtectorShares;
         if (currentTotalShares == 0 || totalProtectorTokens == 0) {
             redirectedProtocolAmount = rewardAmount;
             if (accumulatedProtocolFee + redirectedProtocolAmount > maxSafeAccumulation) {
@@ -938,20 +911,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
         IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
-
         if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
-        if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
 
         // Get current USD value (USD-BASED for yield calculation)
         uint256 currentValue = Math.mulDiv(pos.amount, currentPrice, shieldedTokenScale);
 
         // Use per-position high-water-mark baseline to avoid repeatedly taxing the same yield.
-        // Backward compatibility: legacy positions without an initialized baseline use valueAtDeposit.
         uint256 baselineValueUsd = feeValueBaselineUsd[tokenId];
-        // slither-disable-next-line incorrect-equality — legacy position migration check, baseline not yet initialized
-        if (baselineValueUsd == 0) {
-            baselineValueUsd = pos.valueAtDeposit;
-        }
 
         // Calculate NEW yield earned since last fee accrual (underflow-safe)
         uint256 yieldEarnedUsd = currentValue > baselineValueUsd ? currentValue - baselineValueUsd : 0;
@@ -1190,9 +1156,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.NotOwner();
         }
 
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
 
         if (_claimCommissionTo(msg.sender, tokenId, positionShares_) == 0) {
             emit EventsLib.NoCommissionToClaim(msg.sender, tokenId);
@@ -1211,9 +1175,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
 
         if (_claimCommissionTo(positionOwner, tokenId, positionShares_) == 0) {
             emit EventsLib.NoCommissionToClaim(positionOwner, tokenId);
@@ -1228,9 +1190,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @return claimableAmount Amount that can be claimed (in shielded tokens)
      */
     function getClaimableCommission(uint256 tokenId) public view returns (uint256) {
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
         if (positionShares_ == 0) return 0;
 
         return _calculateClaimableCommission(tokenId, positionShares_);
@@ -1279,8 +1239,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _validateDeposit(asset, received);
         _markPoolLaunched();
 
-        _ensureProtectorSharesInitialized();
-        uint256 currentTotalShares = _currentTotalProtectorShares();
+        uint256 currentTotalShares = totalProtectorShares;
         uint256 sharesMinted = currentTotalShares == 0 || totalProtectorTokens == 0
             ? received
             : Math.mulDiv(received, currentTotalShares, totalProtectorTokens);
@@ -1404,7 +1363,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
-        if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
 
         // Check minimum pool time only if withdrawing backing assets (shield activation)
         if (preferredAsset == BACKING_TOKEN) {
@@ -1453,7 +1411,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         } else {
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
-            _ensureProtectorSharesInitialized();
             uint256 forfeitedShieldedAmount = pos.amount - totalFees;
             (uint256 accumulatedReward, uint256 redirectedReward) =
                 _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
@@ -1524,7 +1481,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
-        if (pos.isWithdrawn) revert ErrorsLib.PositionAlreadyWithdrawn();
         if (withdrawAmount >= pos.amount) revert ErrorsLib.InvalidTokenId(); // Use full withdraw instead
 
         // Calculate and accumulate fees on FULL position
@@ -1597,7 +1553,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function startUnlockProcess(uint256 tokenId) external nonReentrant onlyProtectorNFTOwner(tokenId) {
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId);
         uint256 positionAmount = _getProtectorPositionAmountFromShares(positionShares_);
         if (positionAmount == 0 && !_isProtectorDustExitAvailable(positionShares_, positionAmount)) {
             revert ErrorsLib.InsufficientTokenBalance();
@@ -1706,9 +1662,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        _ensureProtectorSharesInitialized();
-        uint256 currentTotalShares = _currentTotalProtectorShares();
-        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId, pos);
+        uint256 currentTotalShares = totalProtectorShares;
+        uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId);
         uint256 positionAmount = _assetsFromProtectorShares(positionShares_, totalProtectorTokens, currentTotalShares);
 
         bool dustExit;
@@ -1870,19 +1825,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @return depositTime Timestamp of deposit
      * @return valueAtDeposit USD value at deposit time (locked for cross-asset withdrawals)
      * @return lastFeeClaimTime Last time fees were calculated (timestamp)
-     * @return isWithdrawn Whether position has been withdrawn
      */
     function getShieldDepositInfo(uint256 tokenId)
         external
         view
-        returns (uint256 amount, uint64 depositTime, uint256 valueAtDeposit, uint64 lastFeeClaimTime, bool isWithdrawn)
+        returns (uint256 amount, uint64 depositTime, uint256 valueAtDeposit, uint64 lastFeeClaimTime)
     {
         IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
         amount = pos.amount;
         depositTime = pos.depositTime;
         valueAtDeposit = pos.valueAtDeposit;
         lastFeeClaimTime = pos.lastFeeClaimTime;
-        isWithdrawn = pos.isWithdrawn;
     }
 
     /**
@@ -2047,7 +2000,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /**
      * @notice Sets the governance timelock address
-     * @dev Only callable by governance or owner. Updates the timelock address used
+     * @dev Only callable by governance. Updates the timelock address used
      *      for governance-controlled operations.
      * @param newGovernanceTimelock The new governance timelock address
      * @custom:error InvalidGovernanceTimelock If new address is zero
@@ -2055,7 +2008,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function setGovernanceTimelock(address newGovernanceTimelock)
         public
         override(ProtocolAccessControlUpgradeable)
-        onlyGovernanceOrOwner
+        onlyGovernance
     {
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
     }
@@ -2072,14 +2025,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @notice Pauses the pool, blocking deposits and withdrawals
-    /// @dev Only callable by governance or owner for emergency situations
-    function pause() public override(ISplitRiskPool, ProtocolAccessControlUpgradeable) onlyGovernanceOrOwner {
+    /// @dev Only callable by governance for emergency situations
+    function pause() public override(ISplitRiskPool, ProtocolAccessControlUpgradeable) onlyGovernance {
         ProtocolAccessControlUpgradeable.pause();
     }
 
+    /// @notice Pauses the pool for factory-led close and deactivation flows
+    /// @dev Only callable by the pinned deploying factory. This keeps the public
+    ///      emergency pause under timelock control while still letting the factory
+    ///      freeze an empty pool immediately before shutdown bookkeeping.
+    function pauseFromFactory() external {
+        if (msg.sender != _poolFactoryController()) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "pauseFromFactory");
+        }
+        _pause();
+    }
+
     /// @notice Unpauses the pool, resuming normal operations
-    /// @dev Only callable by governance or owner
-    function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernanceOrOwner {
+    /// @dev Only callable by governance
+    function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernance {
         ProtocolAccessControlUpgradeable.unpause();
     }
 
@@ -2089,6 +2053,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
+
+    function _poolFactoryController() internal view returns (address factory) {
+        factory = POOL_FACTORY;
+        if (factory == address(0)) {
+            factory = owner();
+        }
+    }
 
     /**
      * @notice Sets the access control contract address for pool operations
@@ -2219,5 +2190,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorEpochRemainingReserve;
     /// @notice tokenId => whether its expired-epoch shares have been settled
     mapping(uint256 => bool) public protectorEpochPositionSettled;
-    uint256[34] private __gap;
+    /// @notice Factory pinned at initialization for shared policy lookups and shutdown hooks
+    /// @dev Legacy pools upgraded from older versions read this as zero and fall back to owner().
+    address public POOL_FACTORY;
+    uint256[33] private __gap;
 }

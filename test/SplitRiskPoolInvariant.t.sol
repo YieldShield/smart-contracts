@@ -218,7 +218,7 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
-        if (pos.amount == 0 || pos.isWithdrawn) return;
+        if (pos.amount == 0) return;
 
         vm.prank(actor);
         try pool.shieldedWithdraw(tokenId, address(shieldedToken), 0) {
@@ -290,7 +290,7 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
-        if (pos.amount == 0 || pos.isWithdrawn) return;
+        if (pos.amount == 0) return;
 
         // Warp past minimumPoolTime (cross-asset requires it)
         (,,,,, uint256 minimumPoolTime,,,,) = pool.poolConfig();
@@ -614,10 +614,8 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
             try shieldNFT.ownerOf(tokenId) returns (address owner) {
                 if (owner != address(0)) {
                     IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(tokenId);
-                    if (!pos.isWithdrawn) {
-                        sumShieldedPositions += pos.amount;
-                        sumShieldedValueAtDeposit += pos.valueAtDeposit;
-                    }
+                    sumShieldedPositions += pos.amount;
+                    sumShieldedValueAtDeposit += pos.valueAtDeposit;
                 }
             } catch {
                 // Token doesn't exist or was burned
@@ -725,7 +723,7 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
 
     // ============ Invariant 11: Double Withdrawal Prevention ============
 
-    /// @notice Withdrawn positions should have isWithdrawn = true and amount = 0
+    /// @notice Existing shield positions should always carry a positive amount
     function invariant_noDoubleWithdrawal() public view {
         uint256 nextTokenId = shieldNFT.nextTokenId();
 
@@ -733,14 +731,10 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
             try shieldNFT.ownerOf(tokenId) returns (address owner) {
                 if (owner != address(0)) {
                     IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(tokenId);
-
-                    // If withdrawn, amount should be 0 (or position should be burned)
-                    if (pos.isWithdrawn) {
-                        assertEq(pos.amount, 0, "Withdrawn position should have 0 amount");
-                    }
+                    assertGt(pos.amount, 0, "Existing shield position should carry a positive amount");
                 }
             } catch {
-                // Token doesn't exist or was burned - this is valid for withdrawn positions
+                // Token doesn't exist or was burned
             }
         }
     }

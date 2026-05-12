@@ -6,9 +6,10 @@
  * Uses Foundry keystores from ~/.foundry/keystores/
  *
  * Usage:
- *   node scripts-js/configure-pyth-tokens.cjs [--pool <pool_address>] [--keystore <keystore_name>]
+ *   node scripts-js/configure-pyth-tokens.cjs [--oracle <oracle_address>] [--pool <pool_address>] [--keystore <keystore_name>] [--rpcUrl <RPC_URL>]
  *
  * Options:
+ *   --oracle <address>: Use a specific PythOracle address (default: deployments/<current-chain-id>.json)
  *   --pool <address>  : Check tokens from a specific pool and configure them
  *   --keystore <name> : Use a specific keystore file (default: interactive selection)
  */
@@ -18,32 +19,52 @@ const { existsSync, readdirSync } = require("fs");
 const { join } = require("path");
 const { execSync } = require("child_process");
 const readline = require("readline");
-const { resolvePythTokenConfigs } = require("./pyth-token-registry.cjs");
+const {
+    getDeploymentFilePath,
+    resolveContractAddress,
+    resolvePythTokenConfigs,
+} = require("./pyth-token-registry.cjs");
 
 require("dotenv").config({ path: join(__dirname, "..", ".env") });
 
 /**
- * Get Oracle address from deployment file
+ * Get Oracle address from the deployment file for the active chain
  */
-function getOracleAddress() {
-    const deploymentFile = join(__dirname, "..", "deployments", "421614.json");
-    if (existsSync(deploymentFile)) {
-        try {
-            const deploymentData = require(deploymentFile);
-            for (const [address, contractName] of Object.entries(
-                deploymentData,
-            )) {
-                if (contractName === "PythOracle" && address.startsWith("0x")) {
-                    return address;
-                }
-            }
-        } catch (error) {
-            console.warn(
-                `Warning: Could not read deployment file: ${error.message}`,
-            );
-        }
+function getOracleAddress({ rootDir, chainId }) {
+    const deploymentFile = getDeploymentFilePath(rootDir, chainId);
+    const oracleAddress = resolveContractAddress({
+        rootDir,
+        chainId,
+        contractName: "PythOracle",
+    });
+
+    if (oracleAddress) {
+        return oracleAddress;
     }
-    return "0x286d1116C2428f49d081c43a60113aB36e7912c5"; // Fallback
+
+    throw new Error(
+        `Could not find a deployed PythOracle in ${deploymentFile}. Pass --oracle <address> or redeploy first.`,
+    );
+}
+
+function resolveRpcUrl(cliRpcUrl) {
+    if (cliRpcUrl) {
+        return cliRpcUrl;
+    }
+
+    if (process.env.RPC_URL) {
+        return process.env.RPC_URL;
+    }
+
+    if (process.env.ARBITRUM_SEPOLIA_RPC_URL) {
+        return process.env.ARBITRUM_SEPOLIA_RPC_URL;
+    }
+
+    if (process.env.ALCHEMY_API_KEY) {
+        return `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+    }
+
+    return null;
 }
 
 /**
@@ -51,17 +72,17 @@ function getOracleAddress() {
  */
 async function getPoolTokens(poolAddress, provider) {
     const poolAbi = [
-        "function INSURED_TOKEN() external view returns (address)",
-        "function UNDERWRITER_TOKEN() external view returns (address)",
+        "function SHIELDED_TOKEN() external view returns (address)",
+        "function BACKING_TOKEN() external view returns (address)",
     ];
 
     try {
         const pool = new ethers.Contract(poolAddress, poolAbi, provider);
-        const [insuredToken, underwriterToken] = await Promise.all([
-            pool.INSURED_TOKEN(),
-            pool.UNDERWRITER_TOKEN(),
+        const [shieldedToken, backingToken] = await Promise.all([
+            pool.SHIELDED_TOKEN(),
+            pool.BACKING_TOKEN(),
         ]);
-        return [insuredToken, underwriterToken];
+        return [shieldedToken, backingToken];
     } catch (error) {
         console.error(`Error reading pool tokens: ${error.message}`);
         return null;
@@ -224,11 +245,14 @@ async function configureToken(
 async function main() {
     // Parse command line arguments
     const args = process.argv.slice(2);
+    let oracleAddress = null;
     let poolAddress = null;
     let keystoreName = null;
 
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--pool" && i + 1 < args.length) {
+        if (args[i] === "--oracle" && i + 1 < args.length) {
+            oracleAddress = args[i + 1];
+        } else if (args[i] === "--pool" && i + 1 < args.length) {
             poolAddress = args[i + 1];
         } else if (args[i] === "--keystore" && i + 1 < args.length) {
             keystoreName = args[i + 1];
@@ -236,19 +260,23 @@ async function main() {
     }
 
     // Get RPC URL
-    let rpcUrl = process.env.ARBITRUM_SEPOLIA_RPC_URL;
-    if (!rpcUrl && process.env.ALCHEMY_API_KEY) {
-        rpcUrl = `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    }
+    const rpcUrl = resolveRpcUrl(
+        args.includes("--rpcUrl")
+            ? args[args.indexOf("--rpcUrl") + 1]
+            : null,
+    );
     if (!rpcUrl) {
         console.error(
-            "Error: RPC URL required. Set ARBITRUM_SEPOLIA_RPC_URL or ALCHEMY_API_KEY",
+            "Error: RPC URL required. Set RPC_URL or pass --rpcUrl <RPC_URL>.",
         );
         process.exit(1);
     }
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const oracleAddress = getOracleAddress();
+    const network = await provider.getNetwork();
+    const chainId = network.chainId.toString();
+    const rootDir = join(__dirname, "..");
+    oracleAddress = oracleAddress || getOracleAddress({ rootDir, chainId });
 
     // PythOracle ABI
     const oracleAbi = [
@@ -264,10 +292,12 @@ async function main() {
 
     console.log("=== PythOracle Token Configuration ===");
     console.log("Oracle:", oracleAddress);
-    console.log("Network:", (await provider.getNetwork()).name);
+    console.log("Network:", network.name);
+    console.log("Chain ID:", chainId);
 
     const pythTokenConfigs = resolvePythTokenConfigs({
-        rootDir: join(__dirname, ".."),
+        rootDir,
+        chainId,
     });
 
     // Check if we need to configure tokens from a pool

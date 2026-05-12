@@ -1,4 +1,4 @@
-const { existsSync, readFileSync } = require("fs");
+const { existsSync, readFileSync, readdirSync, statSync } = require("fs");
 const { join } = require("path");
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -10,7 +10,6 @@ const PYTH_TOKEN_CONFIGS = [
         contractName: "MockERC20",
         broadcastIndex: 0,
         env: "SUSDE_ADDRESS",
-        defaultAddress: "0x1d804cd133b3cf35cff4b2cc19d7e6deefcd644a",
     },
     {
         name: "SDAI",
@@ -18,7 +17,6 @@ const PYTH_TOKEN_CONFIGS = [
         contractName: "MockERC20",
         broadcastIndex: 1,
         env: "SDAI_ADDRESS",
-        defaultAddress: "0x6D59F75Cb4367299B6887C726d46805D7acd8ad0",
     },
     {
         name: "USDY",
@@ -26,7 +24,6 @@ const PYTH_TOKEN_CONFIGS = [
         contractName: "MockERC20",
         broadcastIndex: 2,
         env: "USDY_ADDRESS",
-        defaultAddress: "0x4C53E534fD51127c1923d63261e5c1cd4a1d3580",
     },
     {
         name: "STETH",
@@ -102,16 +99,68 @@ const PYTH_TOKEN_CONFIGS = [
     },
 ];
 
-function readLatestBroadcast(rootDir, chainId = "421614") {
+function normalizeChainId(chainId) {
+    if (chainId === undefined || chainId === null || chainId === "") {
+        return null;
+    }
+
+    if (typeof chainId === "bigint") {
+        return chainId.toString();
+    }
+
+    if (typeof chainId === "number") {
+        return Math.trunc(chainId).toString();
+    }
+
+    return String(chainId);
+}
+
+function getDeploymentFilePath(rootDir, chainId) {
+    const normalizedChainId = normalizeChainId(chainId);
+    if (!normalizedChainId) {
+        return null;
+    }
+
+    return join(rootDir, "deployments", `${normalizedChainId}.json`);
+}
+
+function readDeployment(rootDir, chainId) {
+    const deploymentPath = getDeploymentFilePath(rootDir, chainId);
+    if (!deploymentPath || !existsSync(deploymentPath)) {
+        return null;
+    }
+
+    return JSON.parse(readFileSync(deploymentPath, "utf8"));
+}
+
+function readLatestBroadcast(rootDir, chainId) {
+    const normalizedChainId = normalizeChainId(chainId);
+    if (!normalizedChainId) {
+        return null;
+    }
+
     const candidates = [
         join(
             rootDir,
             "broadcast",
-            "DeployYieldShield.s.sol",
-            chainId,
+            "DeployYieldShieldProduction.s.sol",
+            normalizedChainId,
             "run-latest.json",
         ),
-        join(rootDir, "broadcast", "Deploy.s.sol", chainId, "run-latest.json"),
+        join(
+            rootDir,
+            "broadcast",
+            "DeployYieldShield.s.sol",
+            normalizedChainId,
+            "run-latest.json",
+        ),
+        join(
+            rootDir,
+            "broadcast",
+            "Deploy.s.sol",
+            normalizedChainId,
+            "run-latest.json",
+        ),
     ];
 
     for (const candidate of candidates) {
@@ -121,6 +170,32 @@ function readLatestBroadcast(rootDir, chainId = "421614") {
     }
 
     return null;
+}
+
+function getDeploymentAddresses(deploymentData, contractName) {
+    if (!deploymentData) return [];
+
+    const seen = new Set();
+    const addresses = [];
+    for (const [address, deployedName] of Object.entries(deploymentData)) {
+        if (
+            deployedName !== contractName ||
+            typeof address !== "string" ||
+            !address.startsWith("0x")
+        ) {
+            continue;
+        }
+
+        const normalized = address.toLowerCase();
+        if (normalized === ZERO_ADDRESS || seen.has(normalized)) {
+            continue;
+        }
+
+        seen.add(normalized);
+        addresses.push(address);
+    }
+
+    return addresses;
 }
 
 function getBroadcastAddresses(broadcast, contractName) {
@@ -142,24 +217,104 @@ function getBroadcastAddresses(broadcast, contractName) {
     return addresses;
 }
 
-function resolvePythTokenConfigs({
+function getLatestDeploymentChainId(rootDir) {
+    const deploymentsDir = join(rootDir, "deployments");
+    if (!existsSync(deploymentsDir)) {
+        return null;
+    }
+
+    const chainFiles = readdirSync(deploymentsDir)
+        .filter((fileName) => /^\d+\.json$/.test(fileName))
+        .map((fileName) => {
+            const fullPath = join(deploymentsDir, fileName);
+            const stats = statSync(fullPath);
+            return {
+                chainId: fileName.replace(/\.json$/, ""),
+                mtimeMs: stats.mtimeMs,
+            };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    return chainFiles[0]?.chainId || null;
+}
+
+function resolveDeploymentChainId({
     rootDir,
-    chainId = "421614",
+    chainId,
     env = process.env,
 } = {}) {
-    const broadcast = rootDir ? readLatestBroadcast(rootDir, chainId) : null;
+    const explicitChainId = normalizeChainId(chainId || env.CHAIN_ID);
+    if (explicitChainId) {
+        return explicitChainId;
+    }
+
+    return rootDir ? getLatestDeploymentChainId(rootDir) : null;
+}
+
+function resolveContractAddress({
+    rootDir,
+    chainId,
+    contractName,
+    env = process.env,
+} = {}) {
+    if (!rootDir || !contractName) {
+        return null;
+    }
+
+    const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
+    if (!resolvedChainId) {
+        return null;
+    }
+
+    const deploymentData = readDeployment(rootDir, resolvedChainId);
+    const deploymentAddresses = getDeploymentAddresses(
+        deploymentData,
+        contractName,
+    );
+    if (deploymentAddresses.length > 0) {
+        return deploymentAddresses[0];
+    }
+
+    const broadcast = readLatestBroadcast(rootDir, resolvedChainId);
+    const broadcastAddresses = getBroadcastAddresses(broadcast, contractName);
+    if (broadcastAddresses.length > 0) {
+        return broadcastAddresses[broadcastAddresses.length - 1];
+    }
+
+    return null;
+}
+
+function resolvePythTokenConfigs({
+    rootDir,
+    chainId,
+    env = process.env,
+} = {}) {
+    const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
+    const deploymentData =
+        rootDir && resolvedChainId
+            ? readDeployment(rootDir, resolvedChainId)
+            : null;
+    const broadcast =
+        rootDir && resolvedChainId
+            ? readLatestBroadcast(rootDir, resolvedChainId)
+            : null;
 
     return PYTH_TOKEN_CONFIGS.map((config) => {
+        const deploymentAddress = getDeploymentAddresses(
+            deploymentData,
+            config.contractName,
+        )[config.broadcastIndex];
         const broadcastAddress = getBroadcastAddresses(
             broadcast,
             config.contractName,
         )[config.broadcastIndex];
         return {
             ...config,
+            chainId: resolvedChainId,
             address:
                 env[config.env] ||
                 broadcastAddress ||
-                config.defaultAddress ||
+                deploymentAddress ||
                 null,
         };
     });
@@ -167,5 +322,11 @@ function resolvePythTokenConfigs({
 
 module.exports = {
     PYTH_TOKEN_CONFIGS,
+    getDeploymentAddresses,
+    getDeploymentFilePath,
+    readDeployment,
+    readLatestBroadcast,
+    resolveContractAddress,
+    resolveDeploymentChainId,
     resolvePythTokenConfigs,
 };

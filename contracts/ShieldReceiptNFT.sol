@@ -54,8 +54,7 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
             depositTime: uint64(block.timestamp),
             valueAtDeposit: valueAtDeposit,
             collateralAmount: collateralAmount,
-            lastFeeClaimTime: uint64(block.timestamp),
-            isWithdrawn: false // Reserved: always false (burn is used for withdrawal). Kept for storage layout compatibility.
+            lastFeeClaimTime: uint64(block.timestamp)
         });
         _safeMint(to, tokenId);
         emit EventsLib.ShieldNFTMinted(to, tokenId, amount, valueAtDeposit);
@@ -81,8 +80,7 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
             depositTime: originalDepositTime, // Preserve original deposit time
             valueAtDeposit: valueAtDeposit,
             collateralAmount: collateralAmount,
-            lastFeeClaimTime: uint64(block.timestamp),
-            isWithdrawn: false // Reserved: always false (burn is used for withdrawal). Kept for storage layout compatibility.
+            lastFeeClaimTime: uint64(block.timestamp)
         });
         _safeMint(to, tokenId);
         emit EventsLib.ShieldNFTMinted(to, tokenId, amount, valueAtDeposit);

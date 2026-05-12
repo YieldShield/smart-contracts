@@ -132,9 +132,7 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
             try shieldNFT.ownerOf(i) returns (address owner) {
                 if (owner != address(0)) {
                     IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(i);
-                    if (!pos.isWithdrawn) {
-                        total += pos.amount;
-                    }
+                    total += pos.amount;
                 }
             } catch {
                 // Token doesn't exist (burned), skip
@@ -149,9 +147,7 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
             try shieldNFT.ownerOf(i) returns (address owner) {
                 if (owner != address(0)) {
                     IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(i);
-                    if (!pos.isWithdrawn) {
-                        total += pos.valueAtDeposit;
-                    }
+                    total += pos.valueAtDeposit;
                 }
             } catch {
                 // Token doesn't exist (burned), skip

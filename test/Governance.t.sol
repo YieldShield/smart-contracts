@@ -109,6 +109,16 @@ contract FakeTimelockWithDelay {
     }
 }
 
+contract FakeSelfAdminTimelock {
+    function getMinDelay() external pure returns (uint256) {
+        return 1 days;
+    }
+
+    function hasRole(bytes32 role, address account) external view returns (bool) {
+        return role == bytes32(0) && account == address(this);
+    }
+}
+
 // ============================================================
 // YSGovernor Tests
 // ============================================================
@@ -224,6 +234,19 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
     function test_ProposalNeedsQueuing() public {
         (uint256 proposalId,,,) = _propose("Test queuing");
         assertTrue(governor.proposalNeedsQueuing(proposalId));
+    }
+
+    function test_SetGovernanceTimelock_RevertsForOwnerBypass() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+        address[] memory emptyAddrs = new address[](0);
+        TimelockController replacementTimelock =
+            new TimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, deployer)
+        );
+        factory.setGovernanceTimelock(address(replacementTimelock));
     }
 
     function test_DeployerBootstrapAdminIsRenounced() public view {
@@ -386,6 +409,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, eoaCandidate)
         );
+        vm.prank(address(timelock));
         factory.setGovernanceTimelock(eoaCandidate);
     }
 
@@ -395,9 +419,13 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(ysToken)
+                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
+                address(ysToken),
+                address(timelock).codehash,
+                address(ysToken).codehash
             )
         );
+        vm.prank(address(timelock));
         factory.setGovernanceTimelock(address(ysToken));
     }
 
@@ -408,9 +436,30 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(fakeTimelock)
+                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
+                address(fakeTimelock),
+                address(timelock).codehash,
+                address(fakeTimelock).codehash
             )
         );
+        vm.prank(address(timelock));
+        factory.setGovernanceTimelock(address(fakeTimelock));
+    }
+
+    function test_SetGovernanceTimelock_RevertsForDifferentImplementation() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+        FakeSelfAdminTimelock fakeTimelock = new FakeSelfAdminTimelock();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
+                address(fakeTimelock),
+                address(timelock).codehash,
+                address(fakeTimelock).codehash
+            )
+        );
+        vm.prank(address(timelock));
         factory.setGovernanceTimelock(address(fakeTimelock));
     }
 
@@ -422,9 +471,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         );
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(0xCAFE)
-            )
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(0xCAFE))
         );
         new ERC1967Proxy(address(implementation), initData);
     }
@@ -440,6 +487,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
                 ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector, address(zeroDelayTimelock), 0
             )
         );
+        vm.prank(address(timelock));
         factory.setGovernanceTimelock(address(zeroDelayTimelock));
     }
 

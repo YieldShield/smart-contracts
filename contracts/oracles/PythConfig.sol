@@ -84,8 +84,6 @@ library PythConfig {
     /// @dev Feed available at: https://insights.pyth.network/price-feeds/Crypto.SUSDS%2FUSDS.RR
     /// @dev Feed ID: 0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f
     bytes32 public constant SUSDS_USDS_FEED_ID = 0x6968a8641208463d17ae3b9cfa0e4841a7aa7a5d54122b9f692b84fe9ce3409f;
-    /// @dev Deprecated compatibility alias. This feed is SUSDS/USDS, not a direct USD quote.
-    bytes32 public constant SUSDS_USD_FEED_ID = SUSDS_USDS_FEED_ID;
 
     /// @notice Get Pyth contract address for a given chain ID
     /// @param chainId The chain ID to get the Pyth contract address for

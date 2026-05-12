@@ -16,11 +16,17 @@ contract DeployHelpersHarness is ScaffoldETHDeploy {
     function deploymentPath() external view returns (string memory) {
         return _deploymentPath();
     }
+
+    function findAddressByName(string memory json, string memory contractName) external pure returns (address) {
+        return _findAddressByName(json, contractName);
+    }
 }
 
 contract DeploymentMetadataTest is Test {
     uint256 internal constant PRESERVE_TEST_CHAIN_ID = 777_777_777;
     uint256 internal constant OVERWRITE_TEST_CHAIN_ID = 777_777_778;
+    uint256 internal constant PRUNE_TEST_CHAIN_ID = 777_777_779;
+    uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
 
     function test_exportDeployments_PreservesExistingProtocolEntriesWhenFinalizingGovernance() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);
@@ -60,6 +66,57 @@ contract DeploymentMetadataTest is Test {
         assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(redeployed))), "NewContractName");
 
         _removeDeploymentFileIfPresent(deploymentPath);
+    }
+
+    function test_exportDeployments_RemovesStaleDuplicateAddressForRedeployedContract() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRUNE_TEST_CHAIN_ID);
+        address staleFactory = address(0x5555);
+        address currentFactory = address(0x6666);
+        address compositeOracle = address(0x7777);
+        string memory existingJson = "existing-prune";
+        vm.serializeString(existingJson, vm.toString(staleFactory), "SplitRiskPoolFactory");
+        vm.serializeString(existingJson, vm.toString(compositeOracle), "CompositeOracle");
+        existingJson = vm.serializeString(existingJson, "networkName", "old-network-name");
+        vm.writeJson(existingJson, deploymentPath);
+
+        deployHelpers.addDeployment("SplitRiskPoolFactory", currentFactory);
+        deployHelpers.exportDeploymentsHarness();
+
+        string memory exportedJson = vm.readFile(deploymentPath);
+        assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(staleFactory))));
+        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(currentFactory))), "SplitRiskPoolFactory");
+        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(compositeOracle))), "CompositeOracle");
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+    }
+
+    function test_exportDeployments_UsesLastDeploymentForDuplicateNameInCurrentRun() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID);
+        address initialOracle = address(0x8888);
+        address redeployedOracle = address(0x9999);
+
+        deployHelpers.addDeployment("PythOracle", initialOracle);
+        deployHelpers.addDeployment("PythOracle", redeployedOracle);
+        deployHelpers.exportDeploymentsHarness();
+
+        string memory exportedJson = vm.readFile(deploymentPath);
+        assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(initialOracle))));
+        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(redeployedOracle))), "PythOracle");
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+    }
+
+    function test_findAddressByName_ReturnsMostRecentSerializedAddressForDuplicateContractName() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID + 1);
+        string memory jsonObjectKey = "find-latest";
+        address staleFactory = address(0xAAAA);
+        address currentFactory = address(0xBBBB);
+
+        vm.serializeString(jsonObjectKey, vm.toString(staleFactory), "SplitRiskPoolFactory");
+        string memory json = vm.serializeString(jsonObjectKey, vm.toString(currentFactory), "SplitRiskPoolFactory");
+
+        assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), currentFactory);
     }
 
     function _newDeployHelpers(uint256 chainId)
