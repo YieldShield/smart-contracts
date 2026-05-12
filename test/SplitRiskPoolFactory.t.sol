@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
+import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
@@ -233,9 +234,17 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testFactoryPausePreventsPoolCreation() public {
+        vm.prank(governanceTimelock);
         factory.pause();
         vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
         factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
+    }
+
+    function testFactoryPauseRevertsForOwnerBypass() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
+        );
+        factory.pause();
     }
 
     function testRevertOnInvalidCollateralRatio() public {
@@ -314,6 +323,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         (,,, address primaryFeedA,,) = factory.tokenInfo(address(tokenA));
         assertEq(primaryFeedA, address(oracle), "Factory token feed should remain unchanged");
 
+        vm.prank(governanceTimelock);
         factory.setCompositeOracle(address(newOracle));
         assertEq(factory.compositeOracle(), address(newOracle), "Composite oracle should be updated");
         assertEq(newOracle.getTokenOracleFeed(address(tokenA)), address(oracle), "Token A feed should be replayed");
@@ -327,11 +337,13 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testSetCompositeOracleReplaysStrictRequirement() public {
+        vm.prank(governanceTimelock);
         factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
 
         CompositeOracle newOracle = new CompositeOracle();
         newOracle.setAuthorizedCaller(address(factory), true);
 
+        vm.prank(governanceTimelock);
         factory.setCompositeOracle(address(newOracle));
 
         assertTrue(newOracle.strictCircuitBreakerRequired(address(tokenB)), "Strict flag should be replayed");
@@ -350,6 +362,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         CompositeOracle newOracle = new CompositeOracle();
         newOracle.setAuthorizedCaller(address(factory), true);
+        vm.prank(governanceTimelock);
         factory.setCompositeOracle(address(newOracle));
 
         (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
@@ -363,6 +376,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     function testSetCompositeOracleRevertsWhenFactoryNotAuthorized() public {
         CompositeOracle newOracle = new CompositeOracle();
 
+        vm.prank(governanceTimelock);
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.UnauthorizedCaller.selector, address(factory)));
         factory.setCompositeOracle(address(newOracle));
     }
@@ -379,6 +393,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factoryInterface.splitRiskPoolImplementation(), address(newImplementation));
 
         address newRecipient = address(0xFEE);
+        vm.prank(governanceTimelock);
         factoryInterface.setDefaultProtocolFeeRecipient(newRecipient);
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), newRecipient);
     }
@@ -399,6 +414,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testRevertSetCompositeOracleToZero() public {
+        vm.prank(governanceTimelock);
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
         factory.setCompositeOracle(address(0));
     }
@@ -606,6 +622,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testDeactivatePoolRecyclesActiveSlotsAndForfeitsBond() public {
+        vm.prank(governanceTimelock);
         factory.setDefaultProtocolFeeRecipient(user2);
 
         uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
@@ -1033,9 +1050,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20Decimals highDecimalToken = new MockERC20Decimals("High Decimal Token", "HDT", 33);
         oracle.setPrice(address(highDecimalToken), 1e8);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.InvalidTokenDecimals.selector, address(highDecimalToken), 33)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.InvalidTokenDecimals.selector, address(highDecimalToken), 33));
         factory.addTokenInitial(
             address(highDecimalToken), "High Decimal Token", "HDT", address(oracle), address(0), 10000
         );

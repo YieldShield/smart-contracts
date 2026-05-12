@@ -190,6 +190,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         COMMISSION_RATE = _commissionRate;
         POOL_FEE = _poolFee;
         POOL_CREATOR = _poolCreator;
+        POOL_FACTORY = initialOwner;
         COLLATERAL_RATIO = _collateralRatio;
         BACKING_TOKEN = _backingTokenInfo.token;
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
@@ -410,12 +411,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @inheritdoc ISplitRiskPool
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
-        address poolOwner = owner();
-        if (poolOwner == address(0) || poolOwner.code.length == 0) {
+        address factory = _poolFactoryController();
+        if (factory == address(0) || factory.code.length == 0) {
             return false;
         }
 
-        (bool success, bytes memory data) = poolOwner.staticcall(
+        (bool success, bytes memory data) = factory.staticcall(
             abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
         );
 
@@ -427,7 +428,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Resolves whether backing-token pricing must use the strict protected-price path.
-    ///      Pools owned directly by EOAs or tests default to compatibility mode.
+    ///      Pools pin this policy to the deploying factory so later ownership changes
+    ///      cannot silently downgrade strict pricing.
     function _requiresStrictProtectedBackingPrice() internal view returns (bool) {
         return requiresStrictProtectedBackingPrice();
     }
@@ -1998,7 +2000,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /**
      * @notice Sets the governance timelock address
-     * @dev Only callable by governance or owner. Updates the timelock address used
+     * @dev Only callable by governance. Updates the timelock address used
      *      for governance-controlled operations.
      * @param newGovernanceTimelock The new governance timelock address
      * @custom:error InvalidGovernanceTimelock If new address is zero
@@ -2006,7 +2008,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function setGovernanceTimelock(address newGovernanceTimelock)
         public
         override(ProtocolAccessControlUpgradeable)
-        onlyGovernanceOrOwner
+        onlyGovernance
     {
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
     }
@@ -2023,14 +2025,25 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @notice Pauses the pool, blocking deposits and withdrawals
-    /// @dev Only callable by governance or owner for emergency situations
-    function pause() public override(ISplitRiskPool, ProtocolAccessControlUpgradeable) onlyGovernanceOrOwner {
+    /// @dev Only callable by governance for emergency situations
+    function pause() public override(ISplitRiskPool, ProtocolAccessControlUpgradeable) onlyGovernance {
         ProtocolAccessControlUpgradeable.pause();
     }
 
+    /// @notice Pauses the pool for factory-led close and deactivation flows
+    /// @dev Only callable by the pinned deploying factory. This keeps the public
+    ///      emergency pause under timelock control while still letting the factory
+    ///      freeze an empty pool immediately before shutdown bookkeeping.
+    function pauseFromFactory() external {
+        if (msg.sender != _poolFactoryController()) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "pauseFromFactory");
+        }
+        _pause();
+    }
+
     /// @notice Unpauses the pool, resuming normal operations
-    /// @dev Only callable by governance or owner
-    function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernanceOrOwner {
+    /// @dev Only callable by governance
+    function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernance {
         ProtocolAccessControlUpgradeable.unpause();
     }
 
@@ -2040,6 +2053,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
+
+    function _poolFactoryController() internal view returns (address factory) {
+        factory = POOL_FACTORY;
+        if (factory == address(0)) {
+            factory = owner();
+        }
+    }
 
     /**
      * @notice Sets the access control contract address for pool operations
@@ -2170,5 +2190,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorEpochRemainingReserve;
     /// @notice tokenId => whether its expired-epoch shares have been settled
     mapping(uint256 => bool) public protectorEpochPositionSettled;
-    uint256[34] private __gap;
+    /// @notice Factory pinned at initialization for shared policy lookups and shutdown hooks
+    /// @dev Legacy pools upgraded from older versions read this as zero and fall back to owner().
+    address public POOL_FACTORY;
+    uint256[33] private __gap;
 }

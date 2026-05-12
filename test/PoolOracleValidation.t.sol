@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
+import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
@@ -101,6 +102,7 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     }
 
     function testSetCompositeOracleRevertsWhenOracleLacksFeedConfigurationInterface() public {
+        vm.prank(governance);
         vm.expectRevert();
         factory.setCompositeOracle(address(priceOnlyOracle));
     }
@@ -161,27 +163,49 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
                 address(noCircuitBreakerFeed)
             )
         );
+        vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
     }
 
     function testSetCompositeOracleReplaysStrictBackingPolicy() public {
+        vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
         CompositeOracle newCompositeOracle = new CompositeOracle();
         newCompositeOracle.setAuthorizedCaller(address(factory), true);
+        vm.prank(governance);
         factory.setCompositeOracle(address(newCompositeOracle));
 
         assertTrue(newCompositeOracle.strictCircuitBreakerRequired(address(backingToken)));
         assertEq(newCompositeOracle.getTokenOracleFeed(address(backingToken)), address(oracle));
     }
 
+    function testOwnerCannotSetStrictProtectedPriceAfterPoolCreation() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
+        );
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+    }
+
     function testPoolStrictProtectedPriceRequirementReflectsFactoryPolicyWithoutSync() public {
         assertFalse(pool.requiresStrictProtectedBackingPrice());
+        vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
         assertTrue(pool.requiresStrictProtectedBackingPrice());
     }
 
+    function testPoolStrictProtectedPriceRequirementSurvivesPoolOwnerTransfer() public {
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+
+        vm.prank(address(factory));
+        pool.transferOwnership(address(0xBEEF));
+
+        assertTrue(pool.requiresStrictProtectedBackingPrice());
+    }
+
     function testUpdatePoolConfigRevertsWhenStrictPoolSwitchesToFallbackOnlyComposite() public {
+        vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
         CompositeOracle fallbackCompositeOracle = _deployFallbackCompositeOracle();

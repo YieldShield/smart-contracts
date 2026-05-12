@@ -21,12 +21,14 @@ abstract contract ProtocolAccessControlUpgradeable is
     error UnauthorizedPendingGovernance(address caller);
     error InvalidGovernanceTimelock(address candidate);
     error GovernanceTimelockDelayTooShort(address candidate, uint256 minDelay);
+    error GovernanceTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
 
     address internal _governanceTimelock;
     address internal _pendingGovernanceTimelock;
+    bytes32 internal _governanceTimelockCodehash;
 
     bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
     bytes4 private constant HAS_ROLE_SELECTOR = bytes4(keccak256("hasRole(bytes32,address)"));
@@ -39,7 +41,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     }
 
     function __ProtocolAccessControl_init_unchained(address governanceTimelock_) internal onlyInitializing {
-        _validateGovernanceTimelock(governanceTimelock_);
+        _governanceTimelockCodehash = _validateGovernanceTimelock(governanceTimelock_, bytes32(0));
         _governanceTimelock = governanceTimelock_;
     }
 
@@ -54,17 +56,10 @@ abstract contract ProtocolAccessControlUpgradeable is
         _;
     }
 
-    modifier onlyGovernanceOrOwner() {
-        if (msg.sender != _governanceTimelock && msg.sender != owner()) {
-            revert UnauthorizedGovernance(msg.sender);
-        }
-        _;
-    }
-
     /// @notice Starts a two-step governance transfer by setting the pending governance address
     /// @param newGovernance The address of the proposed new governance timelock
-    function setGovernanceTimelock(address newGovernance) public virtual onlyGovernanceOrOwner {
-        _validateGovernanceTimelock(newGovernance);
+    function setGovernanceTimelock(address newGovernance) public virtual onlyGovernance {
+        _validateGovernanceTimelock(newGovernance, _governanceTimelockImplementationHash());
         _pendingGovernanceTimelock = newGovernance;
         emit GovernanceTimelockTransferStarted(_governanceTimelock, newGovernance);
     }
@@ -76,6 +71,7 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
         emit GovernanceTimelockUpdated(_governanceTimelock, _pendingGovernanceTimelock);
         _governanceTimelock = _pendingGovernanceTimelock;
+        _governanceTimelockCodehash = _pendingGovernanceTimelock.codehash;
         _pendingGovernanceTimelock = address(0);
     }
 
@@ -84,9 +80,17 @@ abstract contract ProtocolAccessControlUpgradeable is
         return _pendingGovernanceTimelock;
     }
 
-    function _validateGovernanceTimelock(address candidate) internal view {
+    function _validateGovernanceTimelock(address candidate, bytes32 expectedCodehash)
+        internal
+        view
+        returns (bytes32 candidateCodehash)
+    {
         if (candidate == address(0)) revert GovernanceZeroAddress();
         if (candidate.code.length == 0) revert InvalidGovernanceTimelock(candidate);
+        candidateCodehash = candidate.codehash;
+        if (expectedCodehash != bytes32(0) && candidateCodehash != expectedCodehash) {
+            revert GovernanceTimelockImplementationMismatch(candidate, expectedCodehash, candidateCodehash);
+        }
 
         (bool success, bytes memory data) = candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
         if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
@@ -99,11 +103,18 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (!success || data.length < 32 || !abi.decode(data, (bool))) revert InvalidGovernanceTimelock(candidate);
     }
 
-    function pause() public virtual onlyGovernanceOrOwner {
+    function _governanceTimelockImplementationHash() internal view returns (bytes32 codehash) {
+        codehash = _governanceTimelockCodehash;
+        if (codehash == bytes32(0) && _governanceTimelock != address(0) && _governanceTimelock.code.length != 0) {
+            codehash = _governanceTimelock.codehash;
+        }
+    }
+
+    function pause() public virtual onlyGovernance {
         _pause();
     }
 
-    function unpause() public virtual onlyGovernanceOrOwner {
+    function unpause() public virtual onlyGovernance {
         _unpause();
     }
 
@@ -113,5 +124,5 @@ abstract contract ProtocolAccessControlUpgradeable is
      * without colliding with storage variables in derived contracts.
      * Reserved 50 slots to follow OpenZeppelin's upgrade-safe pattern.
      */
-    uint256[48] private __gap; // 48 slots because _governanceTimelock and _pendingGovernanceTimelock use 2 slots
+    uint256[47] private __gap; // 47 slots because governance state uses 3 slots
 }
