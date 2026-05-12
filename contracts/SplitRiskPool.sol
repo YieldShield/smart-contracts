@@ -1437,6 +1437,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Check minimum pool time only if withdrawing backing assets (shield activation)
         if (preferredAsset == BACKING_TOKEN) {
             _requireNoOraclePendingChallenge(BACKING_TOKEN);
+            _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
             uint256 timeElapsed = block.timestamp - uint256(pos.depositTime);
             if (timeElapsed < poolConfig.minimumPoolTime) {
@@ -1451,11 +1452,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 _calculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         } else {
-            // Shield activation should not be blocked by a broken shielded-token
-            // price path, but it should still collect yield fees when protected
-            // fee pricing is currently available.
+            // Shield activation also consumes the shielded position, so it must
+            // collect yield fees before routing the remaining forfeiture.
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-                _tryCalculateAndAccumulateFees(tokenId);
+                _calculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         }
 

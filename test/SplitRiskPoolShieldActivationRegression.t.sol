@@ -530,9 +530,9 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
         assertEq(pool.getReservedFees(), 100e18, "forfeiture and fees should stay fully reserved");
     }
 
-    function test_crossAssetShieldActivationDoesNotRequireCurrentShieldedPrice() public {
+    function test_crossAssetShieldActivationRequiresCurrentShieldedPriceForFees() public {
         vm.prank(protector1);
-        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
 
         vm.prank(shieldedUser);
         uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
@@ -541,11 +541,11 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test {
 
         vm.warp(block.timestamp + 7 days + 1);
         vm.prank(shieldedUser);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken)));
         pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
 
-        assertEq(pool.totalShieldedTokens(), 0, "shielded position should still close");
-        assertEq(pool.totalProtectorTokens(), 0, "stored deposit value should drive backing payout");
-        assertEq(pool.getClaimableCommission(protectorTokenId), 100e18, "forfeiture remains reserved for protector");
+        assertEq(pool.totalShieldedTokens(), 100e18, "failed fee pricing should leave shielded accounting intact");
+        assertEq(pool.totalProtectorTokens(), 100e18, "failed fee pricing should leave backing accounting intact");
     }
 
     function test_crossAssetShieldActivationRevertsIfForfeitureCannotBeReserved() public {
