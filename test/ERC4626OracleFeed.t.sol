@@ -185,9 +185,31 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(vaultPrice, newPrice);
     }
 
-    function test_GetPrice_RevertsWhenShareRateJumpsAfterRegistration() public {
+    function test_GetPrice_CapsDonationShareRateAboveReviewedBand() public {
         uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
         underlyingAsset.mint(address(vault), donation);
+
+        uint256 expectedCappedPrice = UNDERLYING_PRICE
+            + (UNDERLYING_PRICE * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()) / 10_000;
+
+        assertEq(erc4626Feed.getPrice(address(vault)), expectedCappedPrice);
+    }
+
+    function test_GetPrice_UsesRawShareRateAtUpperDeviationBoundary() public {
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 expectedPrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
+        assertEq(erc4626Feed.getPrice(address(vault)), expectedPrice);
+    }
+
+    function test_GetPrice_RevertsWhenShareRateFallsBelowReviewedBand() public {
+        uint256 loss =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() + 100))
+                / 10_000;
+        underlyingAsset.burn(address(vault), loss);
 
         uint256 assetsPerShare = vault.convertToAssets(1e18);
         vm.expectRevert(

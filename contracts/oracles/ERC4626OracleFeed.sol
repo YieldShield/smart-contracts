@@ -295,7 +295,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
-        _validateSharePriceDeviation(vault, assetsPerShare, config);
+        assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config);
         uint256 underlyingPrice = useCircuitBreaker
             ? IPriceOracle(address(underlyingPriceOracle)).getPriceWithCircuitBreaker(config.underlying)
             : underlyingPriceOracle.getPrice(config.underlying);
@@ -305,9 +305,10 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
     }
 
-    function _validateSharePriceDeviation(address vault, uint256 assetsPerShare, VaultConfig memory config)
+    function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config)
         internal
         pure
+        returns (uint256)
     {
         uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
         if (referenceAssetsPerShare == 0) {
@@ -322,11 +323,13 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             referenceAssetsPerShare > deviationAmount ? referenceAssetsPerShare - deviationAmount : 0;
         uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
 
-        if (assetsPerShare < minAssetsPerShare || assetsPerShare > maxAssetsPerShare) {
+        if (assetsPerShare < minAssetsPerShare) {
             revert SharePriceDeviationTooHigh(
                 vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
             );
         }
+
+        return assetsPerShare > maxAssetsPerShare ? maxAssetsPerShare : assetsPerShare;
     }
 
     function _getTokenDecimals(address token) internal view returns (uint8 tokenDecimals) {
