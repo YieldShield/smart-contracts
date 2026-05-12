@@ -9,41 +9,57 @@
  */
 
 const { ethers } = require("ethers");
-const { spawn } = require("child_process");
-const { readdirSync, existsSync } = require("fs");
+const { readdirSync, existsSync, readFileSync } = require("fs");
 const { join } = require("path");
 const readline = require("readline");
-const { resolvePythTokenConfigs } = require("./pyth-token-registry.cjs");
+const {
+    getDeploymentFilePath,
+    resolveContractAddress,
+    resolvePythTokenConfigs,
+} = require("./pyth-token-registry.cjs");
 
 // Load environment variables from .env file
 // __dirname is automatically available in CommonJS
 require("dotenv").config({ path: join(__dirname, "..", ".env") });
 
 /**
- * Get Oracle address from deployment file
+ * Get Oracle address from the deployment file for the active chain
  */
-function getOracleAddress() {
-    const deploymentFile = join(__dirname, "..", "deployments", "421614.json");
-    if (existsSync(deploymentFile)) {
-        try {
-            const deploymentData = require(deploymentFile);
-            // Find PythOracle in the deployment file
-            for (const [address, contractName] of Object.entries(
-                deploymentData,
-            )) {
-                if (contractName === "PythOracle" && address.startsWith("0x")) {
-                    return address;
-                }
-            }
-        } catch (error) {
-            throw new Error(
-                `Could not read deployment file ${deploymentFile}: ${error.message}`,
-            );
-        }
+function getOracleAddress({ rootDir, chainId }) {
+    const deploymentFile = getDeploymentFilePath(rootDir, chainId);
+    const oracleAddress = resolveContractAddress({
+        rootDir,
+        chainId,
+        contractName: "PythOracle",
+    });
+
+    if (oracleAddress) {
+        return oracleAddress;
     }
+
     throw new Error(
         `Could not find a deployed PythOracle in ${deploymentFile}. Pass --oracle <address> or redeploy first.`,
     );
+}
+
+function resolveRpcUrl(cliRpcUrl) {
+    if (cliRpcUrl) {
+        return cliRpcUrl;
+    }
+
+    if (process.env.RPC_URL) {
+        return process.env.RPC_URL;
+    }
+
+    if (process.env.ARBITRUM_SEPOLIA_RPC_URL) {
+        return process.env.ARBITRUM_SEPOLIA_RPC_URL;
+    }
+
+    if (process.env.ALCHEMY_API_KEY) {
+        return `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+    }
+
+    return null;
 }
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
@@ -53,7 +69,7 @@ const PYTH_HERMES_URL = "https://hermes.pyth.network/";
  * List available keystores
  */
 function listKeystores() {
-    const keystorePath = join(process.env.HOME, ".foundry", "keystores");
+    const keystorePath = getKeystoreDirectory();
 
     if (!existsSync(keystorePath)) {
         return [];
@@ -62,6 +78,18 @@ function listKeystores() {
     return readdirSync(keystorePath).filter(
         (keystore) => keystore !== "scaffold-eth-default",
     );
+}
+
+function getKeystoreDirectory() {
+    if (!process.env.HOME) {
+        throw new Error("HOME environment variable is not set");
+    }
+
+    return join(process.env.HOME, ".foundry", "keystores");
+}
+
+function getKeystorePath(keystoreName) {
+    return join(getKeystoreDirectory(), keystoreName);
 }
 
 /**
@@ -110,119 +138,64 @@ function selectKeystore() {
 }
 
 /**
- * Decrypt keystore and get private key
+ * Prompt for a keystore password without echoing it back to the terminal
  */
-function decryptKeystore(keystoreName) {
+function promptForSecret(prompt) {
     return new Promise((resolve, reject) => {
-        const process = spawn(
-            "cast",
-            ["wallet", "decrypt-keystore", keystoreName],
-            {
-                stdio: ["inherit", "pipe", "pipe"],
-            },
-        );
-
-        let stdout = "";
-        let stderr = "";
-
-        process.stdout.on("data", (data) => {
-            const text = data.toString();
-            stdout += text;
-            // Also check if the private key is printed directly (without newline)
-            if (text.trim().startsWith("0x") && text.trim().length >= 66) {
-                // Might be the private key, but wait for process to finish
-            }
-        });
-
-        process.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        process.on("close", (code) => {
-            if (code !== 0) {
-                const errorMsg = stderr || stdout;
-                if (
-                    errorMsg.includes("Wrong password") ||
-                    errorMsg.includes("incorrect password") ||
-                    errorMsg.includes("Invalid password")
-                ) {
-                    reject(new Error("Wrong password for keystore"));
-                } else {
-                    reject(
-                        new Error(`Failed to decrypt keystore: ${errorMsg}`),
-                    );
-                }
-                return;
-            }
-
-            // Combine stdout and stderr (cast might output to either)
-            const allOutput = (stdout + stderr).trim();
-
-            // Try different patterns to extract private key
-            // Pattern 1: "Private key: 0x..." or "🔑 0x..."
-            let privateKeyMatch = allOutput.match(
-                /(?:Private key|🔑)[:\s]*(0x[a-fA-F0-9]{64})/i,
-            );
-            if (privateKeyMatch) {
-                resolve(privateKeyMatch[1]);
-                return;
-            }
-
-            // Pattern 2: Just a hex string starting with 0x (64 hex chars = 32 bytes)
-            privateKeyMatch = allOutput.match(/(0x[a-fA-F0-9]{64})/);
-            if (privateKeyMatch) {
-                resolve(privateKeyMatch[1]);
-                return;
-            }
-
-            // Pattern 3: Any line that starts with 0x and has reasonable length
-            const lines = allOutput.split(/\r?\n/);
-            for (const line of lines) {
-                const trimmed = line.trim();
-                // Private key is 0x + 64 hex characters = 66 chars total
-                if (
-                    trimmed.startsWith("0x") &&
-                    trimmed.length === 66 &&
-                    /^0x[a-fA-F0-9]{64}$/.test(trimmed)
-                ) {
-                    resolve(trimmed);
-                    return;
-                }
-            }
-
-            // Pattern 4: Check if entire output is the private key
-            if (
-                allOutput.length === 66 &&
-                /^0x[a-fA-F0-9]{64}$/.test(allOutput)
-            ) {
-                resolve(allOutput);
-                return;
-            }
-
-            // If we still can't find it, show what we got for debugging
-            console.error(
-                "\nDebug: Could not extract private key. Output received:",
-            );
-            console.error(
-                "stdout length:",
-                stdout.length,
-                "content:",
-                JSON.stringify(stdout),
-            );
-            console.error(
-                "stderr length:",
-                stderr.length,
-                "content:",
-                JSON.stringify(stderr),
-            );
-            console.error("Combined output:", JSON.stringify(allOutput));
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
             reject(
                 new Error(
-                    "Could not extract private key from keystore output. Please check the debug output above.",
+                    "Interactive terminal required to unlock a keystore",
                 ),
             );
+            return;
+        }
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            terminal: true,
+        });
+
+        rl.stdoutMuted = false;
+        rl._writeToOutput = function writeToOutput(stringToWrite) {
+            if (rl.stdoutMuted) {
+                rl.output.write("*");
+                return;
+            }
+
+            rl.output.write(stringToWrite);
+        };
+
+        process.stdout.write(prompt);
+        rl.stdoutMuted = true;
+        rl.question("", (answer) => {
+            rl.close();
+            process.stdout.write("\n");
+            resolve(answer);
         });
     });
+}
+
+/**
+ * Decrypt a Foundry keystore without printing the raw private key
+ */
+async function unlockKeystore(keystoreName) {
+    const keystorePath = getKeystorePath(keystoreName);
+    if (!existsSync(keystorePath)) {
+        throw new Error(`Keystore not found: ${keystoreName}`);
+    }
+
+    const encryptedJson = readFileSync(keystorePath, "utf8");
+    const password = await promptForSecret(
+        `Enter password for keystore '${keystoreName}': `,
+    );
+
+    try {
+        return await ethers.Wallet.fromEncryptedJson(encryptedJson, password);
+    } catch (error) {
+        throw new Error(`Failed to decrypt keystore: ${error.message}`);
+    }
 }
 
 /**
@@ -447,17 +420,8 @@ async function main() {
         }
     }
 
-    // Get RPC URL - construct from ALCHEMY_API_KEY if not provided
-    let rpcUrl = config.rpcUrl || process.env.ARBITRUM_SEPOLIA_RPC_URL;
-
-    // If not set, try to construct from ALCHEMY_API_KEY (like foundry.toml does)
-    if (!rpcUrl && process.env.ALCHEMY_API_KEY) {
-        rpcUrl = `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    }
-
-    const oracleAddress = config.oracle || getOracleAddress();
-    let privateKey = config.privateKey || process.env.PRIVATE_KEY;
-    const keystoreName = config.keystore;
+    const rpcUrl = resolveRpcUrl(config.rpcUrl);
+    const keystoreName = config.keystore || process.env.ETH_KEYSTORE_ACCOUNT;
 
     if (!rpcUrl) {
         console.error("Error: RPC URL required");
@@ -465,48 +429,48 @@ async function main() {
             "Usage: node scripts-js/update-pyth-prices.cjs [--keystore <name>] [--rpcUrl <RPC_URL>]",
         );
         console.error("Options:");
+        console.error("  1. Set RPC_URL in .env");
+        console.error("  2. Pass --rpcUrl <URL> as argument");
+        console.error("  3. Or set ALCHEMY_API_KEY for the Arbitrum Sepolia fallback");
+        process.exit(1);
+    }
+
+    if (config.privateKey || process.env.PRIVATE_KEY) {
         console.error(
-            "  1. Set ALCHEMY_API_KEY in .env (will auto-construct RPC URL)",
-        );
-        console.error("  2. Set ARBITRUM_SEPOLIA_RPC_URL in .env");
-        console.error("  3. Pass --rpcUrl <URL> as argument");
-        console.error(
-            "Example: https://arb-sepolia.g.alchemy.com/v2/YOUR_API_KEY",
+            "\n❌ Raw private key input is disabled for this script. Use a Foundry keystore instead.",
         );
         process.exit(1);
     }
 
-    // Get private key from keystore if not provided directly
-    if (!privateKey) {
-        let selectedKeystore = keystoreName;
-
-        if (!selectedKeystore) {
-            try {
-                selectedKeystore = await selectKeystore();
-            } catch (error) {
-                console.error("\n❌ Error selecting keystore:", error.message);
-                console.error("\nYou can also provide a private key directly:");
-                console.error("  --privateKey <PRIVATE_KEY>");
-                console.error("Or set PRIVATE_KEY environment variable");
-                process.exit(1);
-            }
-        }
-
-        console.log(`\n🔓 Decrypting keystore: ${selectedKeystore}`);
-        console.log("Please enter the keystore password when prompted...\n");
-
+    let selectedKeystore = keystoreName;
+    if (!selectedKeystore) {
         try {
-            privateKey = await decryptKeystore(selectedKeystore);
-            console.log("✅ Keystore decrypted successfully");
+            selectedKeystore = await selectKeystore();
         } catch (error) {
-            console.error("\n❌ Failed to decrypt keystore:", error.message);
+            console.error("\n❌ Error selecting keystore:", error.message);
             process.exit(1);
         }
     }
 
+    console.log(`\n🔓 Unlocking keystore: ${selectedKeystore}`);
+
+    let signer;
+    try {
+        signer = await unlockKeystore(selectedKeystore);
+        console.log("✅ Keystore unlocked successfully");
+    } catch (error) {
+        console.error("\n❌ Failed to unlock keystore:", error.message);
+        process.exit(1);
+    }
+
     // Setup provider and signer
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const signer = new ethers.Wallet(privateKey, provider);
+    const network = await provider.getNetwork();
+    const chainId = network.chainId.toString();
+    const rootDir = join(__dirname, "..");
+    const oracleAddress =
+        config.oracle || getOracleAddress({ rootDir, chainId });
+    signer = signer.connect(provider);
 
     // PythOracle ABI (minimal for updatePriceFeeds)
     const oracleAbi = [
@@ -525,13 +489,15 @@ async function main() {
 
     console.log("=== Updating Pyth Price Feeds ===");
     console.log("Oracle:", oracleAddress);
-    console.log("Network:", (await provider.getNetwork()).name);
+    console.log("Network:", network.name);
+    console.log("Chain ID:", chainId);
     console.log("Signer:", await signer.getAddress());
 
     // Check token configuration
     console.log("Checking token configuration...");
     const tokensToCheck = resolvePythTokenConfigs({
-        rootDir: join(__dirname, ".."),
+        rootDir,
+        chainId,
     });
 
     const missingConfigs = [];
