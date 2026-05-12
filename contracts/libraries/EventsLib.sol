@@ -65,7 +65,6 @@ library EventsLib {
     );
     event CommissionClaimed(address indexed recipient, uint256 indexed tokenId, uint256 amount);
     event NoCommissionToClaim(address indexed recipient, uint256 indexed tokenId);
-    event PositionMigrated(uint256 indexed tokenId);
 
     // SplitRiskPoolFactory events
     event PoolCreated(

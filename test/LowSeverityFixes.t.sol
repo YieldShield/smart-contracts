@@ -250,20 +250,6 @@ contract LowSeverityFixesTest is Test, FactoryProxyTestBase {
         vm.stopPrank();
     }
 
-    // ============ LOW-7: Migration Event Tests ============
-
-    function test_LOW7_MigrateEmitsEvent() public {
-        // Deposit to get an NFT
-        vm.prank(user1);
-        uint256 tokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
-
-        // Migrate the position - should emit event
-        vm.prank(governance);
-        vm.expectEmit(true, false, false, false);
-        emit EventsLib.PositionMigrated(tokenId);
-        pool.migrateExistingPosition(tokenId);
-    }
-
     // ============ LOW-4: NFT Custom Errors Tests ============
 
     function test_LOW4_ShieldNFTPoolAlreadySet() public {

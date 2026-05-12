@@ -106,9 +106,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /* Per-position fee baselines (USD, 8 decimals) to prevent re-taxing already charged yield */
     mapping(uint256 => uint256) public feeValueBaselineUsd; // tokenId => last value baseline used for fee accrual
 
-    /* Migration tracking for legacy positions */
-    mapping(uint256 => bool) public positionMigrated; // tokenId => whether position has been migrated
-
     /* Errors */
     using ErrorsLib for *;
 
@@ -1239,31 +1236,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _calculateClaimableCommission(tokenId, positionShares_);
     }
 
-    /**
-     * @notice Migrates an existing protector position to the rewards-per-share system
-     * @dev Grants existing positions credit for historical rewards (grandfather clause).
-     *      Sets debt to 0 so they can claim all accumulated rewards from the old system.
-     *      Only callable by governance.
-     * @param tokenId The protector NFT token ID to migrate
-     * @custom:error InsufficientTokenBalance If position amount is zero
-     * @custom:error InvalidTokenId If position has already been migrated
-     */
-    function migrateExistingPosition(uint256 tokenId) external onlyGovernance {
-        IProtectorReceiptNFT.ProtectorPosition memory pos =
-            IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
-        if (pos.amount == 0) revert ErrorsLib.InsufficientTokenBalance();
-        if (positionMigrated[tokenId]) revert ErrorsLib.InvalidTokenId(); // Already migrated
-        // L-2 FIX: Only allow migration for pre-commission positions (grandfather clause)
-        // Positions created after commissions started already have rewardDebt set
-        if (rewardDebt[tokenId] != 0) revert ErrorsLib.InvalidTokenId();
-
-        // Mark as migrated and set debt to 0 for historical rewards (grandfather clause)
-        positionMigrated[tokenId] = true;
-        rewardDebt[tokenId] = 0;
-
-        emit EventsLib.PositionMigrated(tokenId);
-    }
-
     // Core Pool Functions
     /**
      * @notice Deposits backing tokens to receive a protector receipt NFT
@@ -2117,11 +2089,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
-
-    /// @notice Governance migration hook for upgraded legacy pools that have already launched
-    function markPoolAsLaunched() external onlyGovernance {
-        _markPoolLaunched();
-    }
 
     /**
      * @notice Sets the access control contract address for pool operations

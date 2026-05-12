@@ -367,21 +367,6 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         pool.setAccessControl(address(accessControl));
     }
 
-    function testMarkPoolAsLaunched_LocksCreatorAclChangesForLegacyEmptyPool() public {
-        assertFalse(pool.hasEverLaunched(), "fresh pool should start unlaunched");
-
-        vm.prank(governance);
-        pool.markPoolAsLaunched();
-
-        assertTrue(pool.hasEverLaunched(), "governance migration should mark the pool as launched");
-
-        AccessControlExample accessControl = new AccessControlExample(governance);
-
-        vm.prank(poolCreator);
-        vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
-        pool.setAccessControl(address(accessControl));
-    }
-
     function testPayProtocolFee_RevertsForUnauthorized() public {
         // Deposit protector tokens first
         vm.prank(protector);

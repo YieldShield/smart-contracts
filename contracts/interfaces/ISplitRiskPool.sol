@@ -111,7 +111,6 @@ interface ISplitRiskPool {
 
     // Access Control functions
     function accessControl() external view returns (address);
-    function markPoolAsLaunched() external;
     function setAccessControl(address newAccessControl) external;
     function pause() external;
     function paused() external view returns (bool);
