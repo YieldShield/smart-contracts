@@ -107,7 +107,7 @@ interface ISplitRiskPool {
     function getShieldDepositInfo(uint256 tokenId)
         external
         view
-        returns (uint256 amount, uint64 depositTime, uint256 valueAtDeposit, uint64 lastFeeClaimTime, bool isWithdrawn);
+        returns (uint256 amount, uint64 depositTime, uint256 valueAtDeposit, uint64 lastFeeClaimTime);
 
     // Access Control functions
     function accessControl() external view returns (address);

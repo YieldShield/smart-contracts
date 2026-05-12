@@ -13,7 +13,6 @@ interface IShieldReceiptNFT is IERC721 {
         uint256 valueAtDeposit; // USD value at deposit time (8 decimals) - USD-BASED cross-asset & fees
         uint256 collateralAmount; // Original collateral cap in backing-token native units
         uint64 lastFeeClaimTime; // Last time fees were calculated
-        bool isWithdrawn; // Reserved: always false (burn is used for withdrawal). Kept for storage layout compatibility.
     }
 
     function mint(address to, uint256 amount, uint256 valueAtDeposit, uint256 collateralAmount)

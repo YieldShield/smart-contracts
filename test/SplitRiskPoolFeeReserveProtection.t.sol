@@ -156,7 +156,7 @@ contract SplitRiskPoolFeeReserveProtectionTest is Test, TestTimelockHelper {
         assertEq(withdrawableBalance, totalBalance - reservedFees, "Withdrawable should exclude reserved fees");
 
         // Get position amount to ensure we don't exceed it
-        (uint256 positionAmount,,,,) = pool.getShieldDepositInfo(tokenId);
+        (uint256 positionAmount,,,) = pool.getShieldDepositInfo(tokenId);
 
         // Try to withdraw more than withdrawable balance (but less than position amount)
         uint256 withdrawAmount = withdrawableBalance + 1;
@@ -225,7 +225,7 @@ contract SplitRiskPoolFeeReserveProtectionTest is Test, TestTimelockHelper {
         _claimRewardsAsOwner(tokenId);
 
         uint256 withdrawableBalance = pool.getWithdrawableBalance();
-        (uint256 positionAmount,,,,) = pool.getShieldDepositInfo(tokenId);
+        (uint256 positionAmount,,,) = pool.getShieldDepositInfo(tokenId);
 
         // If position amount exceeds withdrawable balance, withdrawal should revert
         if (positionAmount > withdrawableBalance) {
@@ -331,7 +331,7 @@ contract SplitRiskPoolFeeReserveProtectionTest is Test, TestTimelockHelper {
         uint256 withdrawableBalance = pool.getWithdrawableBalance();
 
         // First withdrawal should succeed if within withdrawable balance
-        (uint256 position1,,,,) = pool.getShieldDepositInfo(tokenId1);
+        (uint256 position1,,,) = pool.getShieldDepositInfo(tokenId1);
         if (position1 <= withdrawableBalance) {
             vm.prank(shielded);
             pool.shieldedWithdraw(tokenId1, address(shieldedToken), 0);
