@@ -82,8 +82,6 @@ contract SetupPositions is ScaffoldETHDeploy {
         SplitRiskPool pool2 = SplitRiskPool(payable(pools[1])); // SDAI/USDY
         SplitRiskPool pool3 = SplitRiskPool(payable(pools[2])); // STETH/STONE
         SplitRiskPool pool4 = SplitRiskPool(payable(pools[3])); // JAAA/USTB
-        SplitRiskPool pool5 = SplitRiskPool(payable(pools[4])); // USYC/RLP
-
         // Get token addresses from pools
         address susdeAddr = pool1.SHIELDED_TOKEN();
         address gtusdcAddr = pool1.BACKING_TOKEN();
@@ -93,9 +91,6 @@ contract SetupPositions is ScaffoldETHDeploy {
         address stoneAddr = pool3.BACKING_TOKEN();
         address jaaaAddr = pool4.SHIELDED_TOKEN();
         address ustbAddr = pool4.BACKING_TOKEN();
-        address usycAddr = pool5.SHIELDED_TOKEN();
-        address rlpAddr = pool5.BACKING_TOKEN();
-
         console.log("Token addresses loaded from pools");
 
         // ============================================================
