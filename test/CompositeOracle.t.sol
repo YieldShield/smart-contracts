@@ -479,6 +479,41 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
+    function test_ChallengeableDeviationBlocksProtectedPricingBeforeChallenge() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
+        backupOracle.setPrice(address(token), deviatedPrice);
+
+        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPriceWithCircuitBreaker(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+    }
+
+    function test_ChallengeableDeviationClearsWhenFeedsConverge() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        backupOracle.setPrice(address(token), (PRIMARY_PRICE * 10076) / 10000);
+
+        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+
+        backupOracle.setPrice(address(token), PRIMARY_PRICE);
+
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+    }
+
+    function test_ChallengeableDeviationDoesNotBlockFinalizedBackup() public {
+        _challengeAndFinalize();
+
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), (PRIMARY_PRICE * 10076) / 10000);
+    }
+
     function test_Challenge_RevertsWhenNotDualFeed() public {
         compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
 

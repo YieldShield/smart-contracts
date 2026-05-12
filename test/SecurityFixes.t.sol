@@ -129,6 +129,36 @@ contract SecurityFixesTest is Test {
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
+    function test_PreChallengeShieldedDeviationBlocksValueLock() public {
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
+
+        primaryOracle.setPrice(address(shieldedToken), 2e8);
+
+        uint256 userBalanceBefore = shieldedToken.balanceOf(shielded);
+        vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
+        pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
+
+        assertEq(shieldedToken.balanceOf(shielded), userBalanceBefore, "deposit should fail before transfer");
+        assertEq(pool.totalShieldedTokens(), 0, "no receipt value should be locked");
+    }
+
+    function test_PreChallengeBackingDeviationBlocksCollateralLock() public {
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
+
+        primaryOracle.setPrice(address(backingToken), 5e7);
+
+        uint256 userBalanceBefore = shieldedToken.balanceOf(shielded);
+        vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(backingToken)));
+        pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
+
+        assertEq(shieldedToken.balanceOf(shielded), userBalanceBefore, "deposit should fail before transfer");
+        assertEq(pool.totalShieldedTokens(), 0, "no collateral value should be locked");
+    }
+
     function test_ShieldedOracleChallengeBlocksFeeAccrualPaths() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
@@ -187,6 +217,7 @@ contract SecurityFixesTest is Test {
         uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
 
         primaryOracle.setPrice(address(shieldedToken), 2e8);
+        backupOracle.setPrice(address(shieldedToken), 2e8);
         uint256 withdrawAmount = 420e18;
         uint256 amountAfterFees = 920e18;
         uint256 remaining = 500e18;

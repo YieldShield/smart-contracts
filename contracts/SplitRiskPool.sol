@@ -357,12 +357,23 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return false;
     }
 
-    /// @dev Reverts if `token` has a pending dual-feed challenge. During the challenge
-    ///      timelock, `getPriceWithCircuitBreaker` still returns the suspect active feed,
-    ///      so any operation that locks, releases, or sizes value from that token's price
-    ///      must fail closed until the challenge resolves.
+    /// @dev Returns true if the configured CompositeOracle can already detect that
+    ///      protected pricing is unsafe, even before a public challenge is started.
+    function _hasOracleChallengeablePrice(address token) internal view returns (bool) {
+        try ICompositeOracle(poolConfig.priceOracle).isTokenChallengeable(token) returns (bool challengeable) {
+            return challengeable;
+        } catch { }
+
+        return false;
+    }
+
+    /// @dev Reverts if `token` has a pending or currently challengeable dual-feed
+    ///      dispute. Any operation that locks, releases, or sizes value from that
+    ///      token's price must fail closed until the feeds converge or fail over.
     function _requireNoOraclePendingChallenge(address token) internal view {
-        if (_hasOraclePendingChallenge(token)) revert ErrorsLib.OraclePendingChallenge(token);
+        if (_hasOraclePendingChallenge(token) || _hasOracleChallengeablePrice(token)) {
+            revert ErrorsLib.OraclePendingChallenge(token);
+        }
     }
 
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.

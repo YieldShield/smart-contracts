@@ -104,6 +104,13 @@ interface ICompositeOracle is IPriceOracle {
             uint256 challengeStartTime
         );
 
+    /// @notice Returns true when protected pricing is currently unsafe for a dual-feed token
+    /// @dev True covers pending challenges, primary/backup deviation above threshold,
+    ///      or an unavailable primary protected path while a usable backup is available.
+    /// @param token The token address
+    /// @return challengeable True if price-sensitive callers should fail closed
+    function isTokenChallengeable(address token) external view returns (bool challengeable);
+
     /// @notice Check if backup oracle is active for a token
     /// @param token The token address
     /// @return True if backup oracle is active (only relevant for dual-feed tokens)

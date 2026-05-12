@@ -141,6 +141,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @notice Custom error when protected pricing is requested while a challenge is pending
     error OracleChallengePending(address token);
+    error OraclePriceDisputed(address token);
 
     /// @notice Constructor
     constructor() Ownable(msg.sender) { }
@@ -380,6 +381,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return _tokenOracleConfig[token].isBackupActive;
     }
 
+    /// @inheritdoc ICompositeOracle
+    function isTokenChallengeable(address token) external view returns (bool) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) return false;
+        if (config.challengeStartTime != 0 && !config.isBackupActive) return true;
+
+        return _hasUnresolvedDualFeedDeviation(config, token);
+    }
+
     /// @notice Get current deviation for a token between primary and backup feeds
     /// @param token The token to check
     /// @return deviation The current deviation in basis points
@@ -425,6 +435,31 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         } catch {
             return (false, 0);
         }
+    }
+
+    /// @dev Returns true when the primary active feed is already unsafe for protected
+    ///      pricing even if no public challenge has been started yet.
+    function _hasUnresolvedDualFeedDeviation(TokenOracleConfig storage config, address token)
+        internal
+        view
+        returns (bool)
+    {
+        if (config.backupFeed == address(0) || config.isBackupActive) {
+            return false;
+        }
+
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!backupSuccess || !_supportsCircuitBreaker(config.backupFeed, token)) {
+            return false;
+        }
+
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
+        uint256 deviation = primaryProtectedAvailable
+            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
+            : type(uint256).max;
+
+        return deviation > deviationThresholdBps;
     }
 
     // ============ Challenge Mechanism ============
@@ -786,6 +821,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
         if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
+        if (_hasUnresolvedDualFeedDeviation(config, token)) revert OraclePriceDisputed(token);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
@@ -803,6 +839,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
         if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
+        if (_hasUnresolvedDualFeedDeviation(config, token)) revert OraclePriceDisputed(token);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;

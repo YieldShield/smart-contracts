@@ -136,8 +136,7 @@ library ErrorsLib {
     error InvalidOraclePrice();
     /// @notice Thrown when protected shielded-token pricing is unavailable for fee accrual.
     error ShieldedFeePriceUnavailable(address token);
-    /// @notice Thrown when a shielded deposit is attempted while the token's dual-feed
-    ///         oracle has a pending challenge — the active feed is suspect and would
-    ///         lock in an exploitable `valueAtDeposit`.
+    /// @notice Thrown when a price-sensitive operation is attempted while the token's
+    ///         dual-feed oracle has a pending or currently challengeable price dispute.
     error OraclePendingChallenge(address token);
 }
