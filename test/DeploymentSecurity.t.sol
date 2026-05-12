@@ -23,6 +23,24 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
 contract ContractBootstrapHolder { }
 
+contract SafeLikeBootstrapHolder {
+    address[] internal owners;
+    uint256 internal threshold;
+
+    constructor(address[] memory owners_, uint256 threshold_) {
+        owners = owners_;
+        threshold = threshold_;
+    }
+
+    function getThreshold() external view returns (uint256) {
+        return threshold;
+    }
+
+    function getOwners() external view returns (address[] memory) {
+        return owners;
+    }
+}
+
 contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     uint256 internal constant TIMELOCK_DELAY = 2 days;
 
@@ -63,10 +81,39 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         harness.validateProductionBootstrapHolder(bootstrapHolder);
     }
 
-    function test_ProductionBootstrap_AllowsContractBootstrapHolder() public {
+    function test_ProductionBootstrap_RejectsInertContractBootstrapHolder() public {
         ProductionDeployHarness harness = new ProductionDeployHarness();
         ContractBootstrapHolder contractHolder = new ContractBootstrapHolder();
 
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_AllowsSafeLikeBootstrapHolder() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsSafeLikeHolderWithInvalidThreshold() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](1);
+        owners[0] = address(0xA11CE);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+            )
+        );
         harness.validateProductionBootstrapHolder(address(contractHolder));
     }
 

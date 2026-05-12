@@ -25,6 +25,8 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 1 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
+    bytes4 private constant GET_THRESHOLD_SELECTOR = bytes4(keccak256("getThreshold()"));
+    bytes4 private constant GET_OWNERS_SELECTOR = bytes4(keccak256("getOwners()"));
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -195,6 +197,22 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _validateProductionBootstrapHolder(address holder) internal view {
         if (holder == address(0) || holder.code.length == 0) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSelector(GET_THRESHOLD_SELECTOR));
+        if (!success || data.length < 32) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+        uint256 threshold = abi.decode(data, (uint256));
+
+        (success, data) = holder.staticcall(abi.encodeWithSelector(GET_OWNERS_SELECTOR));
+        if (!success) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+        address[] memory owners = abi.decode(data, (address[]));
+
+        if (threshold == 0 || owners.length == 0 || threshold > owners.length) {
             revert InvalidProductionBootstrapHolder(holder);
         }
     }
