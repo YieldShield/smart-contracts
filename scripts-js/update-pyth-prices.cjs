@@ -4,14 +4,8 @@
  * Post-deployment script to update Pyth price feeds
  * Fetches price update data using Pyth EVM JS SDK and updates prices on-chain
  *
- * IMPORTANT: This script fetches Pyth update format (PNAU). If your deployed Oracle
- * uses an older Pyth contract that expects Wormhole VAAs, this script will fail with
- * InvalidWormholeVaa() error. In that case, you need to either:
- * 1. Redeploy the Oracle with the correct Pyth contract address for your network
- * 2. Use a different endpoint that returns Wormhole VAAs (if available)
- *
  * Usage:
- *   node scripts-js/update-pyth-prices.cjs [--keystore <keystore_name>] [--rpcUrl <RPC_URL>]
+ *   node scripts-js/update-pyth-prices.cjs [--oracle <oracle_address>] [--keystore <keystore_name>] [--rpcUrl <RPC_URL>]
  */
 
 const { ethers } = require("ethers");
@@ -42,17 +36,15 @@ function getOracleAddress() {
                 }
             }
         } catch (error) {
-            console.warn(
-                `Warning: Could not read deployment file: ${error.message}`,
+            throw new Error(
+                `Could not read deployment file ${deploymentFile}: ${error.message}`,
             );
         }
     }
-    // Fallback to old address if deployment file not found
-    return "0xc90166E2f69265a67755e9B1279372D4A7650bc7";
+    throw new Error(
+        `Could not find a deployed PythOracle in ${deploymentFile}. Pass --oracle <address> or redeploy first.`,
+    );
 }
-
-// Deployment addresses (Arbitrum Sepolia)
-const ORACLE_ADDRESS = getOracleAddress();
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
 const PYTH_HERMES_URL = "https://hermes.pyth.network/";
@@ -234,33 +226,11 @@ function decryptKeystore(keystoreName) {
 }
 
 /**
- * NOTE: Wormhole VAA fetching is not currently implemented as the Hermes API
- * structure for VAAs is different. The deployed Oracle contract is using the
- * wrong Pyth contract address (Base Sepolia instead of Arbitrum Sepolia).
- *
- * The solution is to redeploy the Oracle with the correct Pyth contract address
- * for Arbitrum Sepolia, which accepts the Pyth update format (PNAU) that this
- * script fetches.
- */
-
-/**
  * Fetch price update data using Pyth Hermes Client
  * Fetches separate updates for each feed ID to ensure correct format for updatePriceFeeds()
  * The contract expects an array where each element is a separate update for each feed
- *
- * @param {boolean} useVAAs - If true, fetch Wormhole VAAs instead of Pyth updates
  */
-async function fetchPriceUpdateData(
-    priceIds,
-    hermesUrl = PYTH_HERMES_URL,
-    useVAAs = false,
-) {
-    // If contract expects VAAs, use the VAA endpoint
-    if (useVAAs) {
-        throw new Error(
-            "Wormhole VAA fetching is not implemented for this script",
-        );
-    }
+async function fetchPriceUpdateData(priceIds, hermesUrl = PYTH_HERMES_URL) {
     console.log(`Connecting to Pyth Hermes: ${hermesUrl}`);
     console.log(`Fetching price updates for ${priceIds.length} feed(s)...`);
 
@@ -399,41 +369,6 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         console.log("\nValidating price update data format...");
         validatePriceUpdateData(priceUpdateData);
 
-        // Check which Pyth contract the Oracle is using
-        try {
-            const pythAddress = await oracleContract.pyth();
-            const expectedAddress =
-                "0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF";
-            console.log(`\nOracle is using Pyth contract: ${pythAddress}`);
-            console.log(`Expected for Arbitrum Sepolia: ${expectedAddress}`);
-
-            if (pythAddress.toLowerCase() !== expectedAddress.toLowerCase()) {
-                console.warn(
-                    "\n⚠ WARNING: Oracle is using a different Pyth contract address!",
-                );
-                if (
-                    pythAddress.toLowerCase() ===
-                    "0xa2aa501b19aff244d90cc15a4cf739d2725b5729"
-                ) {
-                    console.warn(
-                        "This is the Base Sepolia address, not Arbitrum Sepolia!",
-                    );
-                }
-                console.warn(
-                    "The contract may expect a different data format.",
-                );
-                console.warn(
-                    "Please verify the Pyth contract address is correct for Arbitrum Sepolia.\n",
-                );
-            } else {
-                console.log(
-                    "✓ Oracle is using the correct Pyth contract address for Arbitrum Sepolia\n",
-                );
-            }
-        } catch (e) {
-            // pyth() might not be accessible, ignore
-        }
-
         // Get the required fee
         console.log("\nCalculating update fee...");
         const fee = await oracleContract.getUpdateFee(priceUpdateData);
@@ -455,14 +390,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         } catch (estimateError) {
             console.warn("\n⚠ Gas estimation failed, using manual gas limit");
             console.warn("Error:", estimateError.message);
-            if (estimateError.data) {
-                console.warn("Error data:", estimateError.data);
-                if (estimateError.data === "0x2acbe915") {
-                    console.warn(
-                        "→ This is InvalidWormholeVaa() error - data format issue",
-                    );
-                }
-            }
+            if (estimateError.data) console.warn("Error data:", estimateError.data);
             // Use a large gas limit for price updates (typically 500k-1M)
             gasLimit = 1_000_000n;
             console.log(`Using manual gas limit: ${gasLimit.toString()}`);
@@ -489,37 +417,7 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         if (error.reason) {
             console.error("Reason:", error.reason);
         }
-        if (error.data) {
-            console.error("Error data:", error.data);
-            if (error.data === "0x2acbe915") {
-                console.error(
-                    "\n→ InvalidWormholeVaa() error - The contract rejected the data format",
-                );
-                console.error("\nROOT CAUSE:");
-                console.error(
-                    "  The deployed Oracle is using Pyth contract address:",
-                );
-                console.error("  0xA2aa501b19aff244D90cc15a4Cf739D2725B5729");
-                console.error(
-                    "  This is the Base Sepolia Pyth contract, not Arbitrum Sepolia!",
-                );
-                console.error("\nSOLUTION:");
-                console.error(
-                    "  1. The Oracle needs to be redeployed with the correct Pyth contract",
-                );
-                console.error("     address for Arbitrum Sepolia");
-                console.error(
-                    "  2. Update PythConfig.sol with the correct address",
-                );
-                console.error("  3. Redeploy the PythOracle contract");
-                console.error(
-                    "\nThe script is working correctly - it's fetching the right data format.",
-                );
-                console.error(
-                    "The issue is that the deployed contract uses the wrong Pyth address.\n",
-                );
-            }
-        }
+        if (error.data) console.error("Error data:", error.data);
         if (error.transaction) {
             console.error(
                 "Transaction data length:",
@@ -557,7 +455,7 @@ async function main() {
         rpcUrl = `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
     }
 
-    const oracleAddress = config.oracle || ORACLE_ADDRESS;
+    const oracleAddress = config.oracle || getOracleAddress();
     let privateKey = config.privateKey || process.env.PRIVATE_KEY;
     const keystoreName = config.keystore;
 
@@ -614,7 +512,6 @@ async function main() {
     const oracleAbi = [
         "function updatePriceFeeds(bytes[] calldata priceUpdateData) external payable",
         "function getUpdateFee(bytes[] calldata priceUpdateData) external view returns (uint256 fee)",
-        "function pyth() external view returns (address)",
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
         "function tokenToQuotePriceFeedId(address) external view returns (bytes32)",
@@ -630,35 +527,6 @@ async function main() {
     console.log("Oracle:", oracleAddress);
     console.log("Network:", (await provider.getNetwork()).name);
     console.log("Signer:", await signer.getAddress());
-
-    // Check if Oracle was deployed with correct Pyth contract
-    try {
-        const pythAddress = await oracleContract.pyth();
-        const correctPythAddress = "0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF";
-
-        if (pythAddress.toLowerCase() !== correctPythAddress.toLowerCase()) {
-            console.warn(
-                "\n⚠ CRITICAL: Oracle was deployed with incorrect Pyth contract address!",
-            );
-            console.warn(`  Current: ${pythAddress}`);
-            console.warn(`  Expected: ${correctPythAddress}`);
-            console.warn(
-                "\n  SOLUTION: Redeploy the Oracle with the updated PythConfig.sol",
-            );
-            console.warn(
-                "  The PythConfig.sol has been updated with the correct address.",
-            );
-            console.warn(
-                "  After redeployment, this script will work correctly.\n",
-            );
-        } else {
-            console.log(
-                `✓ Oracle is using correct Pyth contract: ${pythAddress}\n`,
-            );
-        }
-    } catch (e) {
-        // Ignore if we can't check
-    }
 
     // Check token configuration
     console.log("Checking token configuration...");
@@ -758,19 +626,9 @@ async function main() {
     console.log("Feed IDs:", priceIds);
 
     try {
-        // Check which Pyth contract the Oracle is using
-        let pythAddress = null;
-        try {
-            pythAddress = await oracleContract.pyth();
-            console.log(`\nOracle Pyth contract: ${pythAddress}`);
-        } catch (e) {
-            // pyth() might not be accessible
-        }
-
         const priceUpdateData = await fetchPriceUpdateData(
             priceIds,
             PYTH_HERMES_URL,
-            false,
         );
         console.log(`Received ${priceUpdateData.length} price update(s)`);
 

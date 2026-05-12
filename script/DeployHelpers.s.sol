@@ -5,7 +5,6 @@ import { Script } from "forge-std/Script.sol";
 import { Vm } from "forge-std/Vm.sol";
 
 contract ScaffoldETHDeploy is Script {
-    error InvalidChain();
     error DeployerHasNoBalance();
     error InvalidPrivateKey(string);
 
@@ -153,20 +152,5 @@ contract ScaffoldETHDeploy is Script {
         }
 
         return string(buffer);
-    }
-
-    function findChainName() public returns (string memory) {
-        uint256 thisChainId = block.chainid;
-        string[2][] memory allRpcUrls = vm.rpcUrls();
-        for (uint256 i = 0; i < allRpcUrls.length; i++) {
-            try vm.createSelectFork(allRpcUrls[i][1]) {
-                if (block.chainid == thisChainId) {
-                    return allRpcUrls[i][0];
-                }
-            } catch {
-                continue;
-            }
-        }
-        revert InvalidChain();
     }
 }

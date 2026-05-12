@@ -6,9 +6,10 @@
  * Uses Foundry keystores from ~/.foundry/keystores/
  *
  * Usage:
- *   node scripts-js/configure-pyth-tokens.cjs [--pool <pool_address>] [--keystore <keystore_name>]
+ *   node scripts-js/configure-pyth-tokens.cjs [--oracle <oracle_address>] [--pool <pool_address>] [--keystore <keystore_name>]
  *
  * Options:
+ *   --oracle <address>: Use a specific PythOracle address (default: deployments/421614.json)
  *   --pool <address>  : Check tokens from a specific pool and configure them
  *   --keystore <name> : Use a specific keystore file (default: interactive selection)
  */
@@ -38,12 +39,14 @@ function getOracleAddress() {
                 }
             }
         } catch (error) {
-            console.warn(
-                `Warning: Could not read deployment file: ${error.message}`,
+            throw new Error(
+                `Could not read deployment file ${deploymentFile}: ${error.message}`,
             );
         }
     }
-    return "0x286d1116C2428f49d081c43a60113aB36e7912c5"; // Fallback
+    throw new Error(
+        `Could not find a deployed PythOracle in ${deploymentFile}. Pass --oracle <address> or redeploy first.`,
+    );
 }
 
 /**
@@ -224,11 +227,14 @@ async function configureToken(
 async function main() {
     // Parse command line arguments
     const args = process.argv.slice(2);
+    let oracleAddress = null;
     let poolAddress = null;
     let keystoreName = null;
 
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--pool" && i + 1 < args.length) {
+        if (args[i] === "--oracle" && i + 1 < args.length) {
+            oracleAddress = args[i + 1];
+        } else if (args[i] === "--pool" && i + 1 < args.length) {
             poolAddress = args[i + 1];
         } else if (args[i] === "--keystore" && i + 1 < args.length) {
             keystoreName = args[i + 1];
@@ -248,7 +254,7 @@ async function main() {
     }
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const oracleAddress = getOracleAddress();
+    oracleAddress = oracleAddress || getOracleAddress();
 
     // PythOracle ABI
     const oracleAbi = [
