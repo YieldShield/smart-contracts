@@ -261,9 +261,7 @@ async function main() {
 
     // Get RPC URL
     const rpcUrl = resolveRpcUrl(
-        args.includes("--rpcUrl")
-            ? args[args.indexOf("--rpcUrl") + 1]
-            : null,
+        args.includes("--rpcUrl") ? args[args.indexOf("--rpcUrl") + 1] : null,
     );
     if (!rpcUrl) {
         console.error(

@@ -84,7 +84,9 @@ contract DeploymentMetadataTest is Test {
 
         string memory exportedJson = vm.readFile(deploymentPath);
         assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(staleFactory))));
-        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(currentFactory))), "SplitRiskPoolFactory");
+        assertEq(
+            vm.parseJsonString(exportedJson, string.concat(".", vm.toString(currentFactory))), "SplitRiskPoolFactory"
+        );
         assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(compositeOracle))), "CompositeOracle");
 
         _removeDeploymentFileIfPresent(deploymentPath);

@@ -144,9 +144,7 @@ function promptForSecret(prompt) {
     return new Promise((resolve, reject) => {
         if (!process.stdin.isTTY || !process.stdout.isTTY) {
             reject(
-                new Error(
-                    "Interactive terminal required to unlock a keystore",
-                ),
+                new Error("Interactive terminal required to unlock a keystore"),
             );
             return;
         }
@@ -363,7 +361,8 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
         } catch (estimateError) {
             console.warn("\n⚠ Gas estimation failed, using manual gas limit");
             console.warn("Error:", estimateError.message);
-            if (estimateError.data) console.warn("Error data:", estimateError.data);
+            if (estimateError.data)
+                console.warn("Error data:", estimateError.data);
             // Use a large gas limit for price updates (typically 500k-1M)
             gasLimit = 1_000_000n;
             console.log(`Using manual gas limit: ${gasLimit.toString()}`);
@@ -431,7 +430,9 @@ async function main() {
         console.error("Options:");
         console.error("  1. Set RPC_URL in .env");
         console.error("  2. Pass --rpcUrl <URL> as argument");
-        console.error("  3. Or set ALCHEMY_API_KEY for the Arbitrum Sepolia fallback");
+        console.error(
+            "  3. Or set ALCHEMY_API_KEY for the Arbitrum Sepolia fallback",
+        );
         process.exit(1);
     }
 

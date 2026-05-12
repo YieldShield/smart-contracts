@@ -284,11 +284,7 @@ function resolveContractAddress({
     return null;
 }
 
-function resolvePythTokenConfigs({
-    rootDir,
-    chainId,
-    env = process.env,
-} = {}) {
+function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
     const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
     const deploymentData =
         rootDir && resolvedChainId
