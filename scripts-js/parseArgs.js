@@ -4,6 +4,11 @@ import { join, dirname } from "path";
 import { readFileSync, existsSync } from "fs";
 import { parse } from "toml";
 import { fileURLToPath } from "url";
+import {
+    DEFAULT_KEYSTORE_ACCOUNT,
+    isValidKeystoreName,
+    keystoreExists,
+} from "./foundryKeystore.js";
 import { selectOrCreateKeystore } from "./selectOrCreateKeystore.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,17 +54,15 @@ for (let i = 0; i < args.length; i++) {
 
 // Function to check if a keystore exists
 function validateKeystore(keystoreName) {
-    if (keystoreName === "scaffold-eth-default") {
-        return true; // Default keystore is always valid
+    if (!isValidKeystoreName(keystoreName)) {
+        return false;
     }
 
-    const keystorePath = join(
-        process.env.HOME,
-        ".foundry",
-        "keystores",
-        keystoreName,
-    );
-    return existsSync(keystorePath);
+    if (keystoreName === DEFAULT_KEYSTORE_ACCOUNT) {
+        return true;
+    }
+
+    return keystoreExists(keystoreName);
 }
 
 function validateDeployScriptFileName(name) {
@@ -103,18 +106,21 @@ try {
     process.exit(1);
 }
 
+const localhostKeystoreAccount =
+    process.env.LOCALHOST_KEYSTORE_ACCOUNT || DEFAULT_KEYSTORE_ACCOUNT;
+
 if (
-    process.env.LOCALHOST_KEYSTORE_ACCOUNT !== "scaffold-eth-default" &&
+    localhostKeystoreAccount !== DEFAULT_KEYSTORE_ACCOUNT &&
     network === "localhost"
 ) {
     console.log(`
-⚠️ Warning: Using ${process.env.LOCALHOST_KEYSTORE_ACCOUNT} keystore account on localhost.
+⚠️ Warning: Using ${localhostKeystoreAccount} keystore account on localhost.
 
 You can either:
-1. Enter the password for ${process.env.LOCALHOST_KEYSTORE_ACCOUNT} account
+1. Enter the password for ${localhostKeystoreAccount} account
    OR
 2. Set the localhost keystore account in your .env and re-run the command to skip password prompt:
-   LOCALHOST_KEYSTORE_ACCOUNT='scaffold-eth-default'
+   LOCALHOST_KEYSTORE_ACCOUNT='${DEFAULT_KEYSTORE_ACCOUNT}'
 	`);
 }
 
@@ -128,14 +134,16 @@ For public-network deployments, use the explicit production script instead:
     process.exit(1);
 }
 
-let selectedKeystore = process.env.LOCALHOST_KEYSTORE_ACCOUNT;
+let selectedKeystore = localhostKeystoreAccount;
 if (network !== "localhost") {
     if (keystoreArg) {
         // Use the keystore provided via command line argument
         if (!validateKeystore(keystoreArg)) {
-            console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
             console.log(
-                `Please check that the keystore exists in ~/.foundry/keystores/`,
+                `\n❌ Error: Keystore '${keystoreArg}' is invalid or not found!`,
+            );
+            console.log(
+                `Use a keystore from ~/.foundry/keystores/ with letters, numbers, dots, underscores, or hyphens only.`,
             );
             process.exit(1);
         }
@@ -152,9 +160,11 @@ if (network !== "localhost") {
 } else if (keystoreArg) {
     // Allow overriding the localhost keystore with --keystore flag
     if (!validateKeystore(keystoreArg)) {
-        console.log(`\n❌ Error: Keystore '${keystoreArg}' not found!`);
         console.log(
-            `Please check that the keystore exists in ~/.foundry/keystores/`,
+            `\n❌ Error: Keystore '${keystoreArg}' is invalid or not found!`,
+        );
+        console.log(
+            `Use a keystore from ~/.foundry/keystores/ with letters, numbers, dots, underscores, or hyphens only.`,
         );
         process.exit(1);
     }
@@ -165,29 +175,33 @@ if (network !== "localhost") {
 }
 
 // Check for default account on live network
-if (selectedKeystore === "scaffold-eth-default" && network !== "localhost") {
+if (selectedKeystore === DEFAULT_KEYSTORE_ACCOUNT && network !== "localhost") {
     console.log(`
 ❌ Error: Cannot deploy to live network using default keystore account!
 
 To deploy to ${network}, please follow these steps:
 
 1. If you haven't generated a keystore account yet:
-   $ yarn generate
+   $ yarn account:generate
 
 2. Run the deployment command again.
 
-The default account (scaffold-eth-default) can only be used for localhost deployments.
+The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost deployments.
 `);
-    process.exit(0);
+    process.exit(1);
 }
 
-// Set environment variables for the make command
-process.env.DEPLOY_SCRIPT = `script/${fileName}`;
-process.env.RPC_URL = network;
-process.env.ETH_KEYSTORE_ACCOUNT = selectedKeystore;
+const result = spawnSync(
+    "make",
+    [
+        `DEPLOY_SCRIPT=script/${fileName}`,
+        `RPC_URL=${network}`,
+        `ETH_KEYSTORE_ACCOUNT=${selectedKeystore}`,
+        "deploy-and-generate-abis",
+    ],
+    {
+        stdio: "inherit",
+    },
+);
 
-const result = spawnSync("make", ["deploy-and-generate-abis"], {
-    stdio: "inherit",
-});
-
-process.exit(result.status);
+process.exit(result.status ?? 1);
