@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import { ScaffoldETHDeploy } from "./DeployHelpers.s.sol";
 import { console } from "forge-std/console.sol";
-import { stdJson } from "forge-std/StdJson.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockGauntletUSDCPrime } from "../contracts/mocks/MockGauntletUSDCPrime.sol";
@@ -16,8 +15,6 @@ import { YSToken } from "../contracts/YSToken.sol";
  * Usage: forge script script/mint-tokens-to-accounts.s.sol:MintTokensToAccounts --rpc-url localhost --broadcast --legacy
  */
 contract MintTokensToAccounts is ScaffoldETHDeploy {
-    using stdJson for string;
-
     // Anvil default accounts (0-9)
     address[10] public accounts = [
         0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, // Account #0 - Governance Participant
@@ -43,29 +40,11 @@ contract MintTokensToAccounts is ScaffoldETHDeploy {
     function run() external ScaffoldEthDeployerRunner {
         console.log("\n=== Distributing Tokens to Accounts ===");
 
-        // Get addresses from broadcast file (more reliable than deployment JSON)
-        // Try broadcast file first, fallback to deployment file
-        string memory content;
-        (bool useBroadcast, string memory broadcastContent) = _readLatestBroadcast();
-        if (useBroadcast) {
-            content = broadcastContent;
-        } else {
-            content = vm.readFile(_deploymentPath());
-        }
-
         // Get token addresses
-        address ysTokenAddr =
-            useBroadcast ? _getAddressFromBroadcast(content, "YSToken") : _findAddressByName(content, "YSToken");
-        address usdcAddr =
-            useBroadcast ? _getAddressFromBroadcast(content, "MockUSDC") : _findAddressByName(content, "MockUSDC");
-        address gtusdcAddr = useBroadcast
-            ? _getAddressFromBroadcast(content, "MockGauntletUSDCPrime")
-            : _findAddressByName(content, "MockGauntletUSDCPrime");
-
-        // Get all MockERC20 addresses
-        address[] memory mockERC20Addresses = useBroadcast
-            ? _getAllAddressesFromBroadcast(content, "MockERC20")
-            : _findAllAddressesByName(content, "MockERC20");
+        address ysTokenAddr = _resolveDeploymentAddress("YSToken");
+        address usdcAddr = _resolveDeploymentAddress("MockUSDC");
+        address gtusdcAddr = _resolveDeploymentAddress("MockGauntletUSDCPrime");
+        address[] memory mockERC20Addresses = _resolveDeploymentAddresses("MockERC20");
 
         require(ysTokenAddr != address(0), "YSToken not found");
         require(usdcAddr != address(0), "MockUSDC not found");
@@ -192,236 +171,9 @@ contract MintTokensToAccounts is ScaffoldETHDeploy {
         }
     }
 
-    function _getAddressFromBroadcast(string memory content, string memory contractName)
-        internal
-        pure
-        returns (address)
-    {
-        // Broadcast format: .transactions[index].contractName and .transactions[index].contractAddress
-        uint96 idx = 0;
-        while (true) {
-            string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
-            string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
-
-            try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
-                (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
-                if (!validName) {
-                    idx++;
-                    continue;
-                }
-
-                if (keccak256(bytes(name)) == keccak256(bytes(contractName))) {
-                    bytes memory addrBytes = vm.parseJson(content, addrPath);
-                    address addr = abi.decode(addrBytes, (address));
-                    return addr;
-                }
-            } catch {
-                break; // No more transactions
-            }
-            idx++;
-        }
-        return address(0);
-    }
-
-    function _getAllAddressesFromBroadcast(string memory content, string memory contractName)
-        internal
-        pure
-        returns (address[] memory)
-    {
-        address[] memory found = new address[](20);
-        uint256 count = 0;
-        uint96 idx = 0;
-
-        while (count < 20) {
-            string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
-            string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
-
-            try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
-                (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
-                if (!validName) {
-                    idx++;
-                    continue;
-                }
-
-                if (keccak256(bytes(name)) == keccak256(bytes(contractName))) {
-                    bytes memory addrBytes = vm.parseJson(content, addrPath);
-                    address addr = abi.decode(addrBytes, (address));
-
-                    // Check for duplicates
-                    bool exists = false;
-                    for (uint256 i = 0; i < count; i++) {
-                        if (found[i] == addr) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        found[count] = addr;
-                        count++;
-                    }
-                }
-            } catch {
-                break;
-            }
-            idx++;
-        }
-
-        // Resize array
-        address[] memory result = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            result[i] = found[i];
-        }
-        return result;
-    }
-
-    function _tryDecodeJsonString(bytes memory raw) internal pure returns (bool ok, string memory value) {
-        if (raw.length < 64 || raw.length % 32 != 0) {
-            return (false, "");
-        }
-
-        uint256 offset;
-        uint256 stringLength;
-        assembly ("memory-safe") {
-            offset := mload(add(raw, 0x20))
-            stringLength := mload(add(raw, 0x40))
-        }
-
-        if (offset != 0x20) {
-            return (false, "");
-        }
-
-        uint256 paddedLength = ((stringLength + 31) / 32) * 32;
-        if (raw.length < 64 + paddedLength) {
-            return (false, "");
-        }
-
-        return (true, abi.decode(raw, (string)));
-    }
-
-    function _findAddressByName(string memory json, string memory contractName) internal pure returns (address) {
-        // Deployment JSON format: {"address": "contractName"}
-        // We need to find the address where the value matches contractName
-        bytes memory jsonBytes = bytes(json);
-        bytes memory nameBytes = bytes(contractName);
-
-        // Find contract name in JSON (as a value)
-        // Format: "address": "contractName"
-        uint256 nameIndex = _indexOf(jsonBytes, nameBytes);
-        if (nameIndex == type(uint256).max) {
-            return address(0);
-        }
-
-        // Search backwards from nameIndex to find the address
-        // Look for pattern: "0x" followed by 40 hex characters before the contract name
-        for (uint256 i = nameIndex; i > 0 && i > nameIndex - 100; i--) {
-            if (jsonBytes[i] == '"' && i + 1 < jsonBytes.length) {
-                // Check if this looks like an address (starts with 0x)
-                if (i >= 42 && jsonBytes[i - 42] == "0" && jsonBytes[i - 41] == "x") {
-                    // Extract address
-                    bytes memory addrBytes = new bytes(42);
-                    for (uint256 j = 0; j < 42; j++) {
-                        addrBytes[j] = jsonBytes[i - 42 + j];
-                    }
-                    string memory addrStr = string(addrBytes);
-                    return vm.parseAddress(addrStr);
-                }
-            }
-        }
-
-        return address(0);
-    }
-
-    function _findAllAddressesByName(string memory json, string memory contractName)
-        internal
-        pure
-        returns (address[] memory)
-    {
-        // Find all addresses where the contract name matches
-        address[] memory found = new address[](20); // Max 20 matches
-        uint256 count = 0;
-
-        bytes memory jsonBytes = bytes(json);
-        bytes memory nameBytes = bytes(contractName);
-
-        uint256 searchIndex = 0;
-        while (searchIndex < jsonBytes.length && count < 20) {
-            uint256 nameIndex = _indexOfFrom(jsonBytes, nameBytes, searchIndex);
-            if (nameIndex == type(uint256).max) {
-                break;
-            }
-
-            // Search backwards for address
-            for (uint256 i = nameIndex; i > 0 && i > nameIndex - 100; i--) {
-                if (jsonBytes[i] == '"' && i >= 42) {
-                    if (jsonBytes[i - 42] == "0" && jsonBytes[i - 41] == "x") {
-                        bytes memory addrBytes = new bytes(42);
-                        for (uint256 j = 0; j < 42; j++) {
-                            addrBytes[j] = jsonBytes[i - 42 + j];
-                        }
-                        string memory addrStr = string(addrBytes);
-                        address addr = vm.parseAddress(addrStr);
-
-                        // Check if we already have this address
-                        bool exists = false;
-                        for (uint256 k = 0; k < count; k++) {
-                            if (found[k] == addr) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            found[count] = addr;
-                            count++;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            searchIndex = nameIndex + nameBytes.length;
-        }
-
-        // Resize array to actual count
-        address[] memory result = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            result[i] = found[i];
-        }
-        return result;
-    }
-
-    function _indexOf(bytes memory haystack, bytes memory needle) internal pure returns (uint256) {
-        return _indexOfFrom(haystack, needle, 0);
-    }
-
-    function _indexOfFrom(bytes memory haystack, bytes memory needle, uint256 from) internal pure returns (uint256) {
-        if (needle.length > haystack.length || from >= haystack.length) {
-            return type(uint256).max;
-        }
-        for (uint256 i = from; i <= haystack.length - needle.length; i++) {
-            bool isMatch = true;
-            for (uint256 j = 0; j < needle.length; j++) {
-                if (haystack[i + j] != needle[j]) {
-                    isMatch = false;
-                    break;
-                }
-            }
-            if (isMatch) {
-                return i;
-            }
-        }
-        return type(uint256).max;
-    }
-
     // Helper function to check if tokens are already distributed
     function checkTokensDistributed() external view returns (bool) {
-        address ysTokenAddr;
-        (bool foundBroadcast, string memory content) = _readLatestBroadcast();
-        if (foundBroadcast) {
-            ysTokenAddr = _getAddressFromBroadcast(content, "YSToken");
-        } else {
-            string memory deploymentJson = vm.readFile(_deploymentPath());
-            ysTokenAddr = _findAddressByName(deploymentJson, "YSToken");
-        }
+        address ysTokenAddr = _resolveDeploymentAddress("YSToken");
 
         if (ysTokenAddr == address(0)) {
             return false;

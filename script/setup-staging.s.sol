@@ -6,7 +6,6 @@ import { console } from "forge-std/console.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
-import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockGauntletUSDCPrime } from "../contracts/mocks/MockGauntletUSDCPrime.sol";
 import { IPriceOracle } from "../contracts/interfaces/IPriceOracle.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -19,11 +18,10 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
  *      The deployer acts as both shielded depositor and protector for demo data.
  *
  * Usage: forge script script/setup-staging.s.sol:SetupStaging \
- *          --rpc-url <RPC_URL> --private-key <KEY> --broadcast --ffi
+ *          --rpc-url <RPC_URL> --private-key <KEY> --broadcast
  */
 contract SetupStaging is ScaffoldETHDeploy {
     uint256 constant MINT_AMOUNT = 100_000e18; // 100k tokens (18 decimals)
-    uint256 constant USDC_MINT_AMOUNT = 100_000e6; // 100k USDC (6 decimals)
     uint256 constant PROTECTOR_DEPOSIT = 20_000e18; // 20k tokens — must exceed shielded value at collateral ratio
     uint256 constant SHIELDED_DEPOSIT = 5_000e18; // 5k tokens — conservative to stay within collateral bounds
 
@@ -163,239 +161,14 @@ contract SetupStaging is ScaffoldETHDeploy {
     }
 
     function _getFactoryAddress() internal view returns (address) {
-        // Try deployment file first
-        try vm.readFile(_deploymentPath()) returns (string memory content) {
-            address addr = _findAddressByName(content, "SplitRiskPoolFactory");
-            if (addr != address(0)) return addr;
-        } catch { }
-
-        // Fallback to broadcast file. UUPS deployments include the implementation before
-        // the ERC1967Proxy, so prefer the proxy when it is present.
-        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
-        if (!foundBroadcast) {
-            return address(0);
-        }
-
-        address proxyAddr = _getAddressFromBroadcast(broadcastJson, "ERC1967Proxy");
-        if (proxyAddr != address(0)) {
-            return proxyAddr;
-        }
-
-        return _getAddressFromBroadcast(broadcastJson, "SplitRiskPoolFactory");
+        return _resolveFactoryAddress();
     }
 
     function _getAddress(string memory contractName) internal view returns (address) {
-        (bool foundBroadcast, string memory content) = _readLatestBroadcast();
-        if (foundBroadcast) {
-            return _getAddressFromBroadcast(content, contractName);
-        }
-
-        string memory deploymentJson = vm.readFile(_deploymentPath());
-        return _findAddressByName(deploymentJson, contractName);
+        return _resolveDeploymentAddress(contractName);
     }
 
     function _getAllAddresses(string memory contractName) internal view returns (address[] memory) {
-        (bool foundBroadcast, string memory content) = _readLatestBroadcast();
-        if (foundBroadcast) {
-            return _getAllAddressesFromBroadcast(content, contractName);
-        }
-
-        string memory deploymentJson = vm.readFile(_deploymentPath());
-        return _findAllAddressesByName(deploymentJson, contractName);
-    }
-
-    // --- Broadcast/deployment JSON parsing (same pattern as setup-pools.s.sol) ---
-
-    function _getAddressFromBroadcast(string memory content, string memory contractName)
-        internal
-        pure
-        returns (address)
-    {
-        uint96 idx = 0;
-        while (true) {
-            string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
-            string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
-
-            try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
-                (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
-                if (!validName) {
-                    idx++;
-                    continue;
-                }
-
-                if (keccak256(bytes(name)) == keccak256(bytes(contractName))) {
-                    bytes memory addrBytes = vm.parseJson(content, addrPath);
-                    return abi.decode(addrBytes, (address));
-                }
-            } catch {
-                break;
-            }
-            idx++;
-        }
-        return address(0);
-    }
-
-    function _getAllAddressesFromBroadcast(string memory content, string memory contractName)
-        internal
-        pure
-        returns (address[] memory)
-    {
-        address[] memory found = new address[](20);
-        uint256 count = 0;
-        uint96 idx = 0;
-
-        while (count < 20) {
-            string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
-            string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
-
-            try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
-                (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
-                if (!validName) {
-                    idx++;
-                    continue;
-                }
-
-                if (keccak256(bytes(name)) == keccak256(bytes(contractName))) {
-                    bytes memory addrBytes = vm.parseJson(content, addrPath);
-                    address addr = abi.decode(addrBytes, (address));
-
-                    bool exists = false;
-                    for (uint256 i = 0; i < count; i++) {
-                        if (found[i] == addr) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        found[count] = addr;
-                        count++;
-                    }
-                }
-            } catch {
-                break;
-            }
-            idx++;
-        }
-
-        address[] memory result = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            result[i] = found[i];
-        }
-        return result;
-    }
-
-    function _tryDecodeJsonString(bytes memory raw) internal pure returns (bool ok, string memory value) {
-        if (raw.length < 64 || raw.length % 32 != 0) {
-            return (false, "");
-        }
-
-        uint256 offset;
-        uint256 stringLength;
-        assembly ("memory-safe") {
-            offset := mload(add(raw, 0x20))
-            stringLength := mload(add(raw, 0x40))
-        }
-
-        if (offset != 0x20) {
-            return (false, "");
-        }
-
-        uint256 paddedLength = ((stringLength + 31) / 32) * 32;
-        if (raw.length < 64 + paddedLength) {
-            return (false, "");
-        }
-
-        return (true, abi.decode(raw, (string)));
-    }
-
-    function _findAddressByName(string memory json, string memory contractName) internal pure returns (address) {
-        bytes memory jsonBytes = bytes(json);
-        bytes memory nameBytes = bytes(contractName);
-
-        uint256 nameIndex = _indexOf(jsonBytes, nameBytes);
-        if (nameIndex == type(uint256).max) return address(0);
-
-        uint256 lowerBound = nameIndex > 100 ? nameIndex - 100 : 0;
-        for (uint256 i = nameIndex; i > lowerBound; i--) {
-            if (jsonBytes[i] == '"' && i >= 42) {
-                if (jsonBytes[i - 42] == "0" && jsonBytes[i - 41] == "x") {
-                    bytes memory addrBytes = new bytes(42);
-                    for (uint256 j = 0; j < 42; j++) {
-                        addrBytes[j] = jsonBytes[i - 42 + j];
-                    }
-                    return vm.parseAddress(string(addrBytes));
-                }
-            }
-        }
-        return address(0);
-    }
-
-    function _findAllAddressesByName(string memory json, string memory contractName)
-        internal
-        pure
-        returns (address[] memory)
-    {
-        address[] memory found = new address[](20);
-        uint256 count = 0;
-        bytes memory jsonBytes = bytes(json);
-        bytes memory nameBytes = bytes(contractName);
-        uint256 searchIndex = 0;
-
-        while (searchIndex < jsonBytes.length && count < 20) {
-            uint256 nameIndex = _indexOfFrom(jsonBytes, nameBytes, searchIndex);
-            if (nameIndex == type(uint256).max) break;
-
-            uint256 lowerBound2 = nameIndex > 100 ? nameIndex - 100 : 0;
-            for (uint256 i = nameIndex; i > lowerBound2; i--) {
-                if (jsonBytes[i] == '"' && i >= 42) {
-                    if (jsonBytes[i - 42] == "0" && jsonBytes[i - 41] == "x") {
-                        bytes memory addrBytes = new bytes(42);
-                        for (uint256 j = 0; j < 42; j++) {
-                            addrBytes[j] = jsonBytes[i - 42 + j];
-                        }
-                        address addr = vm.parseAddress(string(addrBytes));
-
-                        bool exists = false;
-                        for (uint256 k = 0; k < count; k++) {
-                            if (found[k] == addr) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            found[count] = addr;
-                            count++;
-                        }
-                        break;
-                    }
-                }
-            }
-            searchIndex = nameIndex + nameBytes.length;
-        }
-
-        address[] memory result = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            result[i] = found[i];
-        }
-        return result;
-    }
-
-    function _indexOf(bytes memory haystack, bytes memory needle) internal pure returns (uint256) {
-        return _indexOfFrom(haystack, needle, 0);
-    }
-
-    function _indexOfFrom(bytes memory haystack, bytes memory needle, uint256 from) internal pure returns (uint256) {
-        if (needle.length > haystack.length || from >= haystack.length) return type(uint256).max;
-        for (uint256 i = from; i <= haystack.length - needle.length; i++) {
-            bool isMatch = true;
-            for (uint256 j = 0; j < needle.length; j++) {
-                if (haystack[i + j] != needle[j]) {
-                    isMatch = false;
-                    break;
-                }
-            }
-            if (isMatch) return i;
-        }
-        return type(uint256).max;
+        return _resolveDeploymentAddresses(contractName);
     }
 }
