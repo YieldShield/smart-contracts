@@ -594,7 +594,10 @@ contract SplitRiskPoolFactory is
         } catch {
             revert ErrorsLib.InvalidTokenAddress();
         }
-        if (tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS || tokenDecimals > 77) {
+        if (
+            tokenDecimals < ConstantsLib.MIN_POOL_TOKEN_DECIMALS
+                || tokenDecimals > ConstantsLib.MAX_POOL_TOKEN_DECIMALS
+        ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
     }

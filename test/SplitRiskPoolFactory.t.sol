@@ -9,6 +9,7 @@ import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFac
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
@@ -1026,6 +1027,18 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         (,, address token,,,) = factory.tokenInfo(address(usdc));
         assertEq(token, address(usdc), "USDC should be whitelisted");
+    }
+
+    function testAddTokenInitial_RevertsForHighDecimalToken() public {
+        MockERC20Decimals highDecimalToken = new MockERC20Decimals("High Decimal Token", "HDT", 33);
+        oracle.setPrice(address(highDecimalToken), 1e8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.InvalidTokenDecimals.selector, address(highDecimalToken), 33)
+        );
+        factory.addTokenInitial(
+            address(highDecimalToken), "High Decimal Token", "HDT", address(oracle), address(0), 10000
+        );
     }
 
     function testAddToken_AllowsNon18DecimalToken() public {
