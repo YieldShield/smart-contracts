@@ -20,6 +20,33 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface IOwnableOracleAdmin {
+    function owner() external view returns (address);
+    function transferOwnership(address newOwner) external;
+}
+
+interface ICompositeOracleAdmin {
+    function setAuthorizedCaller(address caller, bool authorized) external;
+    function setDeviationThreshold(uint256 newThresholdBps) external;
+    function setChallengeDuration(uint256 newDurationSec) external;
+}
+
+interface IPythOracleAdmin {
+    function setTokenPriceFeed(address token, bytes32 feedId) external;
+    function setTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
+    function removeToken(address token) external;
+    function setMaxPriceAge(uint256 maxPriceAge) external;
+    function setMaxPriceDeviation(uint256 maxPriceDeviation) external;
+    function setMaxConfidenceBps(uint256 maxConfidenceBps) external;
+}
+
+interface IERC4626OracleFeedAdmin {
+    function setUnderlyingPriceOracle(address underlyingPriceOracle) external;
+    function registerVault(address vault, address underlying) external;
+    function refreshVaultSharePriceReference(address vault) external;
+    function setVaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
+}
+
 /// @title SplitRiskPoolFactory
 /// @author David Hawig
 /// @notice Factory contract for deploying and managing SplitRiskPool instances
@@ -34,6 +61,8 @@ contract SplitRiskPoolFactory is
     // Governance-controlled protocol parameters
     address public splitRiskPoolImplementation;
     address public compositeOracle;
+    address public pythOracle;
+    address public erc4626OracleFeed;
     address public defaultProtocolFeeRecipient;
 
     /// @notice Maximum number of active pools that can exist at the same time
@@ -72,6 +101,10 @@ contract SplitRiskPoolFactory is
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
     event BootstrapModeFinalized(address indexed caller);
+    event ManagedOracleUpdated(bytes32 indexed oracleRole, address indexed previousOracle, address indexed newOracle);
+
+    bytes32 public constant PYTH_ORACLE_ROLE = keccak256("PYTH_ORACLE");
+    bytes32 public constant ERC4626_ORACLE_FEED_ROLE = keccak256("ERC4626_ORACLE_FEED");
 
     constructor() {
         _disableInitializers();
@@ -217,6 +250,91 @@ contract SplitRiskPoolFactory is
         address previousRecipient = defaultProtocolFeeRecipient;
         defaultProtocolFeeRecipient = newRecipient;
         emit EventsLib.ProtocolFeeRecipientUpdated(previousRecipient, newRecipient);
+    }
+
+    /// @notice Sets the factory-owned Pyth oracle used for governance-managed price feed admin
+    /// @dev During bootstrap, the owner may register it once before governance takes over.
+    function setManagedPythOracle(address newOracle) external {
+        _requireGovernanceOrBootstrapOwner(pythOracle == address(0) && _bootstrapOwnerActionsAllowed());
+        _requireOwnedByFactory(newOracle);
+        address previousOracle = pythOracle;
+        pythOracle = newOracle;
+        emit ManagedOracleUpdated(PYTH_ORACLE_ROLE, previousOracle, newOracle);
+    }
+
+    /// @notice Sets the factory-owned ERC4626 oracle feed used for governance-managed vault admin
+    /// @dev During bootstrap, the owner may register it once before governance takes over.
+    function setManagedERC4626OracleFeed(address newOracle) external {
+        _requireGovernanceOrBootstrapOwner(erc4626OracleFeed == address(0) && _bootstrapOwnerActionsAllowed());
+        _requireOwnedByFactory(newOracle);
+        address previousOracle = erc4626OracleFeed;
+        erc4626OracleFeed = newOracle;
+        emit ManagedOracleUpdated(ERC4626_ORACLE_FEED_ROLE, previousOracle, newOracle);
+    }
+
+    /// @notice Transfers ownership of a factory-owned oracle to another admin if governance chooses to unwind custody
+    function transferManagedOracleOwnership(address oracle, address newOwner) external onlyGovernance {
+        if (newOwner == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _requireOwnedByFactory(oracle);
+        IOwnableOracleAdmin(oracle).transferOwnership(newOwner);
+    }
+
+    function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).setAuthorizedCaller(caller, authorized);
+    }
+
+    function setCompositeOracleDeviationThreshold(uint256 newThresholdBps) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).setDeviationThreshold(newThresholdBps);
+    }
+
+    function setCompositeOracleChallengeDuration(uint256 newDurationSec) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).setChallengeDuration(newDurationSec);
+    }
+
+    function setPythTokenPriceFeed(address token, bytes32 feedId) external onlyGovernance {
+        _pythOracleAdmin().setTokenPriceFeed(token, feedId);
+    }
+
+    function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId)
+        external
+        onlyGovernance
+    {
+        _pythOracleAdmin().setTokenCompositePriceFeed(token, baseFeedId, quoteUsdFeedId);
+    }
+
+    function removePythToken(address token) external onlyGovernance {
+        _pythOracleAdmin().removeToken(token);
+    }
+
+    function setPythMaxPriceAge(uint256 maxPriceAge) external onlyGovernance {
+        _pythOracleAdmin().setMaxPriceAge(maxPriceAge);
+    }
+
+    function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external onlyGovernance {
+        _pythOracleAdmin().setMaxPriceDeviation(maxPriceDeviation);
+    }
+
+    function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external onlyGovernance {
+        _pythOracleAdmin().setMaxConfidenceBps(maxConfidenceBps);
+    }
+
+    function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external onlyGovernance {
+        _erc4626OracleFeedAdmin().setUnderlyingPriceOracle(underlyingPriceOracle);
+    }
+
+    function registerERC4626Vault(address vault, address underlying) external onlyGovernance {
+        _erc4626OracleFeedAdmin().registerVault(vault, underlying);
+    }
+
+    function refreshERC4626VaultSharePriceReference(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().refreshVaultSharePriceReference(vault);
+    }
+
+    function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external onlyGovernance {
+        _erc4626OracleFeedAdmin().setVaultSharePriceDeviation(vault, maxDeviationBps);
     }
 
     /**
@@ -743,6 +861,30 @@ contract SplitRiskPoolFactory is
         revert UnauthorizedGovernance(msg.sender);
     }
 
+    function _requireManagedOracleConfigured(address oracle) internal pure {
+        if (oracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
+    }
+
+    function _requireOwnedByFactory(address oracle) internal view {
+        _requireManagedOracleConfigured(oracle);
+        if (oracle.code.length == 0) revert ErrorsLib.InvalidAssetAddress();
+        try IOwnableOracleAdmin(oracle).owner() returns (address oracleOwner) {
+            if (oracleOwner != address(this)) revert UnauthorizedGovernance(oracleOwner);
+        } catch {
+            revert ErrorsLib.InvalidAssetAddress();
+        }
+    }
+
+    function _pythOracleAdmin() internal view returns (IPythOracleAdmin) {
+        _requireManagedOracleConfigured(pythOracle);
+        return IPythOracleAdmin(pythOracle);
+    }
+
+    function _erc4626OracleFeedAdmin() internal view returns (IERC4626OracleFeedAdmin) {
+        _requireManagedOracleConfigured(erc4626OracleFeed);
+        return IERC4626OracleFeedAdmin(erc4626OracleFeed);
+    }
+
     function _bootstrapOwnerActionsAllowed() internal view returns (bool) {
         return bootstrapModeEnabled && pools.length == 0;
     }
@@ -860,5 +1002,5 @@ contract SplitRiskPoolFactory is
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[44] private __gap;
+    uint256[42] private __gap;
 }
