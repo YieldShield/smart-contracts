@@ -25,8 +25,13 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 1 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
+    uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
+    uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;
     bytes4 private constant GET_THRESHOLD_SELECTOR = bytes4(keccak256("getThreshold()"));
     bytes4 private constant GET_OWNERS_SELECTOR = bytes4(keccak256("getOwners()"));
+    bytes4 private constant VERSION_SELECTOR = bytes4(keccak256("VERSION()"));
+    bytes4 private constant NONCE_SELECTOR = bytes4(keccak256("nonce()"));
+    bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -143,6 +148,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         );
         factory.setCompositeOracle(compositeOracleAddr);
         factory.setDefaultProtocolFeeRecipient(timelockAddr);
+        factory.finalizeBootstrap();
         compositeOracle.setAuthorizedCaller(factoryAddr, true);
 
         factory.transferOwnership(timelockAddr);
@@ -151,6 +157,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         erc4626OracleFeed.transferOwnership(timelockAddr);
 
         require(factory.owner() == timelockAddr, "Factory owner not transferred");
+        require(!factory.bootstrapModeEnabled(), "Factory bootstrap mode not finalized");
         require(compositeOracle.owner() == timelockAddr, "Composite oracle owner not transferred");
         require(pythOracle.owner() == timelockAddr, "Pyth oracle owner not transferred");
         require(erc4626OracleFeed.owner() == timelockAddr, "ERC4626 oracle owner not transferred");
@@ -200,20 +207,49 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             revert InvalidProductionBootstrapHolder(holder);
         }
 
-        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSelector(GET_THRESHOLD_SELECTOR));
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSelector(VERSION_SELECTOR));
+        if (!success || data.length < 96 || bytes(abi.decode(data, (string))).length == 0) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        (success, data) = holder.staticcall(abi.encodeWithSelector(NONCE_SELECTOR));
+        if (!success || data.length < 32) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        (success, data) = holder.staticcall(abi.encodeWithSelector(DOMAIN_SEPARATOR_SELECTOR));
+        if (!success || data.length < 32 || abi.decode(data, (bytes32)) == bytes32(0)) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        (success, data) = holder.staticcall(abi.encodeWithSelector(GET_THRESHOLD_SELECTOR));
         if (!success || data.length < 32) {
             revert InvalidProductionBootstrapHolder(holder);
         }
         uint256 threshold = abi.decode(data, (uint256));
 
         (success, data) = holder.staticcall(abi.encodeWithSelector(GET_OWNERS_SELECTOR));
-        if (!success) {
+        if (!success || data.length < 64) {
             revert InvalidProductionBootstrapHolder(holder);
         }
         address[] memory owners = abi.decode(data, (address[]));
 
-        if (threshold == 0 || owners.length == 0 || threshold > owners.length) {
+        if (
+            threshold < MIN_PRODUCTION_BOOTSTRAP_THRESHOLD || owners.length < MIN_PRODUCTION_BOOTSTRAP_OWNERS
+                || threshold > owners.length
+        ) {
             revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            if (owners[i] == address(0)) {
+                revert InvalidProductionBootstrapHolder(holder);
+            }
+            for (uint256 j = i + 1; j < owners.length; j++) {
+                if (owners[i] == owners[j]) {
+                    revert InvalidProductionBootstrapHolder(holder);
+                }
+            }
         }
     }
 }

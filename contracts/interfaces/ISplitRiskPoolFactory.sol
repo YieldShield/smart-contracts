@@ -50,6 +50,7 @@ interface ISplitRiskPoolFactory {
     function isPoolActive(address pool) external view returns (bool);
     function creationBonds(address pool) external view returns (address creator, address token, uint256 amount);
     function minimumCreationBondUsd() external view returns (uint256);
+    function bootstrapModeEnabled() external view returns (bool);
     function poolCount() external view returns (uint256);
     function getPoolInfo(address pool) external view returns (ISplitRiskPoolFactory.PoolInfo memory);
 
@@ -91,6 +92,7 @@ interface ISplitRiskPoolFactory {
     function setGovernanceTimelock(address newGovernanceTimelock) external;
     function acceptGovernanceTimelock() external;
     function pendingGovernanceTimelock() external view returns (address);
+    function finalizeBootstrap() external;
     function setCompositeOracle(address newOracle) external;
     function setDefaultProtocolFeeRecipient(address newRecipient) external;
 

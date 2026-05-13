@@ -706,6 +706,10 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         console.log("Enabled strict protected pricing for 12 direct-feed launch assets");
         console.log("ERC4626 NAV-backed vault tokens remain non-strict until they have a strict circuit-breaker path");
 
+        factory.finalizeBootstrap();
+        require(!factory.bootstrapModeEnabled(), "Factory bootstrap mode not finalized");
+        console.log("Factory bootstrap mode finalized");
+
         // Transfer ownership after token whitelisting is complete
         if (isLocalNetwork) {
             address testAccount = LOCAL_E2E_ACCOUNT;

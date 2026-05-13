@@ -476,6 +476,27 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         new ERC1967Proxy(address(implementation), initData);
     }
 
+    function test_Initialize_RevertsForPublicTimelockBelowMinimumDelay() public {
+        vm.chainId(421614);
+
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
+        address[] memory emptyAddrs = new address[](0);
+        TimelockController shortDelayTimelock = new TimelockController(12 hours, emptyAddrs, emptyAddrs, deployer);
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPoolFactory.initialize.selector, deployer, address(shortDelayTimelock), address(poolImpl)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector,
+                address(shortDelayTimelock),
+                12 hours
+            )
+        );
+        new ERC1967Proxy(address(implementation), initData);
+    }
+
     function test_SetGovernanceTimelock_RevertsForZeroDelayTimelock() public {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));

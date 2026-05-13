@@ -68,8 +68,10 @@ contract SplitRiskPoolFactory is
     mapping(address => bool) public isPoolActive;
     mapping(address => ISplitRiskPoolFactory.CreationBond) public creationBonds;
     uint256 public minimumCreationBondUsd;
+    bool public bootstrapModeEnabled;
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
+    event BootstrapModeFinalized(address indexed caller);
 
     constructor() {
         _disableInitializers();
@@ -95,6 +97,7 @@ contract SplitRiskPoolFactory is
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
         splitRiskPoolImplementation = poolImplementation_;
         minimumCreationBondUsd = DEFAULT_MINIMUM_CREATION_BOND_USD;
+        bootstrapModeEnabled = true;
     }
 
     /**
@@ -140,7 +143,14 @@ contract SplitRiskPoolFactory is
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable, ISplitRiskPoolFactory) {
+        address previousGovernance = governanceTimelock();
         ProtocolAccessControlUpgradeable.acceptGovernanceTimelock();
+
+        if (defaultProtocolFeeRecipient == previousGovernance) {
+            address newGovernance = governanceTimelock();
+            defaultProtocolFeeRecipient = newGovernance;
+            emit EventsLib.ProtocolFeeRecipientUpdated(previousGovernance, newGovernance);
+        }
     }
 
     /// @notice Returns the pending governance timelock address
@@ -155,15 +165,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the composite oracle address for all new pools
-     * @dev Only callable by governance. During first-time bootstrap, the current owner
-     *      may seed the oracle before any pools exist and before governance takes over.
+     * @dev Only callable by governance. During bootstrap, the current owner may seed
+     *      the oracle before any pools exist and before governance takes over.
      *      This oracle routes pricing to
      *      per-token oracle feeds. All pools use this composite oracle.
      * @param newOracle Address of the new composite oracle
      * @custom:error InvalidAssetAddress If newOracle is zero address
      */
     function setCompositeOracle(address newOracle) external {
-        _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && pools.length == 0);
+        _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && _bootstrapOwnerActionsAllowed());
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
 
         uint256 tokenCount = whitelistedTokens.length;
@@ -194,19 +204,34 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the default protocol fee recipient address for all new pools
-     * @dev Only callable by governance. During first-time bootstrap, the current owner
-     *      may seed the recipient before any pools exist and before governance takes over.
+     * @dev Only callable by governance. During bootstrap, the current owner may seed
+     *      the recipient before any pools exist and before governance takes over.
      *      This recipient will receive protocol
      *      fees from all pools created after this update. Existing pools are not affected.
      * @param newRecipient Address of the new default protocol fee recipient
      * @custom:error InvalidAssetAddress If newRecipient is zero address
      */
     function setDefaultProtocolFeeRecipient(address newRecipient) external {
-        _requireGovernanceOrBootstrapOwner(defaultProtocolFeeRecipient == address(0) && pools.length == 0);
+        _requireGovernanceOrBootstrapOwner(defaultProtocolFeeRecipient == address(0) && _bootstrapOwnerActionsAllowed());
         if (newRecipient == address(0)) revert ErrorsLib.InvalidAssetAddress();
         address previousRecipient = defaultProtocolFeeRecipient;
         defaultProtocolFeeRecipient = newRecipient;
         emit EventsLib.ProtocolFeeRecipientUpdated(previousRecipient, newRecipient);
+    }
+
+    /**
+     * @notice Permanently disables owner bootstrap actions before the first pool launch
+     * @dev Governance can always finalize. The owner may only finalize while bootstrap mode
+     *      is still active and before any pools exist.
+     */
+    function finalizeBootstrap() external {
+        _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
+        if (!bootstrapModeEnabled) {
+            return;
+        }
+
+        bootstrapModeEnabled = false;
+        emit BootstrapModeFinalized(msg.sender);
     }
 
     /**
@@ -484,8 +509,8 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Adds a token to the whitelist during initial deployment with its oracle feeds
-     * @dev Only callable by owner (for initial setup). Same as addToken but allows
-     *      owner to whitelist tokens during deployment before governance is fully set up.
+     * @dev During bootstrap, the owner may whitelist tokens before governance fully takes over.
+     *      After bootstrap is finalized, only governance can continue onboarding tokens.
      *      If backupOracleFeed is provided, dual-feed mode is enabled.
      *      Tokens must expose a valid ERC20 decimals() value supported by pool scaling math.
      * @param token Address of the token to add
@@ -502,7 +527,8 @@ contract SplitRiskPoolFactory is
         address primaryOracleFeed,
         address backupOracleFeed,
         uint256 minCollateralRatioBp
-    ) external onlyOwner {
+    ) external {
+        _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
         _addToken(token, name, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp);
     }
 
@@ -569,15 +595,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Updates whether a token must use the strict protected-price path when used as backing collateral
-     * @dev Only callable by governance. During first-time bootstrap, the current owner may seed
-     *      strict-price requirements before any pools exist and before governance takes over.
+     * @dev Only callable by governance. During bootstrap, the current owner may seed
+     *      strict-price requirements before any pools exist and before bootstrap is finalized.
      *      If enabling strict mode and a default oracle is configured,
      *      the current oracle must already satisfy the strict pricing requirement for that token.
      * @param token Address of the whitelisted token to update
      * @param required Whether strict protected pricing is required for this backing asset
      */
     function setTokenRequiresStrictProtectedPrice(address token, bool required) external {
-        _requireGovernanceOrBootstrapOwner(pools.length == 0);
+        _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
 
         bool previousRequirement = tokenRequiresStrictProtectedPrice[token];
@@ -717,6 +743,10 @@ contract SplitRiskPoolFactory is
         revert UnauthorizedGovernance(msg.sender);
     }
 
+    function _bootstrapOwnerActionsAllowed() internal view returns (bool) {
+        return bootstrapModeEnabled && pools.length == 0;
+    }
+
     function _removeActivePool(address pool) internal {
         uint256 indexPlusOne = _activePoolIndexPlusOne[pool];
         if (indexPlusOne == 0) revert ErrorsLib.PoolNotActive();
@@ -830,5 +860,5 @@ contract SplitRiskPoolFactory is
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[45] private __gap;
+    uint256[44] private __gap;
 }

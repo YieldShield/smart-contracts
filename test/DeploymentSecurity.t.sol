@@ -22,7 +22,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
 contract ContractBootstrapHolder { }
 
-contract SafeLikeBootstrapHolder {
+contract SelectorsOnlyBootstrapHolder {
     address[] internal owners;
     uint256 internal threshold;
 
@@ -37,6 +37,39 @@ contract SafeLikeBootstrapHolder {
 
     function getOwners() external view returns (address[] memory) {
         return owners;
+    }
+}
+
+contract SafeLikeBootstrapHolder {
+    address[] internal owners;
+    uint256 internal threshold;
+    uint256 internal safeNonce;
+    bytes32 internal safeDomainSeparator;
+
+    constructor(address[] memory owners_, uint256 threshold_) {
+        owners = owners_;
+        threshold = threshold_;
+        safeDomainSeparator = keccak256(abi.encodePacked(address(this), owners_.length, threshold_));
+    }
+
+    function getThreshold() external view returns (uint256) {
+        return threshold;
+    }
+
+    function getOwners() external view returns (address[] memory) {
+        return owners;
+    }
+
+    function VERSION() external pure returns (string memory) {
+        return "1.4.1";
+    }
+
+    function nonce() external view returns (uint256) {
+        return safeNonce;
+    }
+
+    function domainSeparator() external view returns (bytes32) {
+        return safeDomainSeparator;
     }
 }
 
@@ -116,6 +149,36 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         harness.validateProductionBootstrapHolder(address(contractHolder));
     }
 
+    function test_ProductionBootstrap_RejectsSelectorOnlyBootstrapHolder() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SelectorsOnlyBootstrapHolder contractHolder = new SelectorsOnlyBootstrapHolder(owners, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsDuplicateOwnerSafeLikeHolder() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xA11CE);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
     function test_ProductionBootstrap_BurnCannotReduceBelowQuorumVotingPower() public {
         (YSToken ysToken,, YSGovernor governor) = _deployGovernance();
         uint256 belowQuorumSupply = ysToken.MIN_GOVERNANCE_SUPPLY() - 1;
@@ -145,6 +208,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         factory.setCompositeOracle(address(compositeOracle));
         factory.setDefaultProtocolFeeRecipient(address(timelock));
+        factory.finalizeBootstrap();
         compositeOracle.setAuthorizedCaller(address(factory), true);
 
         factory.transferOwnership(address(timelock));
@@ -153,6 +217,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         erc4626OracleFeed.transferOwnership(address(timelock));
 
         assertEq(factory.owner(), address(timelock));
+        assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.owner(), address(timelock));
         assertEq(pythOracle.owner(), address(timelock));
         assertEq(erc4626OracleFeed.owner(), address(timelock));

@@ -33,6 +33,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
     bytes4 private constant HAS_ROLE_SELECTOR = bytes4(keccak256("hasRole(bytes32,address)"));
     bytes32 private constant DEFAULT_ADMIN_ROLE_VALUE = 0x00;
+    uint256 private constant MIN_PUBLIC_GOVERNANCE_DELAY = 1 days;
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
@@ -69,10 +70,15 @@ abstract contract ProtocolAccessControlUpgradeable is
     function acceptGovernanceTimelock() public virtual {
         if (_pendingGovernanceTimelock == address(0)) revert NoPendingGovernance();
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
-        emit GovernanceTimelockUpdated(_governanceTimelock, _pendingGovernanceTimelock);
+        address previousGovernance = _governanceTimelock;
+        emit GovernanceTimelockUpdated(previousGovernance, _pendingGovernanceTimelock);
         _governanceTimelock = _pendingGovernanceTimelock;
         _governanceTimelockCodehash = _pendingGovernanceTimelock.codehash;
         _pendingGovernanceTimelock = address(0);
+
+        if (owner() == previousGovernance) {
+            _transferOwnership(_governanceTimelock);
+        }
     }
 
     /// @notice Returns the pending governance timelock address
@@ -97,6 +103,9 @@ abstract contract ProtocolAccessControlUpgradeable is
 
         uint256 minDelay = abi.decode(data, (uint256));
         if (minDelay == 0) revert GovernanceTimelockDelayTooShort(candidate, minDelay);
+        if (!_isLocalDevelopmentChain() && minDelay < MIN_PUBLIC_GOVERNANCE_DELAY) {
+            revert GovernanceTimelockDelayTooShort(candidate, minDelay);
+        }
 
         (success, data) =
             candidate.staticcall(abi.encodeWithSelector(HAS_ROLE_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE, candidate));
@@ -108,6 +117,10 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (codehash == bytes32(0) && _governanceTimelock != address(0) && _governanceTimelock.code.length != 0) {
             codehash = _governanceTimelock.codehash;
         }
+    }
+
+    function _isLocalDevelopmentChain() internal view returns (bool) {
+        return block.chainid == 31337 || block.chainid == 1337;
     }
 
     function pause() public virtual onlyGovernance {

@@ -387,6 +387,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         assertEq(factoryInterface.splitRiskPoolImplementation(), factory.splitRiskPoolImplementation());
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), address(this));
+        assertTrue(factoryInterface.bootstrapModeEnabled());
 
         vm.prank(governanceTimelock);
         factoryInterface.setPoolImplementation(address(newImplementation));
@@ -396,6 +397,71 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.prank(governanceTimelock);
         factoryInterface.setDefaultProtocolFeeRecipient(newRecipient);
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), newRecipient);
+    }
+
+    function testFinalizeBootstrapDisablesOwnerBootstrapBypass() public {
+        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
+        oracle.setPrice(address(tokenC), 1e8);
+
+        factory.finalizeBootstrap();
+
+        assertFalse(factory.bootstrapModeEnabled(), "Bootstrap mode should be disabled");
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
+        );
+        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+    }
+
+    function testGovernanceCanStillAddTokenAfterBootstrapFinalization() public {
+        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
+        oracle.setPrice(address(tokenC), 1e8);
+
+        factory.finalizeBootstrap();
+
+        vm.prank(governanceTimelock);
+        factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+
+        assertTrue(factory.isWhitelisted(address(tokenC)), "Governance should retain token onboarding control");
+    }
+
+    function testAcceptGovernanceTimelockSyncsOwnerAndProtocolFeeRecipient() public {
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(governanceTimelock);
+        factory.transferOwnership(governanceTimelock);
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(replacementGovernance);
+        factory.acceptGovernanceTimelock();
+
+        assertEq(factory.governanceTimelock(), replacementGovernance, "Governance should update");
+        assertEq(factory.owner(), replacementGovernance, "Owner should track governance when previously aligned");
+        assertEq(
+            factory.defaultProtocolFeeRecipient(),
+            replacementGovernance,
+            "Protocol fee recipient should track governance when previously aligned"
+        );
+    }
+
+    function testAcceptGovernanceTimelockLeavesCustomOwnerAndRecipientUntouched() public {
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user1);
+        factory.transferOwnership(user2);
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(replacementGovernance);
+        factory.acceptGovernanceTimelock();
+
+        assertEq(factory.governanceTimelock(), replacementGovernance, "Governance should update");
+        assertEq(factory.owner(), user2, "Custom owner should remain unchanged");
+        assertEq(factory.defaultProtocolFeeRecipient(), user1, "Custom protocol fee recipient should remain unchanged");
     }
 
     function testRevertCreatePoolWithoutDefaultOracle() public {
