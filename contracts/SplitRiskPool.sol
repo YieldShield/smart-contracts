@@ -89,6 +89,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      - claimRewards: Does NOT change (original deposit value remains the same)
     uint256 public totalValueAtDeposit;
 
+    /// @notice Sum of all active shielded position collateral caps in native backing-token units
+    /// @dev Invariant: totalShieldCollateralAmount == sum of all extant shield receipt collateralAmount values.
+    ///      This caps how much backing liquidity shield holders can ever claim after price drawdowns.
+    ///      Maintained by:
+    ///      - depositShieldedAsset: += collateralAmount
+    ///      - shieldedWithdraw: -= pos.collateralAmount
+    ///      - partialWithdrawShielded: -= pos.collateralAmount, then += newCollateralAmount
+    ///      - claimRewards: Does NOT change (cross-asset collateral cap remains unchanged)
+    uint256 public totalShieldCollateralAmount;
+
     /* Pool Fee Accumulators */
     uint256 public accumulatedCommissions; // Pending commissions for protectors in native shielded token units
     uint256 public accumulatedPoolFee; // Total pool fee accumulated in native shielded token units
@@ -555,6 +565,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @dev Calculates the max withdrawable accounting for how utilization changes during withdrawal.
      *      Uses formula: min(positionAmount, totalProtectorTokens - requiredCollateralInProtectorTokens)
      *      Collateralization is based on original deposit values (valueAtDeposit), not current token amounts.
+     *      The pool-level lock is capped by the sum of each shield position's stored backing-token collateral cap,
+     *      so backing-token drawdowns cannot lock more protector capital than shield holders can actually claim.
      *      This allows users to withdraw all unlocked funds in one transaction instead of iterating.
      * @param tokenId The protector NFT token ID
      * @return availableAmount Maximum amount available for withdrawal
@@ -587,6 +599,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // M-4 FIX: Multiply before divide to avoid precision loss
         uint256 requiredProtectorTokens =
             (totalValueAtDeposit * COLLATERAL_RATIO * backingTokenScale) / (ConstantsLib.BASIS_POINT_SCALE * uwPrice);
+        if (requiredProtectorTokens > totalShieldCollateralAmount) {
+            requiredProtectorTokens = totalShieldCollateralAmount;
+        }
 
         // Pool-level max withdrawable
         if (requiredProtectorTokens >= totalProtectorTokens) {
@@ -890,15 +905,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
     }
 
-    /// @dev Best-effort fee accrual for shield activation. If protected shielded
-    ///      pricing is unavailable, or the shielded token's active feed is under
-    ///      challenge, the coverage path continues and forfeits the full shielded
-    ///      position to protectors instead of pricing fees from a suspect feed.
+    /// @dev Best-effort fee accrual for exit flows that can safely continue without
+    ///      newly priced fees. If protected shielded pricing is unavailable or
+    ///      disputed, returns zero new fees and leaves the position amount intact.
     function _tryCalculateAndAccumulateFees(uint256 tokenId)
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
-        if (_hasOraclePendingChallenge(SHIELDED_TOKEN)) return (0, 0, 0);
+        if (_hasOraclePendingChallenge(SHIELDED_TOKEN) || _hasOracleChallengeablePrice(SHIELDED_TOKEN)) {
+            return (0, 0, 0);
+        }
 
         (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
         if (!priceAvailable) return (0, 0, 0);
@@ -1322,6 +1338,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Update total original deposit value (USD-BASED)
         totalValueAtDeposit += valueAtDeposit;
+        totalShieldCollateralAmount += collateralAmount;
 
         // Mint NFT with collateral amount stored
         tokenId = IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
@@ -1377,9 +1394,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 totalFees;
         if (preferredAsset == SHIELDED_TOKEN) {
-            // Same-asset withdrawals collect yield fees using the protected current price.
+            // Same-asset withdrawals may proceed even when protected shielded pricing is unavailable.
+            // In those cases the position exits with no newly priced fees rather than freezing the user.
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-                _calculateAndAccumulateFees(tokenId);
+                _tryCalculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         } else {
             // Shield activation also consumes the shielded position, so it must
@@ -1396,6 +1414,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Update total original deposit value (subtract original value at deposit)
         totalValueAtDeposit -= pos.valueAtDeposit;
+        totalShieldCollateralAmount -= pos.collateralAmount;
 
         uint256 payoutAmount;
 
@@ -1540,6 +1559,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Subtract full original valueAtDeposit, then add back proportionally reduced value
         totalValueAtDeposit -= pos.valueAtDeposit;
         totalValueAtDeposit += newValueAtDeposit;
+        totalShieldCollateralAmount -= pos.collateralAmount;
+        totalShieldCollateralAmount += newCollateralAmount;
 
         // === ATOMIC SECTION END ===
 
@@ -2016,7 +2037,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable) {
+        address previousGovernance = governanceTimelock();
         ProtocolAccessControlUpgradeable.acceptGovernanceTimelock();
+
+        if (poolConfig.protocolFeeRecipient == previousGovernance) {
+            poolConfig.protocolFeeRecipient = governanceTimelock();
+            emit EventsLib.ProtocolFeeRecipientUpdated(previousGovernance, poolConfig.protocolFeeRecipient);
+        }
     }
 
     /// @notice Returns the pending governance timelock address

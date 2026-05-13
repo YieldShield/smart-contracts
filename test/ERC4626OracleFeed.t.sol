@@ -195,6 +195,23 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(erc4626Feed.getPrice(address(vault)), expectedCappedPrice);
     }
 
+    function test_GetPriceWithCircuitBreaker_RevertsWhenShareRateRisesAboveReviewedBand() public {
+        uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.getPriceWithCircuitBreaker(address(vault));
+    }
+
     function test_GetPrice_UsesRawShareRateAtUpperDeviationBoundary() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())

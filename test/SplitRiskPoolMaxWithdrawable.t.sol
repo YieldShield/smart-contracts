@@ -321,6 +321,27 @@ contract SplitRiskPoolMaxWithdrawableTest is Test, TestTimelockHelper {
         assertEq(availableAfter, 60e18, "Available should increase to 60 after backing price doubles");
     }
 
+    /// @notice Backing-price drawdowns should not lock more capital than shield
+    ///         holders can actually claim via their stored collateral caps.
+    function test_backingPriceDropCapsLockedCollateralToStoredShieldCaps() public {
+        vm.prank(protector1);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), 200e18, 0);
+
+        vm.prank(shielded);
+        pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        assertEq(pool.totalShieldCollateralAmount(), 100e18, "stored collateral cap should match deposit-time sizing");
+
+        oracle.setPrice(address(backingToken), 0.5e8);
+
+        uint256 availableAfterDrop = pool.getAvailableForWithdrawal(tokenId);
+        assertEq(
+            availableAfterDrop,
+            100e18,
+            "backing drawdown should not lock more than the aggregate shield collateral caps"
+        );
+    }
+
     /// @notice Test that when protected backing pricing fails, availability fails closed
     function test_circuitBreakerFailureFailsClosed() public {
         vm.prank(protector1);

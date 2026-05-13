@@ -258,10 +258,10 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         vm.stopPrank();
     }
 
-    /// @notice When the protected shielded price is unavailable, same-asset withdrawal
-    ///         must fail closed because burning the receipt would make skipped fees
-    ///         unrecoverable.
-    function test_shieldedWithdraw_OracleUnavailable_RevertsWithoutBurningReceipt() public {
+    /// @notice Same-asset withdrawal should remain available even when protected
+    ///         shielded pricing is unavailable; the position exits without newly
+    ///         priced fees instead of trapping the user.
+    function test_shieldedWithdraw_OracleUnavailable_SucceedsWithoutNewFees() public {
         vm.startPrank(shielded1);
         shieldedToken.approve(address(pool), 100e18);
         pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
@@ -272,11 +272,17 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         // ...then oracle failure / circuit-breaker trip mid-position.
         oracle.setPrice(address(shieldedToken), 0);
 
+        uint256 balanceBefore = shieldedToken.balanceOf(shielded1);
+        uint256 reservedFeesBefore = pool.getReservedFees();
+
         vm.prank(shielded1);
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken)));
         pool.shieldedWithdraw(0, address(shieldedToken), 0);
 
-        assertEq(shieldNFT.ownerOf(0), shielded1, "receipt should remain live");
+        assertEq(shieldedToken.balanceOf(shielded1), balanceBefore + 100e18, "user should receive full same-asset exit");
+        assertEq(pool.getReservedFees(), reservedFeesBefore, "unavailable pricing should not mint new fees");
+        assertEq(pool.totalShieldedTokens(), 0, "position should be fully removed");
+        vm.expectRevert();
+        shieldNFT.ownerOf(0);
     }
 
     /// @notice Test normal operation with valid prices

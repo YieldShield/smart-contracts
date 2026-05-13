@@ -162,7 +162,7 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         assertEq(pool.totalShieldedTokens(), 0, "no collateral value should be locked");
     }
 
-    function test_ShieldedOracleChallengeBlocksFeeAccrualPaths() public {
+    function test_ShieldedOracleChallenge_AllowsFullSameAssetExitButBlocksFeeAccrualPaths() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
 
@@ -174,18 +174,89 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
 
         vm.startPrank(shielded);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
-        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
-
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.partialWithdrawShielded(shieldTokenId, 100e18, address(shieldedToken), 0);
 
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.claimRewards(shieldTokenId);
+
+        uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
+        assertEq(
+            shieldedToken.balanceOf(shielded),
+            shieldedBalanceBefore + 1_000e18,
+            "full same-asset exit should bypass disputed fee pricing"
+        );
         vm.stopPrank();
 
         vm.prank(protector);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
+    }
+
+    function test_ShieldedOracleChallengeablePrice_AllowsFullSameAssetExit() public {
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
+
+        vm.prank(shielded);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
+
+        backupOracle.setPrice(address(shieldedToken), 2e8);
+
+        uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
+        vm.prank(shielded);
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
+
+        assertEq(
+            shieldedToken.balanceOf(shielded),
+            shieldedBalanceBefore + 1_000e18,
+            "challengeable pricing should not trap same-asset exits"
+        );
+        assertEq(pool.totalShieldedTokens(), 0, "position should be cleared after full exit");
+    }
+
+    function test_PoolGovernanceMigrationSyncsProtocolFeeRecipientWhenAligned() public {
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        (
+            uint256 shieldedMinDepositAmount,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,,
+            uint96 protocolFee,
+            address priceOracle
+        ) = pool.poolConfig();
+
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            maxTotalValueLockedUsd,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            governance,
+            priceOracle
+        );
+
+        vm.prank(governance);
+        pool.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(replacementGovernance);
+        pool.acceptGovernanceTimelock();
+
+        (,,,,,,, address protocolFeeRecipient,,) = pool.poolConfig();
+
+        assertEq(pool.governanceTimelock(), replacementGovernance, "pool governance should migrate");
+        assertEq(
+            protocolFeeRecipient,
+            replacementGovernance,
+            "aligned protocol fee recipient should follow pool governance migration"
+        );
     }
 
     function test_ShieldedOracleChallengeBlocksCrossAssetActivationFeesBypass() public {
