@@ -20,7 +20,6 @@
     "account": "make account",
     "account:generate": "node scripts-js/generateKeystore.js",
     "account:import": "node scripts-js/importAccount.js",
-    "account:reveal-pk": "node scripts-js/revealPK.js",
     "chain": "make chain",
     "build": "forge build --offline",
     "clean": "forge clean",

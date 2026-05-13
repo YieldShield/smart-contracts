@@ -416,6 +416,24 @@ async function main() {
         process.exit(1);
     }
 
+    const factoryAddress = resolveContractAddress({
+        rootDir,
+        chainId,
+        contractName: "SplitRiskPoolFactory",
+    });
+    if (
+        factoryAddress &&
+        owner.toLowerCase() === factoryAddress.toLowerCase()
+    ) {
+        console.error(
+            "\n❌ PythOracle is owned by SplitRiskPoolFactory governance.",
+        );
+        console.error(
+            "Submit a governance proposal that calls factory.setPythTokenPriceFeed(...) or factory.setPythTokenCompositePriceFeed(...).",
+        );
+        process.exit(1);
+    }
+
     // Select keystore
     const selectedKeystore = await selectKeystore(keystoreName);
     console.log(`\n🔑 Using keystore: ${selectedKeystore}`);

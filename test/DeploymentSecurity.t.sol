@@ -197,7 +197,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertLt(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
     }
 
-    function test_ProductionProtocol_TransfersOwnershipToTimelock() public {
+    function test_ProductionProtocol_RoutesOracleOwnershipThroughFactoryGovernance() public {
         (, TimelockController timelock,) = _deployGovernance();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
@@ -208,19 +208,29 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         factory.setCompositeOracle(address(compositeOracle));
         factory.setDefaultProtocolFeeRecipient(address(timelock));
-        factory.finalizeBootstrap();
         compositeOracle.setAuthorizedCaller(address(factory), true);
 
+        compositeOracle.transferOwnership(address(factory));
+        pythOracle.transferOwnership(address(factory));
+        erc4626OracleFeed.transferOwnership(address(factory));
+        factory.setManagedPythOracle(address(pythOracle));
+        factory.setManagedERC4626OracleFeed(address(erc4626OracleFeed));
+        factory.finalizeBootstrap();
         factory.transferOwnership(address(timelock));
-        compositeOracle.transferOwnership(address(timelock));
-        pythOracle.transferOwnership(address(timelock));
-        erc4626OracleFeed.transferOwnership(address(timelock));
 
         assertEq(factory.owner(), address(timelock));
         assertFalse(factory.bootstrapModeEnabled());
-        assertEq(compositeOracle.owner(), address(timelock));
-        assertEq(pythOracle.owner(), address(timelock));
-        assertEq(erc4626OracleFeed.owner(), address(timelock));
+        assertEq(compositeOracle.owner(), address(factory));
+        assertEq(pythOracle.owner(), address(factory));
+        assertEq(erc4626OracleFeed.owner(), address(factory));
+        assertEq(factory.pythOracle(), address(pythOracle));
+        assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
+
+        bytes32 feedId = keccak256("feed");
+        address token = address(0xCAFE);
+        vm.prank(address(timelock));
+        factory.setPythTokenPriceFeed(token, feedId);
+        assertEq(pythOracle.tokenToPriceFeedId(token), feedId);
     }
 
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {

@@ -22,6 +22,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     error InvalidGovernanceTimelock(address candidate);
     error GovernanceTimelockDelayTooShort(address candidate, uint256 minDelay);
     error GovernanceTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
+    error GovernanceTimelockAdminRetained(address candidate, address retainedAdmin);
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
@@ -43,6 +44,7 @@ abstract contract ProtocolAccessControlUpgradeable is
 
     function __ProtocolAccessControl_init_unchained(address governanceTimelock_) internal onlyInitializing {
         _governanceTimelockCodehash = _validateGovernanceTimelock(governanceTimelock_, bytes32(0));
+        _validateKnownDefaultAdminCleared(governanceTimelock_, owner());
         _governanceTimelock = governanceTimelock_;
     }
 
@@ -61,6 +63,8 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @param newGovernance The address of the proposed new governance timelock
     function setGovernanceTimelock(address newGovernance) public virtual onlyGovernance {
         _validateGovernanceTimelock(newGovernance, _governanceTimelockImplementationHash());
+        _validateKnownDefaultAdminCleared(newGovernance, owner());
+        _validateKnownDefaultAdminCleared(newGovernance, _governanceTimelock);
         _pendingGovernanceTimelock = newGovernance;
         emit GovernanceTimelockTransferStarted(_governanceTimelock, newGovernance);
     }
@@ -70,6 +74,9 @@ abstract contract ProtocolAccessControlUpgradeable is
     function acceptGovernanceTimelock() public virtual {
         if (_pendingGovernanceTimelock == address(0)) revert NoPendingGovernance();
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
+        _validateGovernanceTimelock(_pendingGovernanceTimelock, _governanceTimelockImplementationHash());
+        _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
+        _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);
         address previousGovernance = _governanceTimelock;
         emit GovernanceTimelockUpdated(previousGovernance, _pendingGovernanceTimelock);
         _governanceTimelock = _pendingGovernanceTimelock;
@@ -116,6 +123,19 @@ abstract contract ProtocolAccessControlUpgradeable is
         codehash = _governanceTimelockCodehash;
         if (codehash == bytes32(0) && _governanceTimelock != address(0) && _governanceTimelock.code.length != 0) {
             codehash = _governanceTimelock.codehash;
+        }
+    }
+
+    function _validateKnownDefaultAdminCleared(address candidate, address retainedAdmin) internal view {
+        if (_isLocalDevelopmentChain() || retainedAdmin == address(0) || retainedAdmin == candidate) {
+            return;
+        }
+
+        (bool success, bytes memory data) =
+            candidate.staticcall(abi.encodeWithSelector(HAS_ROLE_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE, retainedAdmin));
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+        if (abi.decode(data, (bool))) {
+            revert GovernanceTimelockAdminRetained(candidate, retainedAdmin);
         }
     }
 

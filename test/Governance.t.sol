@@ -119,6 +119,43 @@ contract FakeSelfAdminTimelock {
     }
 }
 
+contract MutableGovernanceTimelock {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    uint256 private _minDelay;
+
+    constructor(uint256 minDelay, address[] memory extraAdmins) {
+        _minDelay = minDelay;
+        _roles[bytes32(0)][address(this)] = true;
+
+        uint256 extraAdminCount = extraAdmins.length;
+        for (uint256 i = 0; i < extraAdminCount; i++) {
+            _roles[bytes32(0)][extraAdmins[i]] = true;
+        }
+    }
+
+    function getMinDelay() external view returns (uint256) {
+        return _minDelay;
+    }
+
+    function hasRole(bytes32 role, address account) external view returns (bool) {
+        return _roles[role][account];
+    }
+
+    function setMinDelay(uint256 newMinDelay) external {
+        _minDelay = newMinDelay;
+    }
+
+    function setDefaultAdmin(address account, bool enabled) external {
+        _roles[bytes32(0)][account] = enabled;
+    }
+}
+
+contract ProtocolAccessControlHarness is ProtocolAccessControlUpgradeable {
+    function initializeHarness(address initialOwner, address governanceTimelock_) external initializer {
+        __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
+    }
+}
+
 // ============================================================
 // YSGovernor Tests
 // ============================================================
@@ -497,6 +534,27 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         new ERC1967Proxy(address(implementation), initData);
     }
 
+    function test_Initialize_RevertsForPublicTimelockRetainingOwnerAdmin() public {
+        vm.chainId(421614);
+
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
+        address[] memory emptyAddrs = new address[](0);
+        TimelockController unsafeTimelock = new TimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPoolFactory.initialize.selector, deployer, address(unsafeTimelock), address(poolImpl)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                address(unsafeTimelock),
+                deployer
+            )
+        );
+        new ERC1967Proxy(address(implementation), initData);
+    }
+
     function test_SetGovernanceTimelock_RevertsForZeroDelayTimelock() public {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
@@ -510,6 +568,27 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         );
         vm.prank(address(timelock));
         factory.setGovernanceTimelock(address(zeroDelayTimelock));
+    }
+
+    function test_SetGovernanceTimelock_RevertsForPublicTimelockRetainingPriorGovernanceAdmin() public {
+        vm.chainId(421614);
+
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+        address[] memory emptyAddrs = new address[](0);
+        TimelockController unsafeTimelock = new TimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+        unsafeTimelock.grantRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), address(timelock));
+        unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                address(unsafeTimelock),
+                address(timelock)
+            )
+        );
+        vm.prank(address(timelock));
+        factory.setGovernanceTimelock(address(unsafeTimelock));
     }
 
     function test_Execute_RevertsWithoutQueue() public {
@@ -527,5 +606,57 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         // The _executor() function is internal, but we can verify that
         // the timelock address is correct by checking the governor's timelock
         assertEq(address(governor.timelock()), address(timelock));
+    }
+}
+
+contract ProtocolAccessControlUpgradeableTest is Test {
+    function test_AcceptGovernanceTimelock_RevalidatesPendingDelayOnPublicChains() public {
+        vm.chainId(421614);
+
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+
+        replacementGovernance.setMinDelay(0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooShort.selector,
+                address(replacementGovernance),
+                0
+            )
+        );
+        vm.prank(address(replacementGovernance));
+        harness.acceptGovernanceTimelock();
+    }
+
+    function test_AcceptGovernanceTimelock_RevalidatesPendingOwnerAdminOnPublicChains() public {
+        vm.chainId(421614);
+
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+
+        replacementGovernance.setDefaultAdmin(address(this), true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                address(replacementGovernance),
+                address(this)
+            )
+        );
+        vm.prank(address(replacementGovernance));
+        harness.acceptGovernanceTimelock();
     }
 }

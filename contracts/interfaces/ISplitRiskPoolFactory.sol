@@ -29,6 +29,8 @@ interface ISplitRiskPoolFactory {
     function governanceTimelock() external view returns (address);
     function splitRiskPoolImplementation() external view returns (address);
     function compositeOracle() external view returns (address);
+    function pythOracle() external view returns (address);
+    function erc4626OracleFeed() external view returns (address);
     function defaultProtocolFeeRecipient() external view returns (address);
     function whitelistedTokens(uint256 index) external view returns (address);
     function isWhitelisted(address token) external view returns (bool);
@@ -95,6 +97,22 @@ interface ISplitRiskPoolFactory {
     function finalizeBootstrap() external;
     function setCompositeOracle(address newOracle) external;
     function setDefaultProtocolFeeRecipient(address newRecipient) external;
+    function setManagedPythOracle(address newOracle) external;
+    function setManagedERC4626OracleFeed(address newOracle) external;
+    function transferManagedOracleOwnership(address oracle, address newOwner) external;
+    function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external;
+    function setCompositeOracleDeviationThreshold(uint256 newThresholdBps) external;
+    function setCompositeOracleChallengeDuration(uint256 newDurationSec) external;
+    function setPythTokenPriceFeed(address token, bytes32 feedId) external;
+    function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
+    function removePythToken(address token) external;
+    function setPythMaxPriceAge(uint256 maxPriceAge) external;
+    function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external;
+    function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external;
+    function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external;
+    function registerERC4626Vault(address vault, address underlying) external;
+    function refreshERC4626VaultSharePriceReference(address vault) external;
+    function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
 
     // Owner Functions (initial deployment only)
     function addTokenInitial(

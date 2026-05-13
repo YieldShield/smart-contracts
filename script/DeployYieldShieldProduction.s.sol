@@ -148,19 +148,23 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         );
         factory.setCompositeOracle(compositeOracleAddr);
         factory.setDefaultProtocolFeeRecipient(timelockAddr);
-        factory.finalizeBootstrap();
         compositeOracle.setAuthorizedCaller(factoryAddr, true);
 
+        compositeOracle.transferOwnership(factoryAddr);
+        pythOracle.transferOwnership(factoryAddr);
+        erc4626OracleFeed.transferOwnership(factoryAddr);
+        factory.setManagedPythOracle(pythOracleAddr);
+        factory.setManagedERC4626OracleFeed(erc4626OracleFeedAddr);
+        factory.finalizeBootstrap();
         factory.transferOwnership(timelockAddr);
-        compositeOracle.transferOwnership(timelockAddr);
-        pythOracle.transferOwnership(timelockAddr);
-        erc4626OracleFeed.transferOwnership(timelockAddr);
 
         require(factory.owner() == timelockAddr, "Factory owner not transferred");
         require(!factory.bootstrapModeEnabled(), "Factory bootstrap mode not finalized");
-        require(compositeOracle.owner() == timelockAddr, "Composite oracle owner not transferred");
-        require(pythOracle.owner() == timelockAddr, "Pyth oracle owner not transferred");
-        require(erc4626OracleFeed.owner() == timelockAddr, "ERC4626 oracle owner not transferred");
+        require(compositeOracle.owner() == factoryAddr, "Composite oracle owner not transferred");
+        require(pythOracle.owner() == factoryAddr, "Pyth oracle owner not transferred");
+        require(erc4626OracleFeed.owner() == factoryAddr, "ERC4626 oracle owner not transferred");
+        require(factory.pythOracle() == pythOracleAddr, "Factory Pyth oracle not registered");
+        require(factory.erc4626OracleFeed() == erc4626OracleFeedAddr, "Factory ERC4626 oracle not registered");
 
         deployments.push(Deployment("PythOracle", pythOracleAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
