@@ -17,7 +17,7 @@
 const { ethers } = require("ethers");
 const { existsSync, readdirSync } = require("fs");
 const { join } = require("path");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const readline = require("readline");
 const {
     getDeploymentFilePath,
@@ -26,6 +26,9 @@ const {
 } = require("./pyth-token-registry.cjs");
 
 require("dotenv").config({ path: join(__dirname, "..", ".env") });
+
+const DEFAULT_KEYSTORE_ACCOUNT = "scaffold-eth-default";
+const KEYSTORE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 
 /**
  * Get Oracle address from the deployment file for the active chain
@@ -56,15 +59,34 @@ function resolveRpcUrl(cliRpcUrl) {
         return process.env.RPC_URL;
     }
 
-    if (process.env.ARBITRUM_SEPOLIA_RPC_URL) {
-        return process.env.ARBITRUM_SEPOLIA_RPC_URL;
-    }
-
-    if (process.env.ALCHEMY_API_KEY) {
-        return `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    }
-
     return null;
+}
+
+function isValidKeystoreName(keystoreName) {
+    return (
+        typeof keystoreName === "string" &&
+        keystoreName.length > 0 &&
+        KEYSTORE_NAME_PATTERN.test(keystoreName)
+    );
+}
+
+function runCast(args, stdio = ["pipe", "pipe", "pipe"]) {
+    const result = spawnSync("cast", args, {
+        encoding: "utf-8",
+        stdio,
+    });
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    if (result.status !== 0) {
+        throw new Error(
+            (result.stderr || result.stdout || "Unknown cast error").trim(),
+        );
+    }
+
+    return result.stdout.trim();
 }
 
 /**
@@ -102,7 +124,9 @@ function listFoundryKeystores() {
     }
 
     const keystores = readdirSync(keystorePath).filter(
-        (keystore) => keystore !== "scaffold-eth-default",
+        (keystore) =>
+            keystore !== DEFAULT_KEYSTORE_ACCOUNT &&
+            isValidKeystoreName(keystore),
     );
 
     if (keystores.length === 0) {
@@ -121,6 +145,11 @@ async function selectKeystore(keystoreName) {
     const keystores = listFoundryKeystores();
 
     if (keystoreName) {
+        if (!isValidKeystoreName(keystoreName)) {
+            throw new Error(
+                "Invalid keystore name. Use letters, numbers, dots, underscores, or hyphens only.",
+            );
+        }
         if (keystores.includes(keystoreName)) {
             return keystoreName;
         }
@@ -157,15 +186,14 @@ async function selectKeystore(keystoreName) {
  * Get address for a Foundry keystore using cast
  */
 function getKeystoreAddress(keystoreName) {
+    if (!isValidKeystoreName(keystoreName)) {
+        throw new Error(
+            "Invalid keystore name. Use letters, numbers, dots, underscores, or hyphens only.",
+        );
+    }
+
     try {
-        const address = execSync(
-            `cast wallet address --account ${keystoreName}`,
-            {
-                encoding: "utf-8",
-                stdio: ["pipe", "pipe", "pipe"],
-            },
-        ).trim();
-        return address;
+        return runCast(["wallet", "address", "--account", keystoreName]);
     } catch (error) {
         throw new Error(
             `Failed to get address for keystore ${keystoreName}: ${error.message}`,
@@ -215,16 +243,20 @@ async function configureToken(
         const signature = hasQuoteFeed
             ? "setTokenCompositePriceFeed(address,bytes32,bytes32)"
             : "setTokenPriceFeed(address,bytes32)";
-        const args = hasQuoteFeed
-            ? `${tokenAddress} ${feedId} ${quoteFeedId}`
-            : `${tokenAddress} ${feedId}`;
-        const cmd = `cast send ${oracleAddress} "${signature}" ${args} --account ${keystoreName} --rpc-url "${rpcUrl}"`;
-
         console.log(`    Sending transaction...`);
-        const output = execSync(cmd, {
-            encoding: "utf-8",
-            stdio: ["inherit", "pipe", "pipe"],
-        });
+        const castArgs = [
+            "send",
+            oracleAddress,
+            signature,
+            tokenAddress,
+            feedId,
+        ];
+        if (hasQuoteFeed) {
+            castArgs.push(quoteFeedId);
+        }
+        castArgs.push("--account", keystoreName, "--rpc-url", rpcUrl);
+
+        const output = runCast(castArgs, ["inherit", "pipe", "pipe"]);
 
         // Extract transaction hash from output
         const txHashMatch = output.match(/transactionHash\s+(0x[a-fA-F0-9]+)/);

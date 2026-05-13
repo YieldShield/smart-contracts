@@ -20,14 +20,19 @@ fork: setup-anvil-wallet
 deploy:
 	@if [ ! -f "$(DEPLOY_SCRIPT)" ]; then 		echo "Error: Deploy script '$(DEPLOY_SCRIPT)' not found"; 		exit 1; 	fi
 	@if [ -z "$(ETH_KEYSTORE_ACCOUNT)" ]; then 		echo "Error: ETH_KEYSTORE_ACCOUNT is required"; 		exit 1; 	fi
+	@if [ "$(RPC_URL)" != "localhost" ] && [ "$(ETH_KEYSTORE_ACCOUNT)" = "scaffold-eth-default" ]; then 		echo "Error: scaffold-eth-default is reserved for localhost deployments only"; 		exit 1; 	fi
+	@if [ "$(RPC_URL)" != "localhost" ] && [ "$(DEPLOY_SCRIPT)" = "script/Deploy.s.sol" ]; then 		echo "Error: script/Deploy.s.sol is a localhost-only deployment entrypoint"; 		exit 1; 	fi
 	@if [ "$(RPC_URL)" = "localhost" ]; then 		if [ "$(ETH_KEYSTORE_ACCOUNT)" = "scaffold-eth-default" ]; then 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --private-key $(LOCALHOST_ANVIL_PRIVATE_KEY) --broadcast --legacy; 		else 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --legacy; 		fi 	else 		forge script "$(DEPLOY_SCRIPT)" --rpc-url "$(RPC_URL)" --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --gas-estimate-multiplier 200; 	fi
 
 # Deploy and generate ABIs
-deploy-and-generate-abis: deploy generate-abis 
+deploy-and-generate-abis: deploy
+	@DEPLOY_CHAIN_ID=$$(cast chain-id --rpc-url "$(RPC_URL)"); \
+		echo "Generating ABIs for chain $$DEPLOY_CHAIN_ID"; \
+		DEPLOY_CHAIN_ID="$$DEPLOY_CHAIN_ID" node scripts-js/generateTsAbis.js
 
 # Generate TypeScript ABIs
 generate-abis:
-	node scripts-js/generateTsAbis.js
+	DEPLOY_CHAIN_ID="$(DEPLOY_CHAIN_ID)" node scripts-js/generateTsAbis.js
 
 # List account
 account:

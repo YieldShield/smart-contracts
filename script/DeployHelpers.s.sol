@@ -78,28 +78,32 @@ contract ScaffoldETHDeploy is Script {
 
     function _readLatestBroadcast() internal view returns (bool found, string memory content) {
         string[3] memory paths = _broadcastPathCandidates();
+        uint256 latestModified;
+        string memory latestPath;
 
         for (uint256 i = 0; i < paths.length; i++) {
-            try vm.readFile(paths[i]) returns (string memory broadcastJson) {
-                return (true, broadcastJson);
+            try vm.fsMetadata(paths[i]) returns (Vm.FsMetadata memory metadata) {
+                if (!metadata.isDir && metadata.length > 0 && metadata.modified >= latestModified) {
+                    latestModified = metadata.modified;
+                    latestPath = paths[i];
+                }
             } catch { }
         }
 
-        return (false, "");
+        if (bytes(latestPath).length == 0) {
+            return (false, "");
+        }
+
+        return (true, vm.readFile(latestPath));
     }
 
     function exportDeployments() internal {
-        // fetch already existing contracts
         root = vm.projectRoot();
         path = string.concat(root, "/deployments/");
         string memory chainIdStr = vm.toString(block.chainid);
         path = string.concat(path, string.concat(chainIdStr, ".json"));
 
         string memory jsonObjectKey = string.concat("deployment-export-", chainIdStr, "-", vm.toString(gasleft()));
-
-        try vm.readFile(path) returns (string memory existingJson) {
-            _mergeExistingDeploymentEntries(jsonObjectKey, existingJson);
-        } catch { }
 
         _serializeCurrentDeployments(jsonObjectKey);
 
@@ -112,23 +116,6 @@ contract ScaffoldETHDeploy is Script {
         }
         string memory jsonWrite = vm.serializeString(jsonObjectKey, "networkName", chainName);
         vm.writeFile(path, jsonWrite);
-    }
-
-    function _mergeExistingDeploymentEntries(string memory jsonObjectKey, string memory existingJson) internal {
-        try vm.parseJsonKeys(existingJson, ".") returns (string[] memory keys) {
-            for (uint256 i = 0; i < keys.length; i++) {
-                if (keccak256(bytes(keys[i])) == keccak256(bytes("networkName"))) {
-                    continue;
-                }
-
-                try vm.parseJsonString(existingJson, string.concat(".", keys[i])) returns (string memory value) {
-                    if (_isShadowedByCurrentDeployment(value, keys[i])) {
-                        continue;
-                    }
-                    vm.serializeString(jsonObjectKey, keys[i], value);
-                } catch { }
-            }
-        } catch { }
     }
 
     function _serializeCurrentDeployments(string memory jsonObjectKey) internal {
@@ -197,20 +184,20 @@ contract ScaffoldETHDeploy is Script {
     }
 
     function _resolveDeploymentAddresses(string memory contractName) internal view returns (address[] memory) {
-        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
-        if (foundBroadcast) {
-            address[] memory broadcastAddresses = _getAllAddressesFromBroadcast(broadcastJson, contractName);
-            if (broadcastAddresses.length > 0) {
-                return broadcastAddresses;
+        (bool foundDeployment, string memory deploymentJson) = _readDeploymentFile();
+        if (foundDeployment) {
+            address[] memory deploymentAddresses = _findAllAddressesByName(deploymentJson, contractName);
+            if (deploymentAddresses.length > 0) {
+                return deploymentAddresses;
             }
         }
 
-        (bool foundDeployment, string memory deploymentJson) = _readDeploymentFile();
-        if (!foundDeployment) {
+        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
+        if (!foundBroadcast) {
             return new address[](0);
         }
 
-        return _findAllAddressesByName(deploymentJson, contractName);
+        return _getAllAddressesFromBroadcast(broadcastJson, contractName);
     }
 
     function _resolveFactoryAddress() internal view returns (address) {

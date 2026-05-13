@@ -22,6 +22,9 @@ const {
 // __dirname is automatically available in CommonJS
 require("dotenv").config({ path: join(__dirname, "..", ".env") });
 
+const DEFAULT_KEYSTORE_ACCOUNT = "scaffold-eth-default";
+const KEYSTORE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
+
 /**
  * Get Oracle address from the deployment file for the active chain
  */
@@ -51,15 +54,15 @@ function resolveRpcUrl(cliRpcUrl) {
         return process.env.RPC_URL;
     }
 
-    if (process.env.ARBITRUM_SEPOLIA_RPC_URL) {
-        return process.env.ARBITRUM_SEPOLIA_RPC_URL;
-    }
-
-    if (process.env.ALCHEMY_API_KEY) {
-        return `https://arb-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    }
-
     return null;
+}
+
+function isValidKeystoreName(keystoreName) {
+    return (
+        typeof keystoreName === "string" &&
+        keystoreName.length > 0 &&
+        KEYSTORE_NAME_PATTERN.test(keystoreName)
+    );
 }
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
@@ -76,7 +79,9 @@ function listKeystores() {
     }
 
     return readdirSync(keystorePath).filter(
-        (keystore) => keystore !== "scaffold-eth-default",
+        (keystore) =>
+            keystore !== DEFAULT_KEYSTORE_ACCOUNT &&
+            isValidKeystoreName(keystore),
     );
 }
 
@@ -430,9 +435,6 @@ async function main() {
         console.error("Options:");
         console.error("  1. Set RPC_URL in .env");
         console.error("  2. Pass --rpcUrl <URL> as argument");
-        console.error(
-            "  3. Or set ALCHEMY_API_KEY for the Arbitrum Sepolia fallback",
-        );
         process.exit(1);
     }
 
@@ -451,6 +453,11 @@ async function main() {
             console.error("\n❌ Error selecting keystore:", error.message);
             process.exit(1);
         }
+    } else if (!isValidKeystoreName(selectedKeystore)) {
+        console.error(
+            "\n❌ Invalid keystore name. Use letters, numbers, dots, underscores, or hyphens only.",
+        );
+        process.exit(1);
     }
 
     console.log(`\n🔓 Unlocking keystore: ${selectedKeystore}`);

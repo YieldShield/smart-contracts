@@ -1,5 +1,5 @@
 import { listKeystores } from "./listKeystores.js";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import dotenv from "dotenv";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -7,6 +7,7 @@ import { toString } from "qrcode";
 import { readFileSync } from "fs";
 import { parse } from "toml";
 import { ethers } from "ethers";
+import { isValidKeystoreName } from "./foundryKeystore.js";
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
@@ -14,6 +15,35 @@ const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, "..", ".env") });
+
+function getKeystoreAddress(keystoreName) {
+    if (!isValidKeystoreName(keystoreName)) {
+        throw new Error(
+            "Invalid keystore name. Use letters, numbers, dots, underscores, or hyphens only.",
+        );
+    }
+
+    const result = spawnSync(
+        "cast",
+        ["wallet", "address", "--account", keystoreName],
+        {
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+        },
+    );
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    if (result.status !== 0) {
+        throw new Error(
+            (result.stderr || result.stdout || "Unknown cast error").trim(),
+        );
+    }
+
+    return result.stdout.trim();
+}
 
 async function getBalanceForEachNetwork(address) {
     try {
@@ -92,11 +122,10 @@ async function checkAccountBalance() {
 
         // Step 2: Get the address of the selected account
         console.log(`\n🔍 Getting address for keystore: ${selectedKeystore}`);
-        const addressCommand = `cast wallet address --account ${selectedKeystore}`;
 
         let address;
         try {
-            address = execSync(addressCommand).toString().trim();
+            address = getKeystoreAddress(selectedKeystore);
             console.log("\n💰 Checking balances across networks...");
             console.log("\n");
             await getBalanceForEachNetwork(address);

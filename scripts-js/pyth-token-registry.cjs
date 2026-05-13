@@ -124,52 +124,65 @@ function getDeploymentFilePath(rootDir, chainId) {
     return join(rootDir, "deployments", `${normalizedChainId}.json`);
 }
 
-function readDeployment(rootDir, chainId) {
-    const deploymentPath = getDeploymentFilePath(rootDir, chainId);
-    if (!deploymentPath || !existsSync(deploymentPath)) {
+function readJsonFileRecord(filePath) {
+    if (!filePath || !existsSync(filePath)) {
         return null;
     }
 
-    return JSON.parse(readFileSync(deploymentPath, "utf8"));
+    return {
+        path: filePath,
+        mtimeMs: statSync(filePath).mtimeMs,
+        data: JSON.parse(readFileSync(filePath, "utf8")),
+    };
+}
+
+function readDeploymentRecord(rootDir, chainId) {
+    const deploymentPath = getDeploymentFilePath(rootDir, chainId);
+    return readJsonFileRecord(deploymentPath);
+}
+
+function readDeployment(rootDir, chainId) {
+    return readDeploymentRecord(rootDir, chainId)?.data || null;
+}
+
+function listLatestBroadcastRecords(rootDir, chainId) {
+    const normalizedChainId = normalizeChainId(chainId);
+    if (!normalizedChainId) {
+        return [];
+    }
+
+    const broadcastDir = join(rootDir, "broadcast");
+    if (!existsSync(broadcastDir)) {
+        return [];
+    }
+
+    return readdirSync(broadcastDir)
+        .map((scriptName) =>
+            readJsonFileRecord(
+                join(
+                    broadcastDir,
+                    scriptName,
+                    normalizedChainId,
+                    "run-latest.json",
+                ),
+            ),
+        )
+        .filter(Boolean)
+        .sort((a, b) => {
+            if (b.mtimeMs !== a.mtimeMs) {
+                return b.mtimeMs - a.mtimeMs;
+            }
+
+            return a.path.localeCompare(b.path);
+        });
+}
+
+function readLatestBroadcastRecord(rootDir, chainId) {
+    return listLatestBroadcastRecords(rootDir, chainId)[0] || null;
 }
 
 function readLatestBroadcast(rootDir, chainId) {
-    const normalizedChainId = normalizeChainId(chainId);
-    if (!normalizedChainId) {
-        return null;
-    }
-
-    const candidates = [
-        join(
-            rootDir,
-            "broadcast",
-            "DeployYieldShieldProduction.s.sol",
-            normalizedChainId,
-            "run-latest.json",
-        ),
-        join(
-            rootDir,
-            "broadcast",
-            "DeployYieldShield.s.sol",
-            normalizedChainId,
-            "run-latest.json",
-        ),
-        join(
-            rootDir,
-            "broadcast",
-            "Deploy.s.sol",
-            normalizedChainId,
-            "run-latest.json",
-        ),
-    ];
-
-    for (const candidate of candidates) {
-        if (existsSync(candidate)) {
-            return JSON.parse(readFileSync(candidate, "utf8"));
-        }
-    }
-
-    return null;
+    return readLatestBroadcastRecord(rootDir, chainId)?.data || null;
 }
 
 function getDeploymentAddresses(deploymentData, contractName) {
@@ -217,7 +230,7 @@ function getBroadcastAddresses(broadcast, contractName) {
     return addresses;
 }
 
-function getLatestDeploymentChainId(rootDir) {
+function getLatestDeploymentRecord(rootDir) {
     const deploymentsDir = join(rootDir, "deployments");
     if (!existsSync(deploymentsDir)) {
         return null;
@@ -235,7 +248,70 @@ function getLatestDeploymentChainId(rootDir) {
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-    return chainFiles[0]?.chainId || null;
+    return chainFiles[0] || null;
+}
+
+function getLatestDeploymentChainId(rootDir) {
+    return getLatestDeploymentRecord(rootDir)?.chainId || null;
+}
+
+function getLatestBroadcastRecord(rootDir) {
+    const broadcastDir = join(rootDir, "broadcast");
+    if (!existsSync(broadcastDir)) {
+        return null;
+    }
+
+    let latestRecord = null;
+    for (const scriptName of readdirSync(broadcastDir)) {
+        const scriptDir = join(broadcastDir, scriptName);
+        if (!statSync(scriptDir).isDirectory()) {
+            continue;
+        }
+
+        for (const chainId of readdirSync(scriptDir)) {
+            const candidate = readJsonFileRecord(
+                join(scriptDir, chainId, "run-latest.json"),
+            );
+            if (!candidate) {
+                continue;
+            }
+
+            const record = { ...candidate, chainId };
+            if (
+                !latestRecord ||
+                record.mtimeMs > latestRecord.mtimeMs ||
+                (record.mtimeMs === latestRecord.mtimeMs &&
+                    record.path.localeCompare(latestRecord.path) < 0)
+            ) {
+                latestRecord = record;
+            }
+        }
+    }
+
+    return latestRecord;
+}
+
+function getLatestBroadcastChainId(rootDir) {
+    return getLatestBroadcastRecord(rootDir)?.chainId || null;
+}
+
+function getLatestKnownChainId(rootDir) {
+    const latestDeployment = getLatestDeploymentRecord(rootDir);
+    const latestBroadcast = getLatestBroadcastRecord(rootDir);
+
+    if (!latestDeployment) {
+        return latestBroadcast?.chainId || null;
+    }
+
+    if (!latestBroadcast) {
+        return latestDeployment.chainId;
+    }
+
+    if (latestBroadcast.mtimeMs > latestDeployment.mtimeMs) {
+        return latestBroadcast.chainId;
+    }
+
+    return latestDeployment.chainId;
 }
 
 function resolveDeploymentChainId({
@@ -243,12 +319,14 @@ function resolveDeploymentChainId({
     chainId,
     env = process.env,
 } = {}) {
-    const explicitChainId = normalizeChainId(chainId || env.CHAIN_ID);
+    const explicitChainId = normalizeChainId(
+        chainId || env.DEPLOY_CHAIN_ID || env.CHAIN_ID,
+    );
     if (explicitChainId) {
         return explicitChainId;
     }
 
-    return rootDir ? getLatestDeploymentChainId(rootDir) : null;
+    return rootDir ? getLatestKnownChainId(rootDir) : null;
 }
 
 function resolveContractAddress({
@@ -266,34 +344,46 @@ function resolveContractAddress({
         return null;
     }
 
-    const deploymentData = readDeployment(rootDir, resolvedChainId);
+    const deploymentRecord = readDeploymentRecord(rootDir, resolvedChainId);
+    const deploymentData = deploymentRecord?.data || null;
     const deploymentAddresses = getDeploymentAddresses(
         deploymentData,
         contractName,
     );
-    if (deploymentAddresses.length > 0) {
-        return deploymentAddresses[0];
-    }
+    const latestDeploymentAddress =
+        deploymentAddresses[deploymentAddresses.length - 1] || null;
 
-    const broadcast = readLatestBroadcast(rootDir, resolvedChainId);
+    const broadcastRecord = readLatestBroadcastRecord(rootDir, resolvedChainId);
+    const broadcast = broadcastRecord?.data || null;
     const broadcastAddresses = getBroadcastAddresses(broadcast, contractName);
-    if (broadcastAddresses.length > 0) {
-        return broadcastAddresses[broadcastAddresses.length - 1];
+    const latestBroadcastAddress =
+        broadcastAddresses[broadcastAddresses.length - 1] || null;
+
+    if (latestBroadcastAddress && latestDeploymentAddress) {
+        return broadcastRecord.mtimeMs >= deploymentRecord.mtimeMs
+            ? latestBroadcastAddress
+            : latestDeploymentAddress;
     }
 
-    return null;
+    return latestBroadcastAddress || latestDeploymentAddress || null;
 }
 
 function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
     const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
-    const deploymentData =
+    const deploymentRecord =
         rootDir && resolvedChainId
-            ? readDeployment(rootDir, resolvedChainId)
+            ? readDeploymentRecord(rootDir, resolvedChainId)
             : null;
-    const broadcast =
+    const deploymentData = deploymentRecord?.data || null;
+    const broadcastRecord =
         rootDir && resolvedChainId
-            ? readLatestBroadcast(rootDir, resolvedChainId)
+            ? readLatestBroadcastRecord(rootDir, resolvedChainId)
             : null;
+    const broadcast = broadcastRecord?.data || null;
+    const preferDeployment =
+        deploymentRecord &&
+        (!broadcastRecord ||
+            deploymentRecord.mtimeMs > broadcastRecord.mtimeMs);
 
     return PYTH_TOKEN_CONFIGS.map((config) => {
         const deploymentAddress = getDeploymentAddresses(
@@ -308,9 +398,10 @@ function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
             ...config,
             chainId: resolvedChainId,
             address:
+                (preferDeployment
+                    ? deploymentAddress || broadcastAddress
+                    : broadcastAddress || deploymentAddress) ||
                 env[config.env] ||
-                broadcastAddress ||
-                deploymentAddress ||
                 null,
         };
     });
@@ -320,6 +411,8 @@ module.exports = {
     PYTH_TOKEN_CONFIGS,
     getDeploymentAddresses,
     getDeploymentFilePath,
+    getLatestBroadcastChainId,
+    getLatestKnownChainId,
     readDeployment,
     readLatestBroadcast,
     resolveContractAddress,

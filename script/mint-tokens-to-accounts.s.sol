@@ -15,6 +15,8 @@ import { YSToken } from "../contracts/YSToken.sol";
  * Usage: forge script script/mint-tokens-to-accounts.s.sol:MintTokensToAccounts --rpc-url localhost --broadcast --legacy
  */
 contract MintTokensToAccounts is ScaffoldETHDeploy {
+    error LocalChainRequired(uint256 chainId);
+
     // Anvil default accounts (0-9)
     address[10] public accounts = [
         0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, // Account #0 - Governance Participant
@@ -38,6 +40,10 @@ contract MintTokensToAccounts is ScaffoldETHDeploy {
     uint256 constant YS_STANDARD_AMOUNT = 10000e18; // 10k YS tokens for non-governance participants
 
     function run() external ScaffoldEthDeployerRunner {
+        if (block.chainid != 31337 && block.chainid != 1337) {
+            revert LocalChainRequired(block.chainid);
+        }
+
         console.log("\n=== Distributing Tokens to Accounts ===");
 
         // Get token addresses

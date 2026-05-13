@@ -28,7 +28,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant PRUNE_TEST_CHAIN_ID = 777_777_779;
     uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
 
-    function test_exportDeployments_PreservesExistingProtocolEntriesWhenFinalizingGovernance() public {
+    function test_exportDeployments_RewritesDeploymentFileFromCurrentRunOnly() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);
         address factory = address(0x1111);
         address compositeOracle = address(0x2222);
@@ -43,8 +43,8 @@ contract DeploymentMetadataTest is Test {
         deployHelpers.exportDeploymentsHarness();
 
         string memory exportedJson = vm.readFile(deploymentPath);
-        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(factory))), "SplitRiskPoolFactory");
-        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(compositeOracle))), "CompositeOracle");
+        assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(factory))));
+        assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(compositeOracle))));
         assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(governor))), "YSGovernor");
         assertEq(vm.parseJsonString(exportedJson, ".networkName"), "chain-777777777");
 
@@ -87,7 +87,7 @@ contract DeploymentMetadataTest is Test {
         assertEq(
             vm.parseJsonString(exportedJson, string.concat(".", vm.toString(currentFactory))), "SplitRiskPoolFactory"
         );
-        assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(compositeOracle))), "CompositeOracle");
+        assertFalse(vm.keyExistsJson(exportedJson, string.concat(".", vm.toString(compositeOracle))));
 
         _removeDeploymentFileIfPresent(deploymentPath);
     }

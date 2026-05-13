@@ -34,6 +34,20 @@ function getFiles(path) {
     });
 }
 
+function normalizeChainId(chainId) {
+    if (chainId === undefined || chainId === null || chainId === "") {
+        return null;
+    }
+
+    return String(chainId);
+}
+
+function getExplicitTargetChainId() {
+    return normalizeChainId(
+        process.env.DEPLOY_CHAIN_ID || process.env.CHAIN_ID,
+    );
+}
+
 function parseTransactionAndReceiptRun(filePath) {
     try {
         const content = readFileSync(filePath, "utf8");
@@ -188,6 +202,60 @@ function getLatestRunDeployments(broadcastPath) {
     });
 
     return Array.from(latestDeployments.values());
+}
+
+function getChainActivity(broadcastPath, deploymentsPath) {
+    const chainActivity = new Map();
+
+    if (existsSync(deploymentsPath)) {
+        for (const fileName of getFiles(deploymentsPath)) {
+            if (!fileName.endsWith(".json")) {
+                continue;
+            }
+
+            const chainId = fileName.replace(/\.json$/, "");
+            const mtimeMs = statSync(join(deploymentsPath, fileName)).mtimeMs;
+            const current = chainActivity.get(chainId) || 0;
+            chainActivity.set(chainId, Math.max(current, mtimeMs));
+        }
+    }
+
+    for (const scriptFolder of getDirectories(broadcastPath)) {
+        const scriptPath = join(broadcastPath, scriptFolder);
+        for (const chainId of getDirectories(scriptPath)) {
+            const runLatestPath = join(scriptPath, chainId, "run-latest.json");
+            if (!existsSync(runLatestPath)) {
+                continue;
+            }
+
+            const mtimeMs = statSync(runLatestPath).mtimeMs;
+            const current = chainActivity.get(chainId) || 0;
+            chainActivity.set(chainId, Math.max(current, mtimeMs));
+        }
+    }
+
+    return chainActivity;
+}
+
+function sortChainIdsForSelection(chainIds, chainActivity, explicitChainId) {
+    return [...chainIds].sort((a, b) => {
+        if (explicitChainId) {
+            if (a === explicitChainId) return -1;
+            if (b === explicitChainId) return 1;
+        }
+
+        const activityDelta =
+            (chainActivity.get(b) || 0) - (chainActivity.get(a) || 0);
+        if (activityDelta !== 0) {
+            return activityDelta;
+        }
+
+        if (isLocalChain(a) !== isLocalChain(b)) {
+            return isLocalChain(a) ? 1 : -1;
+        }
+
+        return a.localeCompare(b);
+    });
 }
 
 function getArtifactOfContract(contractName) {
@@ -420,6 +488,11 @@ function updatePonderConfig(
 function main() {
     const current_path_to_broadcast = join(__dirname, "..", "broadcast");
     const current_path_to_deployments = join(__dirname, "..", "deployments");
+    const explicitTargetChainId = getExplicitTargetChainId();
+    const chainActivity = getChainActivity(
+        current_path_to_broadcast,
+        current_path_to_deployments,
+    );
 
     const Deploymentchains = getFiles(current_path_to_deployments);
     const deployments = {};
@@ -543,16 +616,13 @@ function main() {
         `📝 Updated TypeScript contract definition file on ${NEXTJS_TARGET_DIR}deployedContracts.ts`,
     );
 
-    // Update ponder.config.ts with factory and governor addresses
-    // Check all chain IDs, prioritizing non-localhost chains (421614 = Arbitrum Sepolia)
-    const chainIds = Object.keys(allGeneratedContracts).sort((a, b) => {
-        // Prioritize Arbitrum Sepolia (421614) over localhost (31337)
-        if (a === "421614") return -1;
-        if (b === "421614") return 1;
-        if (a === "31337") return 1;
-        if (b === "31337") return -1;
-        return 0;
-    });
+    // Update ponder.config.ts with the chain that was just deployed, or the
+    // most recently updated non-local deployment when no explicit target exists.
+    const chainIds = sortChainIdsForSelection(
+        Object.keys(allGeneratedContracts),
+        chainActivity,
+        explicitTargetChainId,
+    );
 
     let factoryAddress, governorAddress, governorBlock;
 

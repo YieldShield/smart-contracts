@@ -2,6 +2,10 @@ import { spawn } from "child_process";
 import { createInterface } from "readline";
 import { config } from "dotenv";
 import { stdin as input, stdout as output } from "process";
+import {
+    DEFAULT_KEYSTORE_ACCOUNT,
+    isValidKeystoreName,
+} from "./foundryKeystore.js";
 config();
 
 /**
@@ -41,10 +45,18 @@ async function importAccount() {
             }
         }
 
-        // Check if account name is scaffold-eth-default
-        if (accountName === "scaffold-eth-default") {
+        accountName = accountName.trim();
+
+        if (accountName === DEFAULT_KEYSTORE_ACCOUNT) {
             console.error(
-                "\n❌ Cannot use 'scaffold-eth-default' as account name. This is reserved for local development.",
+                `\n❌ Cannot use '${DEFAULT_KEYSTORE_ACCOUNT}' as account name. This is reserved for local development.`,
+            );
+            process.exit(1);
+        }
+
+        if (!isValidKeystoreName(accountName)) {
+            console.error(
+                "\n❌ Invalid account name. Use letters, numbers, dots, underscores, or hyphens only.",
             );
             process.exit(1);
         }
@@ -54,7 +66,6 @@ async function importAccount() {
             ["wallet", "import", accountName, "--interactive"],
             {
                 stdio: "inherit",
-                shell: true,
                 cwd: process.cwd(),
             },
         );

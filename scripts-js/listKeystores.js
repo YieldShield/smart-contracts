@@ -2,6 +2,10 @@ import { readdirSync } from "fs";
 import { join } from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
+import {
+    DEFAULT_KEYSTORE_ACCOUNT,
+    isValidKeystoreName,
+} from "./foundryKeystore.js";
 
 async function listKeystores(
     selectMessage = "Select a keystore (enter the number, e.g., 1):",
@@ -15,7 +19,9 @@ async function listKeystores(
 
     try {
         const keystores = readdirSync(keystorePath).filter(
-            (keystore) => keystore !== "scaffold-eth-default",
+            (keystore) =>
+                keystore !== DEFAULT_KEYSTORE_ACCOUNT &&
+                isValidKeystoreName(keystore),
         );
 
         if (keystores.length === 0) {
