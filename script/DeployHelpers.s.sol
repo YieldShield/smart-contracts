@@ -57,12 +57,19 @@ contract ScaffoldETHDeploy is Script {
         return string.concat(vm.projectRoot(), "/deployments/", vm.toString(block.chainid), ".json");
     }
 
-    function _readDeploymentFile() internal view returns (bool found, string memory content) {
-        try vm.readFile(_deploymentPath()) returns (string memory deploymentJson) {
-            return (true, deploymentJson);
+    function _readDeploymentRecord() internal view returns (bool found, string memory content, uint256 modifiedAt) {
+        string memory deploymentPath = _deploymentPath();
+        try vm.fsMetadata(deploymentPath) returns (Vm.FsMetadata memory metadata) {
+            if (!metadata.isDir && metadata.length > 0) {
+                return (true, vm.readFile(deploymentPath), metadata.modified);
+            }
         } catch { }
 
-        return (false, "");
+        return (false, "", 0);
+    }
+
+    function _readDeploymentFile() internal view returns (bool found, string memory content) {
+        (found, content,) = _readDeploymentRecord();
     }
 
     function _broadcastPathCandidates() internal view returns (string[3] memory paths) {
@@ -76,7 +83,11 @@ contract ScaffoldETHDeploy is Script {
         paths[2] = string.concat(projectRoot, "/broadcast/Deploy.s.sol/", chainId, "/run-latest.json");
     }
 
-    function _readLatestBroadcast() internal view returns (bool found, string memory content) {
+    function _readLatestBroadcastRecord()
+        internal
+        view
+        returns (bool found, string memory content, uint256 modifiedAt)
+    {
         string[3] memory paths = _broadcastPathCandidates();
         uint256 latestModified;
         string memory latestPath;
@@ -91,10 +102,14 @@ contract ScaffoldETHDeploy is Script {
         }
 
         if (bytes(latestPath).length == 0) {
-            return (false, "");
+            return (false, "", 0);
         }
 
-        return (true, vm.readFile(latestPath));
+        return (true, vm.readFile(latestPath), latestModified);
+    }
+
+    function _readLatestBroadcast() internal view returns (bool found, string memory content) {
+        (found, content,) = _readLatestBroadcastRecord();
     }
 
     function exportDeployments() internal {
@@ -143,83 +158,99 @@ contract ScaffoldETHDeploy is Script {
         return false;
     }
 
-    function _isShadowedByCurrentDeployment(string memory existingName, string memory existingAddressKey)
-        internal
-        view
-        returns (bool)
-    {
-        bytes32 existingNameHash = keccak256(bytes(existingName));
-        address existingAddr = address(0);
-
-        if (bytes(existingAddressKey).length == 42) {
-            try vm.parseAddress(existingAddressKey) returns (address parsedAddress) {
-                existingAddr = parsedAddress;
-            } catch { }
-        }
-
-        for (uint256 i = 0; i < deployments.length; i++) {
-            if (keccak256(bytes(deployments[i].name)) == existingNameHash || deployments[i].addr == existingAddr) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     function _resolveDeploymentAddress(string memory contractName) internal view returns (address) {
-        (bool foundDeployment, string memory deploymentJson) = _readDeploymentFile();
+        (bool foundDeployment, string memory deploymentJson, uint256 deploymentModifiedAt) = _readDeploymentRecord();
+        address deploymentAddr = address(0);
         if (foundDeployment) {
-            address deploymentAddr = _findAddressByName(deploymentJson, contractName);
-            if (deploymentAddr != address(0)) {
-                return deploymentAddr;
-            }
+            deploymentAddr = _findAddressByName(deploymentJson, contractName);
         }
 
-        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
-        if (!foundBroadcast) {
-            return address(0);
+        (bool foundBroadcast, string memory broadcastJson, uint256 broadcastModifiedAt) = _readLatestBroadcastRecord();
+        address broadcastAddr = address(0);
+        if (foundBroadcast) {
+            broadcastAddr = _getAddressFromBroadcast(broadcastJson, contractName);
         }
 
-        return _getAddressFromBroadcast(broadcastJson, contractName);
+        return _selectFreshestAddress(deploymentAddr, deploymentModifiedAt, broadcastAddr, broadcastModifiedAt);
     }
 
     function _resolveDeploymentAddresses(string memory contractName) internal view returns (address[] memory) {
-        (bool foundDeployment, string memory deploymentJson) = _readDeploymentFile();
+        (bool foundDeployment, string memory deploymentJson, uint256 deploymentModifiedAt) = _readDeploymentRecord();
+        address[] memory deploymentAddresses = new address[](0);
         if (foundDeployment) {
-            address[] memory deploymentAddresses = _findAllAddressesByName(deploymentJson, contractName);
-            if (deploymentAddresses.length > 0) {
-                return deploymentAddresses;
-            }
+            deploymentAddresses = _findAllAddressesByName(deploymentJson, contractName);
         }
 
-        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
-        if (!foundBroadcast) {
-            return new address[](0);
+        (bool foundBroadcast, string memory broadcastJson, uint256 broadcastModifiedAt) = _readLatestBroadcastRecord();
+        address[] memory broadcastAddresses = new address[](0);
+        if (foundBroadcast) {
+            broadcastAddresses = _getAllAddressesFromBroadcast(broadcastJson, contractName);
         }
 
-        return _getAllAddressesFromBroadcast(broadcastJson, contractName);
+        return _selectFreshestAddressList(
+            deploymentAddresses, deploymentModifiedAt, broadcastAddresses, broadcastModifiedAt
+        );
     }
 
     function _resolveFactoryAddress() internal view returns (address) {
-        (bool foundDeployment, string memory deploymentJson) = _readDeploymentFile();
+        (bool foundDeployment, string memory deploymentJson, uint256 deploymentModifiedAt) = _readDeploymentRecord();
+        address deploymentFactoryAddr = address(0);
         if (foundDeployment) {
-            address deploymentFactoryAddr = _findAddressByName(deploymentJson, "SplitRiskPoolFactory");
-            if (deploymentFactoryAddr != address(0)) {
-                return deploymentFactoryAddr;
-            }
+            deploymentFactoryAddr = _findAddressByName(deploymentJson, "SplitRiskPoolFactory");
         }
 
-        (bool foundBroadcast, string memory broadcastJson) = _readLatestBroadcast();
-        if (!foundBroadcast) {
-            return address(0);
+        (bool foundBroadcast, string memory broadcastJson, uint256 broadcastModifiedAt) = _readLatestBroadcastRecord();
+        address broadcastFactoryAddr = address(0);
+        if (foundBroadcast) {
+            broadcastFactoryAddr = _factoryAddressFromBroadcast(broadcastJson);
         }
 
-        address proxyAddr = _getAddressFromBroadcast(broadcastJson, "ERC1967Proxy");
+        return _selectFreshestAddress(
+            deploymentFactoryAddr, deploymentModifiedAt, broadcastFactoryAddr, broadcastModifiedAt
+        );
+    }
+
+    function _factoryAddressFromBroadcast(string memory content) internal pure returns (address) {
+        address proxyAddr = _getAddressFromBroadcast(content, "ERC1967Proxy");
         if (proxyAddr != address(0)) {
             return proxyAddr;
         }
 
-        return _getAddressFromBroadcast(broadcastJson, "SplitRiskPoolFactory");
+        return _getAddressFromBroadcast(content, "SplitRiskPoolFactory");
+    }
+
+    function _selectFreshestAddress(
+        address deploymentAddr,
+        uint256 deploymentModifiedAt,
+        address broadcastAddr,
+        uint256 broadcastModifiedAt
+    ) internal pure returns (address) {
+        if (deploymentAddr != address(0) && broadcastAddr != address(0)) {
+            return broadcastModifiedAt >= deploymentModifiedAt ? broadcastAddr : deploymentAddr;
+        }
+
+        if (deploymentAddr != address(0)) {
+            return deploymentAddr;
+        }
+
+        return broadcastAddr;
+    }
+
+    function _selectFreshestAddressList(
+        address[] memory deploymentAddresses,
+        uint256 deploymentModifiedAt,
+        address[] memory broadcastAddresses,
+        uint256 broadcastModifiedAt
+    ) internal pure returns (address[] memory) {
+        if (deploymentAddresses.length > 0 && broadcastAddresses.length > 0) {
+            return broadcastModifiedAt >= deploymentModifiedAt ? broadcastAddresses : deploymentAddresses;
+        }
+
+        if (deploymentAddresses.length > 0) {
+            return deploymentAddresses;
+        }
+
+        return broadcastAddresses;
     }
 
     function _getAddressFromBroadcast(string memory content, string memory contractName)
@@ -227,17 +258,16 @@ contract ScaffoldETHDeploy is Script {
         pure
         returns (address)
     {
-        uint96 idx = 0;
         address latestAddress = address(0);
+        uint256 transactionCount = _broadcastTransactionCount(content);
 
-        while (true) {
+        for (uint256 idx = 0; idx < transactionCount; idx++) {
             string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
             string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
 
             try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
                 (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
                 if (!validName) {
-                    idx++;
                     continue;
                 }
 
@@ -245,10 +275,7 @@ contract ScaffoldETHDeploy is Script {
                     bytes memory addrBytes = vm.parseJson(content, addrPath);
                     latestAddress = abi.decode(addrBytes, (address));
                 }
-            } catch {
-                break;
-            }
-            idx++;
+            } catch { }
         }
 
         return latestAddress;
@@ -261,16 +288,15 @@ contract ScaffoldETHDeploy is Script {
     {
         address[] memory found = new address[](20);
         uint256 count = 0;
-        uint96 idx = 0;
+        uint256 transactionCount = _broadcastTransactionCount(content);
 
-        while (count < 20) {
+        for (uint256 idx = 0; idx < transactionCount && count < 20; idx++) {
             string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
             string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
 
             try vm.parseJson(content, namePath) returns (bytes memory nameBytes) {
                 (bool validName, string memory name) = _tryDecodeJsonString(nameBytes);
                 if (!validName) {
-                    idx++;
                     continue;
                 }
 
@@ -290,10 +316,7 @@ contract ScaffoldETHDeploy is Script {
                         count++;
                     }
                 }
-            } catch {
-                break;
-            }
-            idx++;
+            } catch { }
         }
 
         address[] memory result = new address[](count);
@@ -301,6 +324,21 @@ contract ScaffoldETHDeploy is Script {
             result[i] = found[i];
         }
         return result;
+    }
+
+    function _broadcastTransactionCount(string memory content) internal pure returns (uint256) {
+        for (uint256 idx = 0; idx < 256; idx++) {
+            string memory transactionPath = string.concat(".transactions[", vm.toString(idx), "]");
+            try vm.parseJsonKeys(content, transactionPath) returns (string[] memory transactionKeys) {
+                if (transactionKeys.length == 0) {
+                    return idx;
+                }
+            } catch {
+                return idx;
+            }
+        }
+
+        return 256;
     }
 
     function _tryDecodeJsonString(bytes memory raw) internal pure returns (bool ok, string memory value) {

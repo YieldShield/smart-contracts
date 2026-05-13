@@ -20,6 +20,27 @@ contract DeployHelpersHarness is ScaffoldETHDeploy {
     function findAddressByName(string memory json, string memory contractName) external pure returns (address) {
         return _findAddressByName(json, contractName);
     }
+
+    function resolveDeploymentAddressHarness(string memory contractName) external view returns (address) {
+        return _resolveDeploymentAddress(contractName);
+    }
+
+    function resolveDeploymentAddressesHarness(string memory contractName) external view returns (address[] memory) {
+        return _resolveDeploymentAddresses(contractName);
+    }
+
+    function resolveFactoryAddressHarness() external view returns (address) {
+        return _resolveFactoryAddress();
+    }
+
+    function selectFreshestAddressHarness(
+        address deploymentAddr,
+        uint256 deploymentModifiedAt,
+        address broadcastAddr,
+        uint256 broadcastModifiedAt
+    ) external pure returns (address) {
+        return _selectFreshestAddress(deploymentAddr, deploymentModifiedAt, broadcastAddr, broadcastModifiedAt);
+    }
 }
 
 contract DeploymentMetadataTest is Test {
@@ -27,6 +48,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant OVERWRITE_TEST_CHAIN_ID = 777_777_778;
     uint256 internal constant PRUNE_TEST_CHAIN_ID = 777_777_779;
     uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
+    uint256 internal constant FRESHEST_RESOLUTION_TEST_CHAIN_ID = 777_777_782;
 
     function test_exportDeployments_RewritesDeploymentFileFromCurrentRunOnly() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);
@@ -121,6 +143,45 @@ contract DeploymentMetadataTest is Test {
         assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), currentFactory);
     }
 
+    function test_selectFreshestAddress_PrefersNewerBroadcastWhenBothSourcesExist() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID);
+        address deploymentAddr = address(0x1001);
+        address broadcastAddr = address(0x1002);
+
+        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 100, broadcastAddr, 200), broadcastAddr);
+    }
+
+    function test_selectFreshestAddress_PrefersNewerDeploymentWhenBroadcastIsOlder() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 1);
+        address deploymentAddr = address(0x2001);
+        address broadcastAddr = address(0x2002);
+
+        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 200, broadcastAddr, 100), deploymentAddr);
+    }
+
+    function test_resolveDeploymentAddresses_FallsBackToBroadcastWhenDeploymentFileLacksRequestedEntries() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 2);
+        address mockA = address(0x4001);
+        address mockB = address(0x4002);
+        string memory broadcastPath = _broadcastPathForChain(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 2);
+        string memory existingJson = "deployment-without-mocks";
+
+        _writeBroadcastJson(broadcastPath, _multiBroadcastJson("MockERC20", mockA, mockB));
+
+        vm.serializeString(existingJson, vm.toString(address(0x4999)), "SplitRiskPoolFactory");
+        existingJson = vm.serializeString(existingJson, "networkName", "fallback-network");
+        vm.writeJson(existingJson, deploymentPath);
+
+        address[] memory resolved = deployHelpers.resolveDeploymentAddressesHarness("MockERC20");
+        assertEq(resolved.length, 2);
+        assertEq(resolved[0], mockA);
+        assertEq(resolved[1], mockB);
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+        _removeBroadcastFileIfPresent(broadcastPath);
+    }
+
     function _newDeployHelpers(uint256 chainId)
         internal
         returns (DeployHelpersHarness deployHelpers, string memory path)
@@ -135,5 +196,55 @@ contract DeploymentMetadataTest is Test {
         if (vm.exists(deploymentPath)) {
             vm.removeFile(deploymentPath);
         }
+    }
+
+    function _broadcastPathForChain(uint256 chainId) internal view returns (string memory) {
+        return string.concat(
+            vm.projectRoot(), "/broadcast/DeployYieldShieldProduction.s.sol/", vm.toString(chainId), "/run-latest.json"
+        );
+    }
+
+    function _writeBroadcastJson(string memory broadcastPath, string memory json) internal {
+        bytes memory pathBytes = bytes(broadcastPath);
+        uint256 lastSlash;
+        for (uint256 i = 0; i < pathBytes.length; i++) {
+            if (pathBytes[i] == 0x2f) {
+                lastSlash = i;
+            }
+        }
+
+        bytes memory dirBytes = new bytes(lastSlash);
+        for (uint256 i = 0; i < lastSlash; i++) {
+            dirBytes[i] = pathBytes[i];
+        }
+        vm.createDir(string(dirBytes), true);
+        vm.writeFile(broadcastPath, json);
+    }
+
+    function _removeBroadcastFileIfPresent(string memory broadcastPath) internal {
+        if (vm.exists(broadcastPath)) {
+            vm.removeFile(broadcastPath);
+        }
+    }
+
+    function _multiBroadcastJson(string memory contractName, address contractAddressA, address contractAddressB)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string.concat(
+            '{"transactions":[',
+            '{"transactionType":"CREATE","contractName":"',
+            contractName,
+            '","contractAddress":"',
+            vm.toString(contractAddressA),
+            '"},',
+            '{"transactionType":"CREATE","contractName":"',
+            contractName,
+            '","contractAddress":"',
+            vm.toString(contractAddressB),
+            '"}',
+            '],"receipts":[]}'
+        );
     }
 }
