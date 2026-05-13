@@ -178,15 +178,17 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         // Backing token: $0.40
         oracle.setPrice(address(backingToken), 0.4e8);
 
-        // At these prices:
-        // Required collateral (original value): $50
-        // Protector value: 100 * $0.40 = $40
-        // If protector withdraws ANY tokens, collateral drops below $50
-        // Even withdrawing 1 token: 99 * $0.40 = $39.60 < $50
+        // At these prices the USD requirement would be 125 backing tokens,
+        // but the position's liability is capped at the stored collateral amount (50 tokens).
+        // With 100 protector tokens in the pool, 50 remain available and 51 is blocked.
+        assertEq(pool.getAvailableForWithdrawal(protectorTokenId), 50e18, "Available withdrawal honors collateral cap");
 
         vm.prank(protector);
         vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
-        pool.protectorWithdraw(protectorTokenId, 1e18, address(backingToken), 0);
+        pool.protectorWithdraw(protectorTokenId, 51e18, address(backingToken), 0);
+
+        vm.prank(protector);
+        pool.protectorWithdraw(protectorTokenId, 50e18, address(backingToken), 0);
     }
 
     /// @notice Test that withdrawal succeeds when USD collateralization is maintained
@@ -239,9 +241,11 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         vm.warp(block.timestamp + 29 days);
         oracle.setPrice(address(backingToken), 0.4e8);
 
+        assertEq(pool.getAvailableForWithdrawal(protectorTokenId), 50e18, "Mature unlock still honors collateral cap");
+
         vm.prank(protector);
         vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
-        pool.protectorWithdraw(protectorTokenId, 1e18, address(backingToken), 0);
+        pool.protectorWithdraw(protectorTokenId, 51e18, address(backingToken), 0);
     }
 
     /// @notice Test that USD utilization uses original deposit value while protector value is dynamic
@@ -278,18 +282,18 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         pool.startUnlockProcess(protectorTokenId);
         vm.warp(block.timestamp + 28 days + 1);
 
-        // With original $50 requirement and $0.80/token:
-        // Minimum protector tokens needed: $50 / $0.80 = 62.5 tokens
-        // Max withdrawable: 100 - 62.5 = 37.5 tokens
-        // Withdrawing 38 tokens leaves 62 * $0.80 = $49.60 < $50 required
+        // With original $50 requirement and $0.80/token, the raw USD requirement
+        // would be 62.5 backing tokens. The position's stored collateral cap is
+        // 50 backing tokens, so 50 tokens are available and 51 is blocked.
+        assertEq(pool.getAvailableForWithdrawal(protectorTokenId), 50e18, "Available withdrawal honors collateral cap");
 
         vm.prank(protector);
         vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
-        pool.protectorWithdraw(protectorTokenId, 38e18, address(backingToken), 0);
+        pool.protectorWithdraw(protectorTokenId, 51e18, address(backingToken), 0);
 
-        // But 37 tokens should work (leaves 63 * $0.80 = $50.40 > $50)
+        // But 50 tokens should work because it leaves the full stored collateral amount.
         vm.prank(protector);
-        pool.protectorWithdraw(protectorTokenId, 37e18, address(backingToken), 0);
+        pool.protectorWithdraw(protectorTokenId, 50e18, address(backingToken), 0);
     }
 
     /// @notice Test that shielded deposit is rejected when USD collateralization would be insufficient
