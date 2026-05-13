@@ -421,7 +421,10 @@ async function main() {
         chainId,
         contractName: "SplitRiskPoolFactory",
     });
-    if (factoryAddress && owner.toLowerCase() === factoryAddress.toLowerCase()) {
+    if (
+        factoryAddress &&
+        owner.toLowerCase() === factoryAddress.toLowerCase()
+    ) {
         console.error(
             "\n❌ PythOracle is owned by SplitRiskPoolFactory governance.",
         );
