@@ -53,6 +53,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Emitted when max price deviation is updated
     event MaxPriceDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
 
+    /// @notice Emitted when max accepted Pyth confidence interval is updated
+    event MaxConfidenceBpsUpdated(uint256 oldConfidenceBps, uint256 newConfidenceBps);
+
     /// @notice Emitted when price feeds are updated
     event PriceFeedsUpdated(bytes32[] feedIds);
 
@@ -209,7 +212,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         if (_maxConfidenceBps < 10 || _maxConfidenceBps > 5000) {
             revert InvalidConfidenceBps(_maxConfidenceBps, 10, 5000);
         }
+        uint256 oldConfidenceBps = maxConfidenceBps;
         maxConfidenceBps = _maxConfidenceBps;
+        emit MaxConfidenceBpsUpdated(oldConfidenceBps, _maxConfidenceBps);
     }
 
     /// @notice Get the price for a token in USD (8 decimals)

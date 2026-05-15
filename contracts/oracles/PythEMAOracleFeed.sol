@@ -38,6 +38,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Emitted when max price age is updated
     event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
 
+    /// @notice Emitted when max accepted Pyth confidence interval is updated
+    event MaxConfidenceBpsUpdated(uint256 oldConfidenceBps, uint256 newConfidenceBps);
+
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
 
@@ -110,7 +113,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (_maxConfidenceBps < 10 || _maxConfidenceBps > 5000) {
             revert InvalidConfidenceBps(_maxConfidenceBps, 10, 5000);
         }
+        uint256 oldConfidenceBps = maxConfidenceBps;
         maxConfidenceBps = _maxConfidenceBps;
+        emit MaxConfidenceBpsUpdated(oldConfidenceBps, _maxConfidenceBps);
     }
 
     /// @inheritdoc IOracleFeed
