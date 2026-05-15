@@ -241,6 +241,11 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
 
         isUp = answer == 0;
+        // A `startedAt` slightly ahead of `block.timestamp` would otherwise panic the
+        // unsigned subtraction. Treat it as "just came up" (grace period still active).
+        if (startedAt > block.timestamp) {
+            return (isUp, false, 0);
+        }
         timeSinceUp = block.timestamp - startedAt;
         gracePeriodPassed = timeSinceUp > GRACE_PERIOD_TIME;
     }
@@ -276,8 +281,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             revert SequencerDown();
         }
 
-        // Check grace period after sequencer comes back up
-        // startedAt is the timestamp when the sequencer status last changed
+        // Check grace period after sequencer comes back up.
+        // startedAt is the timestamp when the sequencer status last changed.
+        // A future-dated `startedAt` (reporter clock skew) would underflow the unsigned
+        // subtraction below; treat it as "grace period not yet elapsed" instead.
+        if (startedAt > block.timestamp) {
+            revert GracePeriodNotOver(0, GRACE_PERIOD_TIME);
+        }
         uint256 timeSinceUp = block.timestamp - startedAt;
         if (timeSinceUp <= GRACE_PERIOD_TIME) {
             revert GracePeriodNotOver(timeSinceUp, GRACE_PERIOD_TIME);
