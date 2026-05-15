@@ -48,10 +48,17 @@ library OracleValidationLib {
     }
 
     /// @notice Validate price staleness
+    /// @dev Future-dated `updatedAt` values would otherwise panic via the unsigned
+    ///      subtraction below. Fail closed by treating them as stale, since a feed
+    ///      reporting a timestamp ahead of `block.timestamp` is either skewed or
+    ///      manipulated and should not be silently trusted.
     /// @param updatedAt Timestamp of last price update
     /// @param maxAge Maximum allowed age in seconds
     /// @param token The token address (for error reporting)
     function validateStaleness(uint256 updatedAt, uint256 maxAge, address token) internal view {
+        if (updatedAt > block.timestamp) {
+            revert StalePrice(token, updatedAt, maxAge, block.timestamp);
+        }
         uint256 age = block.timestamp - updatedAt;
         if (age > maxAge) {
             revert StalePrice(token, updatedAt, maxAge, block.timestamp);

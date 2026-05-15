@@ -210,6 +210,8 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     /// @notice Check if a price is stale for a given token
+    /// @dev Mirrors `validateStaleness`: future-dated feed timestamps are treated
+    ///      as stale instead of underflowing the unsigned subtraction below.
     /// @param token The token address
     /// @return isStale True if the price is stale
     /// @return updatedAt The timestamp of the last update
@@ -221,6 +223,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         AggregatorV3Interface feed = tokenFeeds[token];
         (,,, uint256 _updatedAt,) = feed.latestRoundData();
         updatedAt = _updatedAt;
+        if (updatedAt > block.timestamp) {
+            return (true, updatedAt);
+        }
         isStale = block.timestamp - updatedAt > maxPriceAge;
     }
 
