@@ -142,10 +142,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (_sequencerUptimeFeed != address(0)) {
             AggregatorV3Interface feed = AggregatorV3Interface(_sequencerUptimeFeed);
             // Verify feed responds correctly
-            try feed.latestRoundData() returns (uint80, int256 answer, uint256, uint256, uint80) {
+            try feed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
                 // Sequencer status: 0 = up, 1 = down
-                // Just verify we can read it, don't validate the value
                 if (answer != 0 && answer != 1) {
+                    revert InvalidFeedAddress(_sequencerUptimeFeed);
+                }
+                // Reject feeds that report an uninitialized or future-dated startedAt
+                // at registration; both would brick every L2 price read at runtime.
+                if (startedAt == 0 || startedAt > block.timestamp) {
                     revert InvalidFeedAddress(_sequencerUptimeFeed);
                 }
             } catch {

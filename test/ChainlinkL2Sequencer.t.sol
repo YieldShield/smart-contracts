@@ -129,6 +129,22 @@ contract ChainlinkL2SequencerTest is Test {
         chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
     }
 
+    function test_SetSequencerUptimeFeed_RevertsForZeroStartedAt() public {
+        mockSequencerFeed.setStartedAt(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(ChainlinkOracleFeed.InvalidFeedAddress.selector, address(mockSequencerFeed))
+        );
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+    }
+
+    function test_SetSequencerUptimeFeed_RevertsForFutureStartedAt() public {
+        mockSequencerFeed.setStartedAt(block.timestamp + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ChainlinkOracleFeed.InvalidFeedAddress.selector, address(mockSequencerFeed))
+        );
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+    }
+
     // ============ Sequencer Up - Normal Operation ============
 
     function test_GetPrice_SequencerUp_AfterGracePeriod() public {
