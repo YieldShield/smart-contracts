@@ -1809,9 +1809,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 revert ErrorsLib.NoTokensToWithdraw();
             }
             dustExit = true;
-            if (positionShares_ == currentTotalShares) {
-                amount = totalProtectorTokens;
-            }
+            // I-14: the previous "sole-holder ⇒ amount = totalProtectorTokens"
+            // branch is unreachable: dust-exit availability requires
+            // positionAmount == 0 AND totalProtectorTokens != 0, but with
+            // positionShares_ == currentTotalShares the positionAmount
+            // would equal totalProtectorTokens (≠ 0) by definition, so the
+            // outer check would have failed. Removed; if dust-exit semantics
+            // ever extend to sole holders that branch must be reinstated
+            // with a proper guard.
         }
 
         if (pos.unlockRequestTime == 0 || pos.unlockRequestTime > block.timestamp) {
