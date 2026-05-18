@@ -1075,15 +1075,19 @@ contract CompositeOracleDualFeedTest is Test {
     function test_EmergencyCancelChallenge_RevertsWhenNoChallengePending() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
 
-        // M-8: schedule + wait, then attempt the call. The challenge-state check
-        // fires after the timelock consumption, so we still see CancelNotPossible.
-        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
-        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
-
+        // Codex P1 follow-up: scheduling itself now requires a pending
+        // challenge as precondition, so an attempt to schedule a cancel
+        // when there is nothing to cancel reverts up front (no stale
+        // schedule is created and consumable later).
         vm.expectRevert(
-            abi.encodeWithSelector(CompositeOracle.CancelNotPossible.selector, address(token), "No challenge pending")
+            abi.encodeWithSelector(
+                CompositeOracle.EmergencyOverridePreconditionNotMet.selector,
+                address(token),
+                keccak256("emergencyCancelChallenge"),
+                "No challenge pending"
+            )
         );
-        compositeOracle.emergencyCancelChallenge(address(token));
+        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
     }
 
     function test_EmergencyCancelChallenge_RevertsWhenNotOwner() public {

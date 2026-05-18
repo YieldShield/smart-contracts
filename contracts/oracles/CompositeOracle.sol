@@ -661,33 +661,109 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     ///         action, waits EMERGENCY_OVERRIDE_DELAY, then executes. Users
     ///         can withdraw / front-run in the window if the override is
     ///         hostile. Cancellation is unilateral.
+    /// @dev Codex P1 follow-up: schedules are bound to a state nonce
+    ///      (`challengeStartTime` for ACTION_EMERGENCY_CANCEL, `isBackupActive`
+    ///      for ACTION_FORCE_RESET) so a schedule made before any challenge
+    ///      exists cannot be silently reused against a *later* challenge —
+    ///      the timelock window resets on every state change. Schedules also
+    ///      expire after EMERGENCY_OVERRIDE_EXPIRY to avoid indefinite stale
+    ///      entries.
     uint256 public constant EMERGENCY_OVERRIDE_DELAY = 2 hours;
+    uint256 public constant EMERGENCY_OVERRIDE_EXPIRY = 1 days;
 
-    /// @dev Scheduled execution time per (token, action). 0 = not scheduled.
-    mapping(bytes32 => uint256) public emergencyOverrideScheduledAt;
+    struct EmergencyOverrideSchedule {
+        uint64 executableAt;
+        uint64 expiresAt;
+        bytes32 stateNonce; // hash of the live oracle state at schedule time
+    }
 
-    event EmergencyOverrideScheduled(address indexed token, bytes32 indexed action, uint256 executableAt);
+    /// @dev Scheduled override per (token, action). executableAt == 0 = not scheduled.
+    mapping(bytes32 => EmergencyOverrideSchedule) public emergencyOverrides;
+
+    event EmergencyOverrideScheduled(
+        address indexed token, bytes32 indexed action, uint256 executableAt, bytes32 stateNonce
+    );
     event EmergencyOverrideCancelled(address indexed token, bytes32 indexed action);
 
     error EmergencyOverrideNotScheduled(address token, bytes32 action);
     error EmergencyOverrideTooEarly(address token, bytes32 action, uint256 executableAt);
+    error EmergencyOverrideExpired(address token, bytes32 action, uint256 expiredAt);
+    error EmergencyOverrideStateChanged(address token, bytes32 action);
+    error EmergencyOverridePreconditionNotMet(address token, bytes32 action, string reason);
 
     bytes32 private constant ACTION_FORCE_RESET = keccak256("forceResetToPrimary");
     bytes32 private constant ACTION_EMERGENCY_CANCEL = keccak256("emergencyCancelChallenge");
 
+    function _overrideKey(address token, bytes32 action) internal pure returns (bytes32) {
+        return keccak256(abi.encode(token, action));
+    }
+
+    function _stateNonce(address token, bytes32 action) internal view returns (bytes32) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (action == ACTION_EMERGENCY_CANCEL) {
+            // Bind to the active challenge so a cancel scheduled for one
+            // challenge cannot be reused against a later challenge.
+            return keccak256(abi.encode("CANCEL", config.challengeStartTime));
+        }
+        // ACTION_FORCE_RESET binds to whether backup is currently active —
+        // resetting a system that is already on primary is meaningless, and
+        // a schedule taken before backup activation must not survive into a
+        // future activation.
+        return keccak256(abi.encode("RESET", config.isBackupActive, config.challengeStartTime));
+    }
+
+    function _requireOverridePrecondition(address token, bytes32 action) internal view {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (action == ACTION_EMERGENCY_CANCEL) {
+            if (config.challengeStartTime == 0) {
+                revert EmergencyOverridePreconditionNotMet(token, action, "No challenge pending");
+            }
+        } else if (action == ACTION_FORCE_RESET) {
+            if (!config.isBackupActive && config.challengeStartTime == 0) {
+                revert EmergencyOverridePreconditionNotMet(token, action, "Already on primary");
+            }
+        }
+    }
+
     function _scheduleOverride(address token, bytes32 action) internal {
-        bytes32 key = keccak256(abi.encode(token, action));
-        uint256 executableAt = block.timestamp + EMERGENCY_OVERRIDE_DELAY;
-        emergencyOverrideScheduledAt[key] = executableAt;
-        emit EmergencyOverrideScheduled(token, action, executableAt);
+        // Require the action to be meaningful right now: there must be a
+        // pending challenge to cancel, or an active backup / challenge to reset.
+        _requireOverridePrecondition(token, action);
+
+        bytes32 key = _overrideKey(token, action);
+        emergencyOverrides[key] = EmergencyOverrideSchedule({
+            executableAt: uint64(block.timestamp + EMERGENCY_OVERRIDE_DELAY),
+            expiresAt: uint64(block.timestamp + EMERGENCY_OVERRIDE_DELAY + EMERGENCY_OVERRIDE_EXPIRY),
+            stateNonce: _stateNonce(token, action)
+        });
+        emit EmergencyOverrideScheduled(
+            token, action, block.timestamp + EMERGENCY_OVERRIDE_DELAY, emergencyOverrides[key].stateNonce
+        );
     }
 
     function _consumeOverride(address token, bytes32 action) internal {
-        bytes32 key = keccak256(abi.encode(token, action));
-        uint256 executableAt = emergencyOverrideScheduledAt[key];
-        if (executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
-        if (block.timestamp < executableAt) revert EmergencyOverrideTooEarly(token, action, executableAt);
-        delete emergencyOverrideScheduledAt[key];
+        bytes32 key = _overrideKey(token, action);
+        EmergencyOverrideSchedule memory schedule = emergencyOverrides[key];
+        // slither-disable-next-line incorrect-equality
+        if (schedule.executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
+        if (block.timestamp < schedule.executableAt) {
+            revert EmergencyOverrideTooEarly(token, action, schedule.executableAt);
+        }
+        if (block.timestamp >= schedule.expiresAt) {
+            delete emergencyOverrides[key];
+            revert EmergencyOverrideExpired(token, action, schedule.expiresAt);
+        }
+        // Re-check the state nonce so an override scheduled against one
+        // challenge cannot be executed against a different one finalised
+        // during the timelock window.
+        if (schedule.stateNonce != _stateNonce(token, action)) {
+            delete emergencyOverrides[key];
+            revert EmergencyOverrideStateChanged(token, action);
+        }
+        // Also re-check the precondition — the live state may have advanced
+        // back to a state where the action would be a no-op.
+        _requireOverridePrecondition(token, action);
+        delete emergencyOverrides[key];
     }
 
     function scheduleForceResetToPrimary(address token) external onlyOwner {
@@ -699,9 +775,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     function cancelScheduledOverride(address token, bytes32 action) external onlyOwner {
-        bytes32 key = keccak256(abi.encode(token, action));
-        if (emergencyOverrideScheduledAt[key] == 0) revert EmergencyOverrideNotScheduled(token, action);
-        delete emergencyOverrideScheduledAt[key];
+        bytes32 key = _overrideKey(token, action);
+        // slither-disable-next-line incorrect-equality
+        if (emergencyOverrides[key].executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
+        delete emergencyOverrides[key];
         emit EmergencyOverrideCancelled(token, action);
     }
 
