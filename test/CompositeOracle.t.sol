@@ -778,6 +778,10 @@ contract CompositeOracleDualFeedTest is Test {
     function test_ForceResetToPrimary_Succeeds() public {
         _challengeAndFinalize();
 
+        // M-8: schedule + wait for the emergency-override delay before executing.
+        compositeOracle.scheduleForceResetToPrimary(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit OracleSwitched(address(token), false);
 
@@ -1053,6 +1057,10 @@ contract CompositeOracleDualFeedTest is Test {
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertTrue(isChallengePending);
 
+        // M-8: schedule + wait for override delay.
+        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Emergency cancelled by owner");
 
@@ -1064,6 +1072,11 @@ contract CompositeOracleDualFeedTest is Test {
 
     function test_EmergencyCancelChallenge_RevertsWhenNoChallengePending() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+
+        // M-8: schedule + wait, then attempt the call. The challenge-state check
+        // fires after the timelock consumption, so we still see CancelNotPossible.
+        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
 
         vm.expectRevert(
             abi.encodeWithSelector(CompositeOracle.CancelNotPossible.selector, address(token), "No challenge pending")
@@ -1104,6 +1117,10 @@ contract CompositeOracleDualFeedTest is Test {
         _initiateChallenge();
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertTrue(isChallengePending);
+
+        // M-8: schedule + wait.
+        compositeOracle.scheduleForceResetToPrimary(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
 
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Force reset by owner");

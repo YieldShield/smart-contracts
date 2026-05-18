@@ -616,10 +616,60 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         emit OracleSwitched(token, false);
     }
 
+    /// @notice M-8: timelock on emergency overrides. Owner schedules the
+    ///         action, waits EMERGENCY_OVERRIDE_DELAY, then executes. Users
+    ///         can withdraw / front-run in the window if the override is
+    ///         hostile. Cancellation is unilateral.
+    uint256 public constant EMERGENCY_OVERRIDE_DELAY = 2 hours;
+
+    /// @dev Scheduled execution time per (token, action). 0 = not scheduled.
+    mapping(bytes32 => uint256) public emergencyOverrideScheduledAt;
+
+    event EmergencyOverrideScheduled(address indexed token, bytes32 indexed action, uint256 executableAt);
+    event EmergencyOverrideCancelled(address indexed token, bytes32 indexed action);
+
+    error EmergencyOverrideNotScheduled(address token, bytes32 action);
+    error EmergencyOverrideTooEarly(address token, bytes32 action, uint256 executableAt);
+
+    bytes32 private constant ACTION_FORCE_RESET = keccak256("forceResetToPrimary");
+    bytes32 private constant ACTION_EMERGENCY_CANCEL = keccak256("emergencyCancelChallenge");
+
+    function _scheduleOverride(address token, bytes32 action) internal {
+        bytes32 key = keccak256(abi.encode(token, action));
+        uint256 executableAt = block.timestamp + EMERGENCY_OVERRIDE_DELAY;
+        emergencyOverrideScheduledAt[key] = executableAt;
+        emit EmergencyOverrideScheduled(token, action, executableAt);
+    }
+
+    function _consumeOverride(address token, bytes32 action) internal {
+        bytes32 key = keccak256(abi.encode(token, action));
+        uint256 executableAt = emergencyOverrideScheduledAt[key];
+        if (executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
+        if (block.timestamp < executableAt) revert EmergencyOverrideTooEarly(token, action, executableAt);
+        delete emergencyOverrideScheduledAt[key];
+    }
+
+    function scheduleForceResetToPrimary(address token) external onlyOwner {
+        _scheduleOverride(token, ACTION_FORCE_RESET);
+    }
+
+    function scheduleEmergencyCancelChallenge(address token) external onlyOwner {
+        _scheduleOverride(token, ACTION_EMERGENCY_CANCEL);
+    }
+
+    function cancelScheduledOverride(address token, bytes32 action) external onlyOwner {
+        bytes32 key = keccak256(abi.encode(token, action));
+        if (emergencyOverrideScheduledAt[key] == 0) revert EmergencyOverrideNotScheduled(token, action);
+        delete emergencyOverrideScheduledAt[key];
+        emit EmergencyOverrideCancelled(token, action);
+    }
+
     /// @notice Admin function to force reset a token to primary oracle (emergency use)
-    /// @dev Only owner can call this. Use with caution. Preserves lastChallengeTime for cooldown.
+    /// @dev Now timelocked — first call scheduleForceResetToPrimary, then wait
+    ///      EMERGENCY_OVERRIDE_DELAY before this executes.
     /// @param token The token to reset
     function forceResetToPrimary(address token) external onlyOwner {
+        _consumeOverride(token, ACTION_FORCE_RESET);
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         // BUG-5 FIX: Emit ChallengeCancelled if a challenge was pending
@@ -635,9 +685,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @notice Emergency cancel a pending challenge without price checks (for oracle outage)
-    /// @dev BUG-3 FIX: Only owner can call this. Use when oracle feeds are reverting.
+    /// @dev Now timelocked — first call scheduleEmergencyCancelChallenge, then
+    ///      wait EMERGENCY_OVERRIDE_DELAY before this executes.
     /// @param token The token to cancel challenge for
     function emergencyCancelChallenge(address token) external onlyOwner {
+        _consumeOverride(token, ACTION_EMERGENCY_CANCEL);
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         if (config.challengeStartTime == 0) {
