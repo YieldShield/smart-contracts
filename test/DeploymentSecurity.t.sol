@@ -235,6 +235,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         vm.prank(address(timelock));
         factory.setPythTokenPriceFeed(token, feedId);
         assertEq(pythOracle.tokenToPriceFeedId(token), feedId);
+
+        vm.prank(address(timelock));
+        factory.setPythMaxPriceAgeForToken(token, 86_400);
+        assertEq(pythOracle.maxPriceAgeForToken(token), 86_400);
     }
 
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {

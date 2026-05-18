@@ -168,13 +168,33 @@ contract PythOracleTest is Test {
 
     function testIsPriceStale_UsesMaxAllowedAge() public {
         vm.prank(owner);
-        oracle.setMaxPriceAge(3600); // MAX_PRICE_AGE_LIMIT
+        oracle.setMaxPriceAge(86_400); // MAX_PRICE_AGE_LIMIT
 
         vm.warp(block.timestamp + 60);
         _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(block.timestamp - 30));
 
         (bool isStale,) = oracle.isPriceStale(address(token1));
         assertFalse(isStale, "Price should not be stale within max age");
+    }
+
+    function testIsPriceStale_FuturePublishTimeFailsClosed() public {
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(block.timestamp + 1));
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "Future publish time should fail closed");
+        assertEq(publishTime, uint64(block.timestamp + 1));
+    }
+
+    function testSetMaxPriceAgeForTokenExtendsFreshnessForOneToken() public {
+        vm.prank(owner);
+        oracle.setMaxPriceAgeForToken(address(token1), 120);
+
+        vm.warp(block.timestamp + 90);
+
+        assertEq(oracle.getPrice(address(token1)), 1e8, "Per-token override should keep token1 fresh");
+
+        vm.expectRevert();
+        oracle.getPrice(address(token2));
     }
 
     /* ============ Price Update Tests ============ */
@@ -375,6 +395,23 @@ contract PythOracleTest is Test {
         assertEq(oracle.getEmaPrice(address(token1)), 104_500_000);
     }
 
+    function testCompositePriceFeed_UsesTokenMaxAgeForBaseAndQuoteFeeds() public {
+        vm.startPrank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+        oracle.setMaxPriceAgeForToken(address(token1), 120);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 90);
+
+        assertEq(oracle.getPrice(address(token1)), 1e8, "Override should apply to both composite legs");
+
+        vm.prank(owner);
+        oracle.setMaxPriceAgeForToken(address(token1), 0);
+
+        vm.expectRevert();
+        oracle.getPrice(address(token1));
+    }
+
     function testCompositePriceFeed_RevertsWhenQuoteConfidenceTooWide() public {
         vm.prank(owner);
         oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
@@ -424,6 +461,12 @@ contract PythOracleTest is Test {
         oracle.setMaxPriceAge(newMaxAge);
 
         assertEq(oracle.maxPriceAge(), newMaxAge, "Max price age should be updated");
+    }
+
+    function testSetMaxPriceAgeForTokenOnlyOwner() public {
+        vm.prank(user);
+        vm.expectRevert();
+        oracle.setMaxPriceAgeForToken(address(token1), 120);
     }
 
     function testSetMaxPriceAgeOnlyOwner() public {

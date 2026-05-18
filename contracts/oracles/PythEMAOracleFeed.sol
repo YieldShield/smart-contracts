@@ -30,6 +30,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Mapping from token address to Pyth price feed ID
     mapping(address => bytes32) public tokenToPriceFeedId;
 
+    /// @notice Optional per-token price age override. Zero means use maxPriceAge.
+    mapping(address => uint256) public maxPriceAgeForToken;
+
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
@@ -38,6 +41,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted when max price age is updated
     event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when a per-token max price age is updated
+    event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
 
     /// @notice Emitted when max accepted Pyth confidence interval is updated
     event MaxConfidenceBpsUpdated(uint256 oldConfidenceBps, uint256 newConfidenceBps);
@@ -56,8 +62,8 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for price age exceeding upper bound
     error PriceAgeTooHigh(uint256 provided, uint256 maximum);
 
-    /// @notice Maximum allowed maxPriceAge value (1 hour)
-    uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
+    /// @notice Maximum allowed maxPriceAge value (24 hours)
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
 
     /// @notice Custom error for invalid price confidence setting
     error InvalidConfidenceBps(uint256 provided, uint256 min, uint256 max);
@@ -113,6 +119,22 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
     }
 
+    /// @notice Set a per-token max price age that overrides the global value.
+    /// @dev Set to 0 to clear the override and revert to maxPriceAge.
+    function setMaxPriceAgeForToken(address token, uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAgeForToken[token];
+        maxPriceAgeForToken[token] = _maxPriceAge;
+        emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Resolve the effective max-price-age for a token.
+    function effectiveMaxPriceAge(address token) public view returns (uint256) {
+        uint256 perToken = maxPriceAgeForToken[token];
+        return perToken == 0 ? maxPriceAge : perToken;
+    }
+
     /// @notice Set the maximum accepted Pyth confidence interval relative to price
     /// @param _maxConfidenceBps Maximum confidence interval in basis points (0.1%-50%)
     function setMaxConfidenceBps(uint256 _maxConfidenceBps) external onlyOwner {
@@ -137,7 +159,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         bytes32 feedId = tokenToPriceFeedId[token];
 
         // Get EMA price (time-weighted average, more stable)
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
         _validateConfidence(token, emaData);
         return _convertPrice(token, emaData);
     }
@@ -163,13 +185,16 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         // Calculate the adjustment needed: 10^(expo + 8)
         int32 adjustment = expo + 8;
 
+        uint256 result;
         if (adjustment == 0) {
-            return uint256(price);
+            result = uint256(price);
         } else if (adjustment > 0) {
-            return uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
+            result = uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
         } else {
-            return uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
+            result = uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
         }
+        if (result == 0) revert InvalidPrice(token, 0);
+        return result;
     }
 
     function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {

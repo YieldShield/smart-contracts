@@ -107,6 +107,7 @@ interface ISplitRiskPoolFactory {
     function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
     function removePythToken(address token) external;
     function setPythMaxPriceAge(uint256 maxPriceAge) external;
+    function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external;
     function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external;
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external;

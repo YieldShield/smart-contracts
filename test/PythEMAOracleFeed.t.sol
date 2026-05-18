@@ -46,6 +46,14 @@ contract PythEMAOracleFeedTest is Test {
         feed.getPrice(address(token));
     }
 
+    function testGetPrice_ZeroAfterTruncation_Reverts() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, 1, 0, -12, uint64(block.timestamp));
+
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidPrice.selector, address(token), int256(0)));
+        feed.getPrice(address(token));
+    }
+
     function testGetPriceUnsafeSelectorFailsClosed() public view {
         // After the safe-default rename, the marker for "feed advertises the safe/unsafe split"
         // is the `getPriceUnsafe(address)` selector. PythEMA deliberately does not expose it,
@@ -75,6 +83,25 @@ contract PythEMAOracleFeedTest is Test {
         _updatePriceFeed(FEED_ID, 1e8, 3e6, -8, uint64(block.timestamp));
 
         assertEq(feed.getPrice(address(token)), 1e8);
+    }
+
+    function testSetMaxPriceAgeForTokenExtendsFreshnessForToken() public {
+        feed.setMaxPriceAgeForToken(address(token), 120);
+
+        vm.warp(block.timestamp + 90);
+
+        assertEq(feed.getPrice(address(token)), 1e8);
+
+        feed.setMaxPriceAgeForToken(address(token), 0);
+
+        vm.expectRevert();
+        feed.getPrice(address(token));
+    }
+
+    function testSetMaxPriceAgeForTokenOnlyOwner() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        feed.setMaxPriceAgeForToken(address(token), 120);
     }
 
     function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {

@@ -27,14 +27,14 @@ contract OracleBoundsTest is Test {
 
     function testPythOracle_SetMaxPriceAge_RevertsAboveMaximum() public {
         PythOracle oracle = new PythOracle(address(mockPyth), 60);
-        vm.expectRevert(abi.encodeWithSelector(PythOracle.PriceAgeTooHigh.selector, 3601, 3600));
-        oracle.setMaxPriceAge(3601);
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.PriceAgeTooHigh.selector, 86_401, 86_400));
+        oracle.setMaxPriceAge(86_401);
     }
 
     function testPythOracle_SetMaxPriceAge_AcceptsMaximum() public {
         PythOracle oracle = new PythOracle(address(mockPyth), 60);
-        oracle.setMaxPriceAge(3600);
-        assertEq(oracle.maxPriceAge(), 3600);
+        oracle.setMaxPriceAge(86_400);
+        assertEq(oracle.maxPriceAge(), 86_400);
     }
 
     function testPythOracle_SetMaxPriceAge_AcceptsMinimum() public {
@@ -50,8 +50,8 @@ contract OracleBoundsTest is Test {
     }
 
     function testPythOracle_Constructor_RevertsAboveMaxPriceAge() public {
-        vm.expectRevert(abi.encodeWithSelector(PythOracle.PriceAgeTooHigh.selector, 7200, 3600));
-        new PythOracle(address(mockPyth), 7200);
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.PriceAgeTooHigh.selector, 86_401, 86_400));
+        new PythOracle(address(mockPyth), 86_401);
     }
 
     function testPythOracle_Constructor_RevertsBelowMinPriceAge() public {
@@ -63,8 +63,33 @@ contract OracleBoundsTest is Test {
         PythOracle oracleMin = new PythOracle(address(mockPyth), 10);
         assertEq(oracleMin.maxPriceAge(), 10);
 
-        PythOracle oracleMax = new PythOracle(address(mockPyth), 3600);
-        assertEq(oracleMax.maxPriceAge(), 3600);
+        PythOracle oracleMax = new PythOracle(address(mockPyth), 86_400);
+        assertEq(oracleMax.maxPriceAge(), 86_400);
+    }
+
+    function testPythOracle_SetMaxPriceAgeForToken_AcceptsBoundsAndClear() public {
+        PythOracle oracle = new PythOracle(address(mockPyth), 60);
+        MockERC20 token = new MockERC20("Token", "TKN");
+
+        oracle.setMaxPriceAgeForToken(address(token), 10);
+        assertEq(oracle.effectiveMaxPriceAge(address(token)), 10);
+
+        oracle.setMaxPriceAgeForToken(address(token), 86_400);
+        assertEq(oracle.effectiveMaxPriceAge(address(token)), 86_400);
+
+        oracle.setMaxPriceAgeForToken(address(token), 0);
+        assertEq(oracle.effectiveMaxPriceAge(address(token)), 60);
+    }
+
+    function testPythOracle_SetMaxPriceAgeForToken_RevertsOutsideBounds() public {
+        PythOracle oracle = new PythOracle(address(mockPyth), 60);
+        MockERC20 token = new MockERC20("Token", "TKN");
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPriceAge.selector, 9, 10));
+        oracle.setMaxPriceAgeForToken(address(token), 9);
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.PriceAgeTooHigh.selector, 86_401, 86_400));
+        oracle.setMaxPriceAgeForToken(address(token), 86_401);
     }
 
     function testPythOracle_SetMaxConfidenceBps_RevertsBelowMinimum() public {
@@ -91,19 +116,19 @@ contract OracleBoundsTest is Test {
 
     function testPythEMA_SetMaxPriceAge_RevertsAboveMaximum() public {
         PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
-        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.PriceAgeTooHigh.selector, 3601, 3600));
-        feed.setMaxPriceAge(3601);
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        feed.setMaxPriceAge(86_401);
     }
 
     function testPythEMA_SetMaxPriceAge_AcceptsMaximum() public {
         PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
-        feed.setMaxPriceAge(3600);
-        assertEq(feed.maxPriceAge(), 3600);
+        feed.setMaxPriceAge(86_400);
+        assertEq(feed.maxPriceAge(), 86_400);
     }
 
     function testPythEMA_Constructor_RevertsAboveMaxPriceAge() public {
-        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.PriceAgeTooHigh.selector, 7200, 3600));
-        new PythEMAOracleFeed(address(mockPyth), 7200);
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        new PythEMAOracleFeed(address(mockPyth), 86_401);
     }
 
     function testPythEMA_Constructor_RevertsBelowMinPriceAge() public {
@@ -115,8 +140,33 @@ contract OracleBoundsTest is Test {
         PythEMAOracleFeed feedMin = new PythEMAOracleFeed(address(mockPyth), 10);
         assertEq(feedMin.maxPriceAge(), 10);
 
-        PythEMAOracleFeed feedMax = new PythEMAOracleFeed(address(mockPyth), 3600);
-        assertEq(feedMax.maxPriceAge(), 3600);
+        PythEMAOracleFeed feedMax = new PythEMAOracleFeed(address(mockPyth), 86_400);
+        assertEq(feedMax.maxPriceAge(), 86_400);
+    }
+
+    function testPythEMA_SetMaxPriceAgeForToken_AcceptsBoundsAndClear() public {
+        PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
+        MockERC20 token = new MockERC20("Token", "TKN");
+
+        feed.setMaxPriceAgeForToken(address(token), 10);
+        assertEq(feed.effectiveMaxPriceAge(address(token)), 10);
+
+        feed.setMaxPriceAgeForToken(address(token), 86_400);
+        assertEq(feed.effectiveMaxPriceAge(address(token)), 86_400);
+
+        feed.setMaxPriceAgeForToken(address(token), 0);
+        assertEq(feed.effectiveMaxPriceAge(address(token)), 60);
+    }
+
+    function testPythEMA_SetMaxPriceAgeForToken_RevertsOutsideBounds() public {
+        PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
+        MockERC20 token = new MockERC20("Token", "TKN");
+
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidPriceAge.selector, 9, 10));
+        feed.setMaxPriceAgeForToken(address(token), 9);
+
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        feed.setMaxPriceAgeForToken(address(token), 86_401);
     }
 
     function testPythEMA_SetMaxConfidenceBps_RevertsBelowMinimum() public {
@@ -211,12 +261,12 @@ contract OracleBoundsTest is Test {
 
     function testPythOracle_MaxPriceAgeLimit() public {
         PythOracle oracle = new PythOracle(address(mockPyth), 60);
-        assertEq(oracle.MAX_PRICE_AGE_LIMIT(), 3600);
+        assertEq(oracle.MAX_PRICE_AGE_LIMIT(), 86_400);
     }
 
     function testPythEMA_MaxPriceAgeLimit() public {
         PythEMAOracleFeed feed = new PythEMAOracleFeed(address(mockPyth), 60);
-        assertEq(feed.MAX_PRICE_AGE_LIMIT(), 3600);
+        assertEq(feed.MAX_PRICE_AGE_LIMIT(), 86_400);
     }
 
     function testChainlink_MaxPriceAgeLimit() public {

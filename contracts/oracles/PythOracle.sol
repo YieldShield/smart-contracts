@@ -44,6 +44,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Optional quote/USD feed for redemption-rate feeds (e.g. token/USDS * USDS/USD)
     mapping(address => bytes32) public tokenToQuotePriceFeedId;
 
+    /// @notice Optional per-token price age override. Zero means use maxPriceAge.
+    mapping(address => uint256) public maxPriceAgeForToken;
+
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
@@ -55,6 +58,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Emitted when max price age is updated
     event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when a per-token max price age is updated
+    event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
 
     /// @notice Emitted when max price deviation is updated
     event MaxPriceDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
@@ -108,8 +114,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Custom error for price age exceeding upper bound
     error PriceAgeTooHigh(uint256 provided, uint256 maximum);
 
-    /// @notice Maximum allowed maxPriceAge value (1 hour)
-    uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
+    /// @notice Maximum allowed maxPriceAge value (24 hours)
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
 
     /// @notice Custom error for invalid price deviation setting
     error InvalidDeviation(uint256 provided, uint256 min, uint256 max);
@@ -201,6 +207,22 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         maxPriceAge = _maxPriceAge;
 
         emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set a per-token max price age that overrides the global value.
+    /// @dev Set to 0 to clear the override and revert to maxPriceAge.
+    function setMaxPriceAgeForToken(address token, uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAgeForToken[token];
+        maxPriceAgeForToken[token] = _maxPriceAge;
+        emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Resolve the effective max-price-age for a token.
+    function effectiveMaxPriceAge(address token) public view returns (uint256) {
+        uint256 perToken = maxPriceAgeForToken[token];
+        return perToken == 0 ? maxPriceAge : perToken;
     }
 
     /// @notice Set the maximum allowed price deviation between spot and EMA
@@ -306,12 +328,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         bytes32 feedId = _getFeedId(token);
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
 
-        (bool baseStale, uint64 basePublishTime) = _isFeedStale(feedId);
+        (bool baseStale, uint64 basePublishTime) = _isFeedStale(token, feedId);
         if (quoteFeedId == bytes32(0)) {
             return (baseStale, basePublishTime);
         }
 
-        (bool quoteStale, uint64 quotePublishTime) = _isFeedStale(quoteFeedId);
+        (bool quoteStale, uint64 quotePublishTime) = _isFeedStale(token, quoteFeedId);
         uint64 oldestPublishTime = basePublishTime < quotePublishTime ? basePublishTime : quotePublishTime;
         return (baseStale || quoteStale, oldestPublishTime);
     }
@@ -396,20 +418,23 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     function _readPythPrice(address token, bytes32 feedId, bool useEma) internal view returns (uint256) {
         PythStructs.Price memory priceData;
         if (useEma) {
-            priceData = pyth.getEmaPriceNoOlderThan(feedId, maxPriceAge);
+            priceData = pyth.getEmaPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
         } else {
-            priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
+            priceData = pyth.getPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
         }
         _validateConfidence(token, priceData, useEma);
         return _convertPrice(token, priceData);
     }
 
-    function _isFeedStale(bytes32 feedId) internal view returns (bool isStale, uint64 publishTime) {
+    function _isFeedStale(address token, bytes32 feedId) internal view returns (bool isStale, uint64 publishTime) {
         try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
             uint256 rawPublishTime = priceData.publishTime;
             uint256 currentTime = block.timestamp;
-            isStale = (currentTime > rawPublishTime) && ((currentTime - rawPublishTime) > maxPriceAge);
             publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
+            if (rawPublishTime > currentTime) {
+                return (true, publishTime);
+            }
+            isStale = (currentTime - rawPublishTime) > effectiveMaxPriceAge(token);
         } catch {
             isStale = true;
             publishTime = 0;
