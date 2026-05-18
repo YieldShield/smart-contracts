@@ -126,6 +126,8 @@ library ErrorsLib {
     error TransferLocked(uint256 unlockTime);
     /// @notice Thrown when claim rewards cooldown is not met
     error ClaimRewardsCooldownNotMet(uint256 availableAt);
+    /// @notice Thrown when a future-dated timestamp is supplied where a past/current value is required
+    error FutureTimestamp(uint256 provided, uint256 currentTime);
 
     // ============ ERC4626 Validation Errors ============
     /// @notice Thrown when two ERC4626 vaults share the same underlying asset

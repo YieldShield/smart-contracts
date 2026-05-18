@@ -108,6 +108,12 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         uint64 newLastFeeClaimTime
     ) external onlyPool {
         if (_ownerOf(tokenId) == address(0)) revert ErrorsLib.TokenDoesNotExist();
+        // Defense in depth: reject future-dated fee-claim timestamps even though
+        // the pool today always passes block.timestamp. A future-dated value
+        // would freeze fee accrual until wall-clock catches up.
+        if (newLastFeeClaimTime > block.timestamp) {
+            revert ErrorsLib.FutureTimestamp(newLastFeeClaimTime, block.timestamp);
+        }
         ShieldPosition storage pos = positions[tokenId];
         pos.amount = newAmount;
         pos.valueAtDeposit = newValue;
