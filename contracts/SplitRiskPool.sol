@@ -1526,50 +1526,41 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 newFeeBaselineUsd =
             amountAfterFees > 0 ? Math.mulDiv(baselineAfterFeesUsd, remaining, amountAfterFees) : 0;
 
-        // === ATOMIC SECTION START ===
-
-        // 1. Mark old position withdrawn
-        IShieldReceiptNFT(shieldReceiptNFT).updatePosition(tokenId, 0, 0, 0, uint64(block.timestamp));
-
-        // 2. Burn old NFT
-        IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
-
-        // 3. Create new position with remaining amount
-        // Calculate new collateral amount proportionally to remaining amount.
-        // Floor here is safe — it can only undercount totalShieldCollateralAmount,
-        // never overcommit collateral.
+        // Compute the new position values up-front. Floor newCollateralAmount
+        // — undercounting totalShieldCollateralAmount can only over-reserve.
+        // Ceil newValueAtDeposit — totalValueAtDeposit sizes
+        // requiredCollateralUsd, so under-counting would weaken the
+        // collateral safety check.
         uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees);
-        // Calculate new valueAtDeposit proportionally from original (not from current price)
-        // This ensures collateralization is based on original deposit values.
-        // Round UP here: totalValueAtDeposit sizes requiredCollateralUsd in the
-        // collateral checks. Rounding down lets the pool's accounted required
-        // collateral drift below the true sum of per-position obligations after
-        // many partial withdrawals, which would weaken the safety check.
         uint256 newValueAtDeposit =
             Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
-        newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
-            .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
-        feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
-        delete feeValueBaselineUsd[tokenId];
-        delete lastClaimRewardsTime[tokenId];
 
-        // 4. Update pool totals (TOKEN-BASED)
-        // Deduct both withdrawn amount AND fees from totalShieldedTokens
-        // Fees were deducted from position in _calculateAndAccumulateFees
+        // === CEI: state updates first ===
+        // _safeMint via mintWithDepositTime calls onERC721Received on contract
+        // recipients. nonReentrant blocks re-entry into this contract, but a
+        // malicious receiver can still call other contracts that read this
+        // pool's view state. Apply all pool-total updates BEFORE the external
+        // mint so external readers see the post-withdrawal state.
+        IShieldReceiptNFT(shieldReceiptNFT).updatePosition(tokenId, 0, 0, 0, uint64(block.timestamp));
+        IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
+
         if (withdrawAmount > getWithdrawableBalance()) {
             revert ErrorsLib.InsufficientTokenBalance();
         }
         totalShieldedTokens -= (withdrawAmount + totalFees);
         poolState.shieldedTokenBalance -= withdrawAmount;
-
-        // Update total original deposit value (USD-BASED)
-        // Subtract full original valueAtDeposit, then add back proportionally reduced value
         totalValueAtDeposit -= pos.valueAtDeposit;
         totalValueAtDeposit += newValueAtDeposit;
         totalShieldCollateralAmount -= pos.collateralAmount;
         totalShieldCollateralAmount += newCollateralAmount;
 
-        // === ATOMIC SECTION END ===
+        delete feeValueBaselineUsd[tokenId];
+        delete lastClaimRewardsTime[tokenId];
+
+        // === Interactions: mint new NFT, transfer out ===
+        newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
+            .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
+        feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
 
         // Transfer (external call, safe after state updates)
         uint256 actualReceived = _transferOutAndGetReceived(preferredAsset, msg.sender, withdrawAmount);
