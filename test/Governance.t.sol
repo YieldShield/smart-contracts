@@ -137,9 +137,17 @@ contract MutableGovernanceTimelock {
     mapping(bytes32 => address[]) private _roleMembers;
     uint256 private _minDelay;
 
+    bytes32 private constant DEFAULT_ADMIN_ROLE_VALUE = 0x00;
+    bytes32 private constant PROPOSER_ROLE_VALUE = keccak256("PROPOSER_ROLE");
+    bytes32 private constant EXECUTOR_ROLE_VALUE = keccak256("EXECUTOR_ROLE");
+    bytes32 private constant CANCELLER_ROLE_VALUE = keccak256("CANCELLER_ROLE");
+
     constructor(uint256 minDelay, address[] memory extraAdmins) {
         _minDelay = minDelay;
         _setAdmin(address(this), true);
+        _setRole(PROPOSER_ROLE_VALUE, msg.sender, true);
+        _setRole(EXECUTOR_ROLE_VALUE, msg.sender, true);
+        _setRole(CANCELLER_ROLE_VALUE, msg.sender, true);
 
         uint256 extraAdminCount = extraAdmins.length;
         for (uint256 i = 0; i < extraAdminCount; i++) {
@@ -164,10 +172,14 @@ contract MutableGovernanceTimelock {
     }
 
     function _setAdmin(address account, bool enabled) internal {
-        if (enabled && !_roles[bytes32(0)][account]) {
-            _roleMembers[bytes32(0)].push(account);
-        } else if (!enabled && _roles[bytes32(0)][account]) {
-            address[] storage members = _roleMembers[bytes32(0)];
+        _setRole(DEFAULT_ADMIN_ROLE_VALUE, account, enabled);
+    }
+
+    function _setRole(bytes32 role, address account, bool enabled) internal {
+        if (enabled && !_roles[role][account]) {
+            _roleMembers[role].push(account);
+        } else if (!enabled && _roles[role][account]) {
+            address[] storage members = _roleMembers[role];
             for (uint256 i = 0; i < members.length; i++) {
                 if (members[i] == account) {
                     members[i] = members[members.length - 1];
@@ -176,7 +188,7 @@ contract MutableGovernanceTimelock {
                 }
             }
         }
-        _roles[bytes32(0)][account] = enabled;
+        _roles[role][account] = enabled;
     }
 
     function getRoleMemberCount(bytes32 role) external view returns (uint256) {
@@ -559,9 +571,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
-        address[] memory emptyAddrs = new address[](0);
-        TimelockController shortDelayTimelock =
-            TimelockController(payable(address(new YSTimelockController(12 hours, emptyAddrs, emptyAddrs, deployer))));
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock shortDelayTimelock = new MutableGovernanceTimelock(12 hours, noExtraAdmins);
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPoolFactory.initialize.selector, deployer, address(shortDelayTimelock), address(poolImpl)
         );
@@ -637,6 +648,93 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         );
         vm.prank(address(timelock));
         factory.setGovernanceTimelock(address(unsafeTimelock));
+    }
+
+    function test_SetGovernanceTimelock_RevertsForExtraOperationalRoleMembers() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+
+        address attacker = address(0xBAD);
+        address[] memory proposers = new address[](2);
+        proposers[0] = address(governor);
+        proposers[1] = attacker;
+        address[] memory executors = new address[](1);
+        executors[0] = address(governor);
+        TimelockController unsafeTimelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, proposers, executors, deployer)))
+        );
+        unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockInvalidRoleMemberCount.selector,
+                address(unsafeTimelock),
+                unsafeTimelock.PROPOSER_ROLE(),
+                uint256(2)
+            )
+        );
+        vm.prank(address(timelock));
+        factory.setGovernanceTimelock(address(unsafeTimelock));
+    }
+
+    function test_SetGovernanceTimelock_RevertsWhenOperationalControllerChanges() public {
+        SplitRiskPool poolImpl = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
+
+        address attacker = address(0xBAD);
+        address[] memory proposers = new address[](1);
+        proposers[0] = attacker;
+        address[] memory executors = new address[](1);
+        executors[0] = attacker;
+        TimelockController unsafeTimelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, proposers, executors, deployer)))
+        );
+        unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockRoleMemberMismatch.selector,
+                address(unsafeTimelock),
+                unsafeTimelock.PROPOSER_ROLE(),
+                address(governor),
+                attacker
+            )
+        );
+        vm.prank(address(timelock));
+        factory.setGovernanceTimelock(address(unsafeTimelock));
+    }
+
+    function test_YSTimelockConstructor_RevertsBelowPublicFloor() public {
+        vm.chainId(421614);
+
+        address[] memory emptyAddrs = new address[](0);
+        vm.expectRevert(
+            abi.encodeWithSelector(YSTimelockController.PublicTimelockDelayTooShort.selector, 1 days, 2 days)
+        );
+        new YSTimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+    }
+
+    function test_YSTimelockUpdateDelay_RevertsBelowPublicFloor() public {
+        vm.chainId(421614);
+
+        address[] memory emptyAddrs = new address[](0);
+        YSTimelockController publicTimelock = new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(YSTimelockController.PublicTimelockDelayTooShort.selector, 1 days, 2 days)
+        );
+        vm.prank(address(publicTimelock));
+        publicTimelock.updateDelay(1 days);
+    }
+
+    function test_YSTimelockUpdateDelay_AllowsShortLocalDelay() public {
+        address[] memory emptyAddrs = new address[](0);
+        YSTimelockController localTimelock = new YSTimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+
+        vm.prank(address(localTimelock));
+        localTimelock.updateDelay(1 hours);
+
+        assertEq(localTimelock.getMinDelay(), 1 hours);
     }
 
     function test_Execute_RevertsWithoutQueue() public {

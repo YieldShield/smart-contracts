@@ -24,7 +24,7 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
  * yarn deploy --file DeployYieldShieldProduction.s.sol --network arbitrum
  */
 contract DeployYieldShieldProduction is ScaffoldETHDeploy {
-    uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 1 days;
+    uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;

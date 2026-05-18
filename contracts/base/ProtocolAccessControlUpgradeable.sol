@@ -25,6 +25,10 @@ abstract contract ProtocolAccessControlUpgradeable is
     error GovernanceTimelockAdminRetained(address candidate, address retainedAdmin);
     /// @notice Thrown when the timelock candidate has admin role members beyond the candidate itself.
     error GovernanceTimelockHasExtraAdmins(address candidate, uint256 adminCount);
+    error GovernanceTimelockInvalidRoleMemberCount(address candidate, bytes32 role, uint256 memberCount);
+    error GovernanceTimelockRoleMemberMismatch(
+        address candidate, bytes32 role, address expectedMember, address actualMember
+    );
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
@@ -38,6 +42,9 @@ abstract contract ProtocolAccessControlUpgradeable is
     bytes4 private constant GET_ROLE_MEMBER_COUNT_SELECTOR = bytes4(keccak256("getRoleMemberCount(bytes32)"));
     bytes4 private constant GET_ROLE_MEMBER_SELECTOR = bytes4(keccak256("getRoleMember(bytes32,uint256)"));
     bytes32 private constant DEFAULT_ADMIN_ROLE_VALUE = 0x00;
+    bytes32 private constant PROPOSER_ROLE_VALUE = keccak256("PROPOSER_ROLE");
+    bytes32 private constant EXECUTOR_ROLE_VALUE = keccak256("EXECUTOR_ROLE");
+    bytes32 private constant CANCELLER_ROLE_VALUE = keccak256("CANCELLER_ROLE");
     uint256 private constant MIN_PUBLIC_GOVERNANCE_DELAY = 2 days;
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
@@ -67,6 +74,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @param newGovernance The address of the proposed new governance timelock
     function setGovernanceTimelock(address newGovernance) public virtual onlyGovernance {
         _validateGovernanceTimelock(newGovernance, _governanceTimelockImplementationHash());
+        _validateGovernanceTimelockOperationalRolesMatch(newGovernance, _governanceTimelock);
         _validateKnownDefaultAdminCleared(newGovernance, owner());
         _validateKnownDefaultAdminCleared(newGovernance, _governanceTimelock);
         _pendingGovernanceTimelock = newGovernance;
@@ -79,6 +87,7 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (_pendingGovernanceTimelock == address(0)) revert NoPendingGovernance();
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
         _validateGovernanceTimelock(_pendingGovernanceTimelock, _governanceTimelockImplementationHash());
+        _validateGovernanceTimelockOperationalRolesMatch(_pendingGovernanceTimelock, _governanceTimelock);
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);
         address previousGovernance = _governanceTimelock;
@@ -143,6 +152,60 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (soleAdmin != candidate) {
             revert GovernanceTimelockAdminRetained(candidate, soleAdmin);
         }
+
+        _validateGovernanceTimelockOperationalRoleShape(candidate);
+    }
+
+    function _validateGovernanceTimelockOperationalRoleShape(address candidate)
+        internal
+        view
+        returns (address controller)
+    {
+        controller = _getSoleRoleMember(candidate, PROPOSER_ROLE_VALUE);
+        if (controller == address(0) || controller == candidate) {
+            revert GovernanceTimelockRoleMemberMismatch(candidate, PROPOSER_ROLE_VALUE, address(1), controller);
+        }
+
+        address executor = _getSoleRoleMember(candidate, EXECUTOR_ROLE_VALUE);
+        if (executor != controller) {
+            revert GovernanceTimelockRoleMemberMismatch(candidate, EXECUTOR_ROLE_VALUE, controller, executor);
+        }
+
+        address canceller = _getSoleRoleMember(candidate, CANCELLER_ROLE_VALUE);
+        if (canceller != controller) {
+            revert GovernanceTimelockRoleMemberMismatch(candidate, CANCELLER_ROLE_VALUE, controller, canceller);
+        }
+    }
+
+    function _validateGovernanceTimelockOperationalRolesMatch(address candidate, address expectedTimelock)
+        internal
+        view
+    {
+        if (expectedTimelock == address(0) || expectedTimelock.code.length == 0) {
+            return;
+        }
+
+        address expectedController = _getSoleRoleMember(expectedTimelock, PROPOSER_ROLE_VALUE);
+        address candidateController = _getSoleRoleMember(candidate, PROPOSER_ROLE_VALUE);
+        if (candidateController != expectedController) {
+            revert GovernanceTimelockRoleMemberMismatch(
+                candidate, PROPOSER_ROLE_VALUE, expectedController, candidateController
+            );
+        }
+    }
+
+    function _getSoleRoleMember(address candidate, bytes32 role) internal view returns (address member) {
+        (bool success, bytes memory data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, role));
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+        uint256 memberCount = abi.decode(data, (uint256));
+        if (memberCount != 1) {
+            revert GovernanceTimelockInvalidRoleMemberCount(candidate, role, memberCount);
+        }
+
+        (success, data) = candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_SELECTOR, role, uint256(0)));
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+        member = abi.decode(data, (address));
     }
 
     function _governanceTimelockImplementationHash() internal view returns (bytes32 codehash) {
