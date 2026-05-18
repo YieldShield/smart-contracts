@@ -287,6 +287,24 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
     }
 
+    /// @dev Try `getPriceUnsafe(token)` on the underlying oracle first; if it
+    ///      isn't exposed (legacy oracles that pre-date the safe/unsafe rename),
+    ///      fall back to the safe `getPrice`. Reverts on a fundamentally bad
+    ///      response just like the strict path.
+    function _underlyingPriceUnsafe(address underlying) internal view returns (uint256) {
+        address oracle = address(underlyingPriceOracle);
+        (bool success, bytes memory data) =
+            oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", underlying));
+        if (success && data.length >= 32) {
+            return abi.decode(data, (uint256));
+        }
+        // Underlying oracle does not advertise the unsafe variant — use the
+        // safe getter. Some integrations may not need the gate; the safer
+        // default is to fail closed during disputes, which is what getPrice
+        // does after the H-2 rename.
+        return underlyingPriceOracle.getPrice(underlying);
+    }
+
     function _getPriceFromConfig(address vault, VaultConfig memory config, bool useCircuitBreaker)
         internal
         view
@@ -299,11 +317,15 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        // After the safe-default rename `getPrice` is the protected variant on every feed
-        // (including CompositeOracle, which honours the dual-feed challenge gate). The
-        // unprotected path is reserved for explicit read-only callers and is intentionally
-        // not used here even when `useCircuitBreaker == false`.
-        uint256 underlyingPrice = underlyingPriceOracle.getPrice(config.underlying);
+        // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end.
+        // The vault's unsafe getter calls into here with useCircuitBreaker==false
+        // because a caller explicitly opted out of the challenge gate (e.g.
+        // SplitRiskPool's TVL view path that must keep producing a value during
+        // a pending challenge). Delegate the underlying read accordingly: use
+        // getPriceUnsafe when the caller asked for unsafe, getPrice otherwise.
+        uint256 underlyingPrice = useCircuitBreaker
+            ? underlyingPriceOracle.getPrice(config.underlying)
+            : _underlyingPriceUnsafe(config.underlying);
         uint8 priceDecimals = underlyingPriceOracle.decimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
