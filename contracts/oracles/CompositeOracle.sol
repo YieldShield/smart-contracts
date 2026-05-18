@@ -193,6 +193,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
 
+        // Codex P2 follow-up: any reconfiguration of the token oracle
+        // invalidates a prior pending removal schedule — the migration window
+        // applied to the *previous* config, not this new one.
+        _clearScheduledRemoval(token);
+
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         // BUG-2 FIX: Emit events if challenge was pending or backup was active
@@ -232,6 +237,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (token == address(0)) revert InvalidTokenAddress(token);
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
+        _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
@@ -263,6 +269,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // BUG-1 FIX: Validate that primary and backup feeds are different
         if (primaryFeed == backupFeed) revert SameFeedNotAllowed(primaryFeed);
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
+        _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
@@ -311,7 +318,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     ///         the removal via scheduleRemoveTokenOracleFeed, wait
     ///         FEED_REMOVAL_DELAY, then call removeTokenOracleFeed. Users
     ///         and dependent pools have the window to migrate or unwind.
+    /// @dev Codex P2 follow-up: schedules expire after FEED_REMOVAL_EXPIRY
+    ///      (default 7 days after the delay) so a stale schedule cannot wait
+    ///      indefinitely and surprise integrators long after the original
+    ///      migration window has passed. Schedules are also cleared whenever
+    ///      the token's oracle config changes (setTokenOracleFeed*) so the
+    ///      migration window applies to the actually-being-removed config.
     uint256 public constant FEED_REMOVAL_DELAY = 1 days;
+    uint256 public constant FEED_REMOVAL_EXPIRY = 7 days;
 
     mapping(address => uint256) public scheduledRemovalTime;
 
@@ -320,6 +334,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     error TokenOracleFeedRemovalNotScheduled(address token);
     error TokenOracleFeedRemovalTooEarly(address token, uint256 executableAt);
+    error TokenOracleFeedRemovalExpired(address token, uint256 expiredAt);
 
     function scheduleRemoveTokenOracleFeed(address token) external onlyAuthorized {
         if (!_isTokenSupported[token]) revert TokenNotSupported(token);
@@ -329,19 +344,38 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     function cancelScheduledRemoveTokenOracleFeed(address token) external onlyAuthorized {
+        // slither-disable-next-line incorrect-equality
         if (scheduledRemovalTime[token] == 0) revert TokenOracleFeedRemovalNotScheduled(token);
         delete scheduledRemovalTime[token];
         emit TokenOracleFeedRemovalCancelled(token);
     }
 
+    /// @dev Internal helper called from every setTokenOracleFeed* path so a
+    ///      mid-window oracle reconfiguration invalidates the prior removal
+    ///      schedule. The new config gets a fresh migration window if removal
+    ///      is later intended.
+    function _clearScheduledRemoval(address token) internal {
+        if (scheduledRemovalTime[token] != 0) {
+            delete scheduledRemovalTime[token];
+            emit TokenOracleFeedRemovalCancelled(token);
+        }
+    }
+
     /// @inheritdoc ICompositeOracle
     /// @dev L-4: timelocked. Requires a prior scheduleRemoveTokenOracleFeed
-    ///      call at least FEED_REMOVAL_DELAY ago.
+    ///      call at least FEED_REMOVAL_DELAY ago and at most
+    ///      (FEED_REMOVAL_DELAY + FEED_REMOVAL_EXPIRY) ago.
     function removeTokenOracleFeed(address token) external onlyAuthorized {
         if (!_isTokenSupported[token]) revert TokenNotSupported(token);
         uint256 executableAt = scheduledRemovalTime[token];
+        // slither-disable-next-line incorrect-equality
         if (executableAt == 0) revert TokenOracleFeedRemovalNotScheduled(token);
         if (block.timestamp < executableAt) revert TokenOracleFeedRemovalTooEarly(token, executableAt);
+        uint256 expiresAt = executableAt + FEED_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledRemovalTime[token];
+            revert TokenOracleFeedRemovalExpired(token, expiresAt);
+        }
         delete scheduledRemovalTime[token];
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
