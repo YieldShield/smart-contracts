@@ -1639,11 +1639,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
 
         // 3. Create new position with remaining amount
-        // Calculate new collateral amount proportionally to remaining amount
-        uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees);
-        // Calculate new valueAtDeposit proportionally from original (not from current price)
-        // This ensures collateralization is based on original deposit values
-        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees);
+        // L-13: round the recalculated value/collateral UP (Ceil) so repeated
+        // partial withdrawals don't slowly under-collateralise the remaining
+        // position relative to its USD value. The asymmetry slightly inflates
+        // totalValueAtDeposit / totalShieldCollateralAmount per call — bounded
+        // by 1 wei per recompute — but is the correct rounding direction for
+        // the user's protection.
+        uint256 newCollateralAmount =
+            Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees, Math.Rounding.Ceil);
+        uint256 newValueAtDeposit =
+            Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
         newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
             .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
