@@ -66,7 +66,14 @@ if (cleanResult.status !== 0) {
     process.exit(cleanResult.status || 1);
 }
 
-const buildResult = runForge(["build", "--sizes"]);
+const buildResult = runForge([
+    "build",
+    "--sizes",
+    "--skip",
+    "test",
+    "--skip",
+    "script",
+]);
 process.stdout.write(buildResult.stdout);
 process.stderr.write(buildResult.stderr);
 
