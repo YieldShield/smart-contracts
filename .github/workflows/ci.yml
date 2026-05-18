@@ -80,7 +80,8 @@ jobs:
         run: npm ci
 
       - name: Check contract size limits
-        continue-on-error: true
+        env:
+          CONTRACT_SIZE_REPORT_ONLY: "true"
         run: npm run size-check
 
   coverage:

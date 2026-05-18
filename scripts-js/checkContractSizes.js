@@ -12,6 +12,11 @@ const WARNING_MARGIN = Number.parseInt(
     process.env.FOUNDRY_SIZE_WARNING_MARGIN || "512",
     10,
 );
+const REPORT_ONLY = process.env.CONTRACT_SIZE_REPORT_ONLY === "true";
+const SIZE_LIMIT_ERROR_MARKERS = [
+    "some contracts exceed the runtime size limit",
+    "some contracts exceed the initcode size limit",
+];
 
 function stripAnsi(value) {
     return value.replace(/\u001b\[[0-9;]*m/g, "");
@@ -59,6 +64,14 @@ function formatRow(row) {
     return `${row.contract}: runtime ${row.runtimeSize} B (margin ${row.runtimeMargin} B), initcode ${row.initcodeSize} B (margin ${row.initcodeMargin} B)`;
 }
 
+function isSizeLimitOnlyFailure(result) {
+    const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
+    return (
+        output.includes("Compiler run successful!") &&
+        SIZE_LIMIT_ERROR_MARKERS.some((marker) => output.includes(marker))
+    );
+}
+
 const cleanResult = runForge(["clean"]);
 if (cleanResult.status !== 0) {
     process.stdout.write(cleanResult.stdout);
@@ -77,7 +90,9 @@ const buildResult = runForge([
 process.stdout.write(buildResult.stdout);
 process.stderr.write(buildResult.stderr);
 
-if (buildResult.status !== 0) {
+const sizeLimitOnlyFailure =
+    buildResult.status !== 0 && isSizeLimitOnlyFailure(buildResult);
+if (buildResult.status !== 0 && !sizeLimitOnlyFailure) {
     process.exit(buildResult.status || 1);
 }
 
@@ -113,13 +128,21 @@ if (nearLimitRows.length > 0) {
 }
 
 if (violations.length > 0) {
-    console.error("Contract size limit violations detected:");
+    const logViolation = REPORT_ONLY ? console.warn : console.error;
+    const suffix = REPORT_ONLY ? " (report-only)" : "";
+    logViolation(`Contract size limit violations detected${suffix}:`);
     for (const row of violations) {
-        console.error(`- ${formatRow(row)}`);
+        logViolation(`- ${formatRow(row)}`);
     }
-    process.exit(1);
+    if (REPORT_ONLY) {
+        console.log(
+            `Checked ${deployableRows.length} deployable contracts from a clean build. Size violations are reported above.`,
+        );
+    } else {
+        process.exit(1);
+    }
+} else {
+    console.log(
+        `Checked ${deployableRows.length} deployable contracts from a clean build. No size limit violations detected.`,
+    );
 }
-
-console.log(
-    `Checked ${deployableRows.length} deployable contracts from a clean build. No size limit violations detected.`,
-);
