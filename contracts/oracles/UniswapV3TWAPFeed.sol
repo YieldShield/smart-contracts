@@ -108,6 +108,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Custom error for pools below the configured average-liquidity floor
     error InsufficientTWAPLiquidity(address pool, uint128 observedLiquidity, uint128 minimumLiquidity);
 
+    /// @notice Thrown when the computed TWAP price truncates to zero after decimal normalization
+    error PriceTruncatedToZero(address token);
+
     /// @notice Constructor
     /// @param _twapPeriod TWAP observation period in seconds
     /// @param _quoteToken Quote token address (e.g., USDC)
@@ -222,8 +225,12 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         // priceInQuoteToken is in 18 decimals, normalizedQuotePrice is in 18 decimals
         uint256 tokenUSDPrice = (priceInQuoteToken * normalizedQuotePrice) / 1e18;
 
-        // Return in 8 decimals
-        return tokenUSDPrice.normalize(18, 8);
+        // Return in 8 decimals. If stacked divisions during normalization
+        // truncate to zero (micro-USD-priced assets), fail closed rather than
+        // letting downstream consumers treat the asset as worthless.
+        uint256 normalized = tokenUSDPrice.normalize(18, 8);
+        if (normalized == 0) revert PriceTruncatedToZero(token);
+        return normalized;
     }
 
     /// @inheritdoc IOracleFeed
