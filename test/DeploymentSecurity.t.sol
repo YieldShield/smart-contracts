@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
@@ -235,7 +236,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {
         address[] memory emptyAccounts = new address[](0);
-        timelock = new TimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer);
+        timelock = TimelockController(payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer))));
         ysToken = new YSToken(bootstrapHolder);
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
 

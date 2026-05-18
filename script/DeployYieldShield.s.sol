@@ -21,6 +21,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
 import { MockTokenFaucet } from "../contracts/MockTokenFaucet.sol";
@@ -90,12 +91,12 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
 
-        TimelockController timelock = new TimelockController(
+        TimelockController timelock = TimelockController(payable(address(new YSTimelockController(
             minDelay,
             proposers,
             executors,
             deployer // Bootstrap admin until governance roles are assigned
-        );
+        ))));
         timelockAddr = address(timelock);
         console.log("Timelock Controller deployed at:", timelockAddr);
         console.log("Timelock delay set to:", minDelay, "seconds");

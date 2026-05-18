@@ -356,6 +356,11 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
         vm.stopPrank();
 
+        // H-7: approve is now lock-gated; warp past the lock window so the
+        // approval succeeds and we can still assert the access-control check
+        // on claimRewards.
+        vm.warp(block.timestamp + shieldNFT.transferLockPeriod());
+
         vm.prank(shielded1);
         shieldNFT.approve(operator, tokenId);
 
