@@ -68,17 +68,43 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
     }
 
     /// @notice Get position data for a token ID
+    /// @dev Returns the stored snapshot. If the pool reverts (paused, upgraded,
+    ///      cleared), the returned `amount` is the stale stored value. Use
+    ///      {getPositionWithFreshness} to detect that case explicitly.
     function getPosition(uint256 tokenId) external view returns (ProtectorPosition memory) {
-        ProtectorPosition memory position = positions[tokenId];
+        (ProtectorPosition memory position,) = _getPositionWithFreshness(tokenId);
+        return position;
+    }
+
+    /// @notice Get position data with an explicit freshness flag (M-16)
+    /// @return position The position struct, with `amount` set to the
+    ///         pool's current view if available, or the stored snapshot otherwise.
+    /// @return isAmountFresh True iff the pool successfully returned a current
+    ///         amount; false when the stored snapshot was used as fallback.
+    function getPositionWithFreshness(uint256 tokenId)
+        external
+        view
+        returns (ProtectorPosition memory position, bool isAmountFresh)
+    {
+        return _getPositionWithFreshness(tokenId);
+    }
+
+    function _getPositionWithFreshness(uint256 tokenId)
+        internal
+        view
+        returns (ProtectorPosition memory position, bool isAmountFresh)
+    {
+        position = positions[tokenId];
         if (msg.sender == pool || pool == address(0) || position.amount == 0) {
-            return position;
+            return (position, true);
         }
 
         try IProtectorPositionAmountView(pool).getProtectorPositionAmount(tokenId) returns (uint256 currentAmount) {
             position.amount = currentAmount;
-        } catch { }
-
-        return position;
+            isAmountFresh = true;
+        } catch {
+            isAmountFresh = false;
+        }
     }
 
     /// @notice Update amount for a position (only pool can call)
