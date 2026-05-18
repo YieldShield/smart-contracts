@@ -74,7 +74,12 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
         pyth = IPyth(_pythAddress);
         maxPriceAge = _maxPriceAge;
-        maxConfidenceBps = 200;
+        // M-6: this feed only ever reads EMA prices, so default the confidence
+        // threshold to the more permissive EMA band (10%) rather than the
+        // 2% spot threshold. Pyth EMA conf is systematically wider during
+        // volatile windows — using the spot threshold here causes reverts
+        // precisely when an EMA fallback would be most useful.
+        maxConfidenceBps = 1000;
     }
 
     /// @notice Set the price feed ID for a token

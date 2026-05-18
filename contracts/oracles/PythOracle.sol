@@ -32,6 +32,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Maximum allowed Pyth confidence interval relative to price (basis points, default: 200 = 2%)
     uint256 public maxConfidenceBps;
 
+    /// @notice M-6: separate confidence threshold for EMA reads. Pyth's EMA
+    ///         conf is systematically wider than spot during volatile windows,
+    ///         so EMA needs a more permissive band — otherwise the protected
+    ///         circuit-breaker path reverts precisely when EMA is most useful.
+    uint256 public maxEmaConfidenceBps;
+
     /// @notice Mapping from token address to Pyth price feed ID
     mapping(address => bytes32) public tokenToPriceFeedId;
 
@@ -55,6 +61,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Emitted when max accepted Pyth confidence interval is updated
     event MaxConfidenceBpsUpdated(uint256 oldConfidenceBps, uint256 newConfidenceBps);
+
+    /// @notice Emitted when the EMA confidence threshold is updated (M-6)
+    event MaxEmaConfidenceBpsUpdated(uint256 oldConfidenceBps, uint256 newConfidenceBps);
 
     /// @notice Emitted when price feeds are updated
     event PriceFeedsUpdated(bytes32[] feedIds);
@@ -121,7 +130,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         pyth = IPyth(_pythAddress);
         maxPriceAge = _maxPriceAge;
         maxPriceDeviation = 500; // Default 5% deviation threshold
-        maxConfidenceBps = 200; // Default 2% confidence threshold
+        maxConfidenceBps = 200; // Default 2% spot confidence threshold
+        maxEmaConfidenceBps = 1000; // Default 10% EMA confidence threshold (M-6)
     }
 
     /// @notice Update price feeds with given update data
@@ -215,6 +225,17 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         uint256 oldConfidenceBps = maxConfidenceBps;
         maxConfidenceBps = _maxConfidenceBps;
         emit MaxConfidenceBpsUpdated(oldConfidenceBps, _maxConfidenceBps);
+    }
+
+    /// @notice Set the maximum accepted EMA confidence interval relative to price (M-6)
+    /// @param _maxEmaConfidenceBps Maximum confidence interval in basis points (0.1%-50%)
+    function setMaxEmaConfidenceBps(uint256 _maxEmaConfidenceBps) external onlyOwner {
+        if (_maxEmaConfidenceBps < 10 || _maxEmaConfidenceBps > 5000) {
+            revert InvalidConfidenceBps(_maxEmaConfidenceBps, 10, 5000);
+        }
+        uint256 oldConfidenceBps = maxEmaConfidenceBps;
+        maxEmaConfidenceBps = _maxEmaConfidenceBps;
+        emit MaxEmaConfidenceBpsUpdated(oldConfidenceBps, _maxEmaConfidenceBps);
     }
 
     /// @notice Get the protected (circuit-breaker validated) price for a token
@@ -344,14 +365,18 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return result;
     }
 
-    function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {
+    function _validateConfidence(address token, PythStructs.Price memory priceData, bool useEma) internal view {
         if (priceData.price <= 0) {
             return;
         }
         uint256 price = uint256(uint64(priceData.price));
         uint256 confidence = uint256(priceData.conf);
-        if (confidence * 10_000 > price * maxConfidenceBps) {
-            revert PriceConfidenceTooWide(token, confidence, price, maxConfidenceBps);
+        // M-6: EMA conf is systematically wider than spot during volatility —
+        // exactly when we want EMA as a stable fallback. Use a relaxed
+        // threshold for EMA so the protected path doesn't revert in shocks.
+        uint256 threshold = useEma ? maxEmaConfidenceBps : maxConfidenceBps;
+        if (confidence * 10_000 > price * threshold) {
+            revert PriceConfidenceTooWide(token, confidence, price, threshold);
         }
     }
 
@@ -375,7 +400,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         } else {
             priceData = pyth.getPriceNoOlderThan(feedId, maxPriceAge);
         }
-        _validateConfidence(token, priceData);
+        _validateConfidence(token, priceData, useEma);
         return _convertPrice(token, priceData);
     }
 
