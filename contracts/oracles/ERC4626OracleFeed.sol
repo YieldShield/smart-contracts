@@ -206,10 +206,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return _getValidatedPrice(vault, true);
     }
 
-    /// @notice Unprotected price getter that skips the upper-bound share-rate deviation cap
-    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Still applies
-    ///      the lower-bound share-rate floor and underlying staleness check; only the
-    ///      upper-bound deviation handling differs from `getPrice`.
+    /// @notice Unprotected price getter that skips underlying circuit-breaker gates
+    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Share-rate
+    ///      bounds still fail closed; only the underlying oracle path uses `getPriceUnsafe`.
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
     function getPriceUnsafe(address vault) external view returns (uint256) {
@@ -219,9 +218,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 
-        (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
-        if (isStale) {
-            revert StaleUnderlyingPrice(vault, config.underlying);
+        if (useCircuitBreaker) {
+            (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
+            if (isStale) {
+                revert StaleUnderlyingPrice(vault, config.underlying);
+            }
         }
 
         return _getPriceFromConfig(vault, config, useCircuitBreaker);
@@ -287,24 +288,6 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
     }
 
-    /// @dev Try `getPriceUnsafe(token)` on the underlying oracle first; if it
-    ///      isn't exposed (legacy oracles that pre-date the safe/unsafe rename),
-    ///      fall back to the safe `getPrice`. Reverts on a fundamentally bad
-    ///      response just like the strict path.
-    function _underlyingPriceUnsafe(address underlying) internal view returns (uint256) {
-        address oracle = address(underlyingPriceOracle);
-        (bool success, bytes memory data) =
-            oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", underlying));
-        if (success && data.length >= 32) {
-            return abi.decode(data, (uint256));
-        }
-        // Underlying oracle does not advertise the unsafe variant — use the
-        // safe getter. Some integrations may not need the gate; the safer
-        // default is to fail closed during disputes, which is what getPrice
-        // does after the H-2 rename.
-        return underlyingPriceOracle.getPrice(underlying);
-    }
-
     function _getPriceFromConfig(address vault, VaultConfig memory config, bool useCircuitBreaker)
         internal
         view
@@ -317,27 +300,58 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end.
-        // The vault's unsafe getter calls into here with useCircuitBreaker==false
-        // because a caller explicitly opted out of the challenge gate (e.g.
-        // SplitRiskPool's TVL view path that must keep producing a value during
-        // a pending challenge). Delegate the underlying read accordingly: use
-        // getPriceUnsafe when the caller asked for unsafe, getPrice otherwise.
-        uint256 underlyingPrice = useCircuitBreaker
-            ? underlyingPriceOracle.getPrice(config.underlying)
-            : _underlyingPriceUnsafe(config.underlying);
-        uint8 priceDecimals = underlyingPriceOracle.decimals();
+        // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
+        // the vault's unsafe getter forwards useCircuitBreaker=false so the
+        // underlying read must take the unsafe path too. `_getUnderlyingPrice`
+        // (introduced on main alongside this PR) picks the right delegate and
+        // propagates revert reasons faithfully.
+        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
+        uint8 priceDecimals = _getUnderlyingPriceDecimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
     }
 
-    function _boundedAssetsPerShare(
-        address vault,
-        uint256 assetsPerShare,
-        VaultConfig memory config,
-        bool failClosedOnUpperDeviation
-    ) internal pure returns (uint256) {
+    function _getUnderlyingPrice(address underlying, bool useCircuitBreaker) internal view returns (uint256) {
+        if (useCircuitBreaker) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", underlying));
+
+        if (success) {
+            if (data.length >= 32) {
+                return abi.decode(data, (uint256));
+            }
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        if (data.length == 0) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
+
+    function _getUnderlyingPriceDecimals() internal view returns (uint8) {
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("decimals()"));
+
+        if (success && data.length >= 32) {
+            return abi.decode(data, (uint8));
+        }
+
+        return ConstantsLib.USD_DECIMALS;
+    }
+
+    function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config, bool)
+        internal
+        pure
+        returns (uint256)
+    {
         uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
         if (referenceAssetsPerShare == 0) {
             revert SharePriceDeviationTooHigh(

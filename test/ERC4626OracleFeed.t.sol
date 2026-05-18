@@ -128,14 +128,12 @@ contract ERC4626OracleFeedTest is Test {
     function test_GetPriceWithCircuitBreaker_UsesProtectedUnderlyingPrice() public {
         underlyingOracle.setShouldRevertOnCircuitBreaker(true);
 
-        // The unsafe alias still uses the underlying oracle's `getPrice`, which under the
-        // safe-default rename also surfaces the simulated circuit-breaker revert. The mock
-        // honours `shouldRevertOnCircuitBreaker` on both `getPrice` and `getPriceUnsafe`-of-getPrice
-        // paths; only the explicit `getPriceUnsafe` getter bypasses it.
         vm.expectRevert(
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(underlyingAsset))
         );
         erc4626Feed.getPrice(address(vault));
+
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), UNDERLYING_PRICE);
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenUnderlyingChallengePending() public {
@@ -161,6 +159,22 @@ contract ERC4626OracleFeedTest is Test {
             )
         );
         challengedFeed.getPrice(address(vault));
+    }
+
+    function test_GetPriceUnsafe_BypassesUnderlyingCompositeChallengeGate() public {
+        CompositeOracle compositeUnderlyingOracle = new CompositeOracle();
+        MockOracle primary = new MockOracle();
+        MockOracle backup = new MockOracle();
+        primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
+        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
+        compositeUnderlyingOracle.setTokenOracleFeedDual(address(underlyingAsset), address(primary), address(backup));
+
+        ERC4626OracleFeed challengedFeed = new ERC4626OracleFeed(address(compositeUnderlyingOracle));
+        challengedFeed.registerVault(address(vault), address(underlyingAsset));
+
+        compositeUnderlyingOracle.challengeForToken(address(underlyingAsset));
+
+        assertEq(challengedFeed.getPriceUnsafe(address(vault)), UNDERLYING_PRICE);
     }
 
     function test_GetPrice_CalculatesWithDeposit() public {
