@@ -162,7 +162,12 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         assertEq(pool.totalShieldedTokens(), 0, "no collateral value should be locked");
     }
 
-    function test_ShieldedOracleChallenge_AllowsFullSameAssetExitButBlocksFeeAccrualPaths() public {
+    function test_ShieldedOracleChallenge_BlocksAllExitsAndFeeAccrualPaths() public {
+        // M-13: previously full same-asset exit was allowed during a pending
+        // challenge as a liveness escape hatch — but that let users
+        // self-trigger a challenge to skip yield fees on exit. Now every
+        // priced exit path reverts during a pending challenge; users must
+        // wait for the challenge to resolve.
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
 
@@ -179,13 +184,8 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.claimRewards(shieldTokenId);
 
-        uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
-        assertEq(
-            shieldedToken.balanceOf(shielded),
-            shieldedBalanceBefore + 1_000e18,
-            "full same-asset exit should bypass disputed fee pricing"
-        );
         vm.stopPrank();
 
         vm.prank(protector);
@@ -193,7 +193,12 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
-    function test_ShieldedOracleChallengeablePrice_AllowsFullSameAssetExit() public {
+    function test_ShieldedOracleChallengeablePrice_BlocksSameAssetExit() public {
+        // M-13: challengeable-price (deviation has crossed threshold but no
+        // one has formally challenged yet) is treated the same as a pending
+        // challenge — exits revert. Otherwise an attacker can deliberately
+        // step into the deviation window to exit without paying fees on the
+        // disputed yield.
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
 
@@ -202,16 +207,9 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
 
         backupOracle.setPrice(address(shieldedToken), 2e8);
 
-        uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
         vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
-
-        assertEq(
-            shieldedToken.balanceOf(shielded),
-            shieldedBalanceBefore + 1_000e18,
-            "challengeable pricing should not trap same-asset exits"
-        );
-        assertEq(pool.totalShieldedTokens(), 0, "position should be cleared after full exit");
     }
 
     function test_PoolGovernanceMigrationSyncsProtocolFeeRecipientWhenAligned() public {
@@ -295,8 +293,15 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
             IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(newTokenId);
 
         assertEq(newPosition.amount, remaining);
-        assertEq(newPosition.valueAtDeposit, (1_000e8 * remaining) / amountAfterFees);
-        assertEq(newPosition.collateralAmount, (1_500e18 * remaining) / amountAfterFees);
+        // L-13: partial-withdraw recomputes now round UP so the remaining
+        // position is not penalised by repeated partials. Mirror that in the
+        // expected values (floor + 1 when there's a truncated remainder).
+        uint256 expectedValue = (1_000e8 * remaining) / amountAfterFees;
+        if ((1_000e8 * remaining) % amountAfterFees != 0) expectedValue += 1;
+        uint256 expectedCollateral = (1_500e18 * remaining) / amountAfterFees;
+        if ((1_500e18 * remaining) % amountAfterFees != 0) expectedCollateral += 1;
+        assertEq(newPosition.valueAtDeposit, expectedValue);
+        assertEq(newPosition.collateralAmount, expectedCollateral);
     }
 
     function test_LastProtectorExitRedirectsRoundingCommissions() public {
