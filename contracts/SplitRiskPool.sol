@@ -185,6 +185,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (_protocolFeeRecipient == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_shieldReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_protectorReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        if (initialOwner == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_backingTokenInfo.token == _shieldedTokenInfo.token) revert ErrorsLib.InvalidAssetAddress();
         if (_commissionRate > ConstantsLib.MAX_COMMISSION_RATE) revert ErrorsLib.InvalidCommissionRate();
         if (_poolFee > ConstantsLib.MAX_POOL_FEE) revert ErrorsLib.InvalidPoolFee();
