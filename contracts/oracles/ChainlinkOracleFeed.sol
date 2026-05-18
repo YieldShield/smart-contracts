@@ -18,6 +18,20 @@ interface AggregatorV3Interface {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
+/// @title IChainlinkAggregatorProxy
+/// @notice Subset of the EACAggregatorProxy interface used to read the
+///         underlying aggregator and its min/max answer bounds. Many
+///         Chainlink price-feed proxies expose `aggregator()`; the
+///         underlying contract exposes `minAnswer()`/`maxAnswer()`.
+interface IChainlinkAggregatorProxy {
+    function aggregator() external view returns (address);
+}
+
+interface IChainlinkAggregatorBounds {
+    function minAnswer() external view returns (int192);
+    function maxAnswer() external view returns (int192);
+}
+
 /// @title ChainlinkOracleFeed
 /// @author David Hawig
 /// @notice Oracle feed adapter for Chainlink price feeds
@@ -47,6 +61,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
+    /// @notice Cached min/max answer bounds for each feed, queried at registration.
+    /// @dev If the proxy doesn't expose `aggregator()` or the inner aggregator doesn't
+    ///      expose `minAnswer`/`maxAnswer`, both bounds remain zero and the runtime
+    ///      check is skipped (logged via FeedBoundsUnavailable on registration).
+    mapping(address => int192) public tokenFeedMinAnswer;
+    mapping(address => int192) public tokenFeedMaxAnswer;
+
     /// @notice Emitted when a token's feed is set or updated
     event TokenFeedSet(address indexed token, address indexed feed);
 
@@ -55,6 +76,12 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted when sequencer uptime feed is set
     event SequencerUptimeFeedSet(address indexed oldFeed, address indexed newFeed);
+
+    /// @notice Emitted when min/max answer bounds are cached for a feed
+    event FeedBoundsCached(address indexed token, address indexed feed, int192 minAnswer, int192 maxAnswer);
+
+    /// @notice Emitted when a feed proxy does not expose min/max answer bounds
+    event FeedBoundsUnavailable(address indexed token, address indexed feed);
 
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
@@ -70,6 +97,11 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Custom error when L2 sequencer is down
     error SequencerDown();
+
+    /// @notice Custom error when the feed answer has saturated at its min/max bound
+    ///         (Venus-style attack pattern: aggregator pins at floor/ceiling instead
+    ///         of reporting the true price).
+    error PriceOutsideAggregatorBounds(address token, int256 answer, int192 minAnswer, int192 maxAnswer);
 
     /// @notice Custom error when sequencer grace period not over
     /// @param timeSinceUp Seconds since sequencer came back up
@@ -111,13 +143,54 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         tokenFeeds[token] = aggregator;
         isTokenSupported[token] = true;
 
+        // Best-effort cache of the underlying aggregator's min/max answer
+        // bounds. Used at runtime to reject prices saturated at the floor or
+        // ceiling (the Venus-style failure mode where the feed pins at a
+        // hard-coded bound instead of reporting the true price).
+        _cacheFeedBounds(token, feed);
+
         emit TokenFeedSet(token, feed);
+    }
+
+    /// @dev Resolves the underlying aggregator behind a Chainlink proxy and
+    ///      caches its min/max answer. If any step fails (non-proxy feed,
+    ///      bounds not exposed), both bounds are cleared and an event is
+    ///      emitted so the operator can decide whether to accept the feed.
+    function _cacheFeedBounds(address token, address feed) internal {
+        // Resolve underlying aggregator (proxies expose aggregator(); raw
+        // aggregators don't and that's fine).
+        address underlying;
+        try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
+            underlying = agg;
+        } catch {
+            underlying = feed;
+        }
+
+        try IChainlinkAggregatorBounds(underlying).minAnswer() returns (int192 minA) {
+            try IChainlinkAggregatorBounds(underlying).maxAnswer() returns (int192 maxA) {
+                tokenFeedMinAnswer[token] = minA;
+                tokenFeedMaxAnswer[token] = maxA;
+                emit FeedBoundsCached(token, feed, minA, maxA);
+                return;
+            } catch {
+                // fall through
+            }
+        } catch {
+            // fall through
+        }
+
+        // Bounds not retrievable: clear cache and signal explicitly.
+        tokenFeedMinAnswer[token] = 0;
+        tokenFeedMaxAnswer[token] = 0;
+        emit FeedBoundsUnavailable(token, feed);
     }
 
     /// @notice Remove a token feed
     /// @param token The token address to remove
     function removeTokenFeed(address token) external onlyOwner {
         delete tokenFeeds[token];
+        delete tokenFeedMinAnswer[token];
+        delete tokenFeedMaxAnswer[token];
         isTokenSupported[token] = false;
         emit TokenFeedSet(token, address(0));
     }
@@ -188,6 +261,19 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         OracleValidationLib.validatePositivePrice(answer, token);
         if (answeredInRound < roundId) revert StalePrice(token, updatedAt, maxPriceAge);
         OracleValidationLib.validateStaleness(updatedAt, maxPriceAge, token);
+
+        // Venus-style protection: if the underlying aggregator's min/max answer
+        // bounds were retrievable at registration time, reject prices that have
+        // saturated at either bound. A pinned price during a real depeg lets
+        // the protocol mis-value assets if the true off-chain price is past
+        // the configured floor/ceiling.
+        int192 minA = tokenFeedMinAnswer[token];
+        int192 maxA = tokenFeedMaxAnswer[token];
+        if (minA != 0 || maxA != 0) {
+            if (answer <= int256(minA) || answer >= int256(maxA)) {
+                revert PriceOutsideAggregatorBounds(token, answer, minA, maxA);
+            }
+        }
 
         // Convert to 8 decimals if necessary
         uint8 feedDecimals = feed.decimals();

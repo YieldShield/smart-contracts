@@ -24,3 +24,4 @@ aderyn-report.md
 # Coverage artifacts
 lcov.info
 coverage-report/
+.claude/worktrees/
