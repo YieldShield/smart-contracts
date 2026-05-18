@@ -26,4 +26,6 @@ interface IProtectorReceiptNFT is IERC721 {
     function setTransferLockPeriod(uint256 newPeriod) external;
 
     function transferLockPeriod() external view returns (uint256);
+
+    function nextTokenId() external view returns (uint256);
 }

@@ -1316,14 +1316,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalProtectorTokens += received;
         totalProtectorShares = currentTotalShares + sharesMinted;
 
-        // Mint NFT
-        tokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
+        // M-12: pre-compute the tokenId and initialise per-id mappings BEFORE
+        // the external mint call. _safeMint invokes onERC721Received on
+        // contract recipients; any view-only inspection from that callback
+        // (or a future state mutation moved post-mint) must see a consistent
+        // position, not a half-initialised one.
+        tokenId = IProtectorReceiptNFT(protectorReceiptNFT).nextTokenId();
         protectorShares[tokenId] = sharesMinted;
         protectorShareEpochs[tokenId] = protectorShareEpoch;
-
-        // Record reward debt at current accumulator value (MasterChef pattern)
-        // This "debits" the position for rewards it didn't earn, preventing late-joiner exploit
         rewardDebt[tokenId] = (rewardPerShareAccumulated * sharesMinted) / ConstantsLib.REWARD_PRECISION;
+
+        uint256 mintedTokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
+        require(mintedTokenId == tokenId, "protector tokenId mismatch");
 
         emit EventsLib.ProtectorAssetDeposited(msg.sender, asset, received, tokenId);
     }
@@ -1390,9 +1394,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalValueAtDeposit += valueAtDeposit;
         totalShieldCollateralAmount += collateralAmount;
 
-        // Mint NFT with collateral amount stored
-        tokenId = IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
+        // M-12: pre-compute the tokenId and initialise per-id mappings BEFORE
+        // the external mint call. _safeMint invokes onERC721Received on
+        // contract recipients; any view-only inspection from that callback
+        // must see a consistent position.
+        tokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
         feeValueBaselineUsd[tokenId] = valueAtDeposit;
+
+        uint256 mintedTokenId =
+            IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
+        require(mintedTokenId == tokenId, "shield tokenId mismatch");
 
         emit EventsLib.ShieldedAssetDeposited(msg.sender, asset, received, tokenId);
     }
