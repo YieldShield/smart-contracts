@@ -150,6 +150,26 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         return super._update(to, tokenId, auth);
     }
 
+    /// @dev Block per-token approvals during the lock window. Without this gate,
+    ///      an owner could approve a wrapper contract immediately after deposit
+    ///      and the wrapper could `transferFrom` the position the instant the
+    ///      lock expires — defeating the economic intent of the lock. (H-7)
+    function _approve(address to, uint256 tokenId, address auth, bool emitEvent) internal virtual override {
+        if (to != address(0)) {
+            ShieldPosition storage pos = positions[tokenId];
+            uint256 unlockTime = pos.depositTime + transferLockPeriod;
+            if (block.timestamp < unlockTime) {
+                revert ErrorsLib.TransferLocked(unlockTime);
+            }
+        }
+        super._approve(to, tokenId, auth, emitEvent);
+    }
+
+    /// @dev setApprovalForAll is operator-scoped, not token-scoped. Per-token
+    ///      lock guards live in _approve and _update; an operator approval is
+    ///      harmless on its own because every subsequent transferFrom routes
+    ///      through _update and re-checks the lock.
+
     /// @dev Modifier to ensure only pool can call
     modifier onlyPool() {
         if (msg.sender != pool) revert ErrorsLib.NotOwner();
