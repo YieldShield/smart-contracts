@@ -367,45 +367,39 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     /// @notice Check if underlying oracle price is stale
     /// @dev Uses low-level calls to detect and call staleness functions on underlying oracle
-    ///      Supports different oracle types:
-    ///      - PythOracle: returns (bool, uint64)
-    ///      - ChainlinkOracleFeed: returns (bool, uint256)
-    ///      - Other oracles: gracefully returns (false, 0) if no staleness support
+    ///      All in-protocol oracles implement isPriceStale(address) -> (bool, uint64).
+    ///      Future timestamps beyond the small sequencer-skew tolerance are rejected;
+    ///      previously the function accepted publishTimes up to 24h in the future.
+    ///      Any oracle that does not expose the helper, or that returns malformed
+    ///      data, is treated as stale (fail closed).
     /// @param underlying The underlying asset address
     /// @return isStale True if the price is stale
     /// @return publishTime The timestamp of the price (0 if not available)
     function _checkUnderlyingStaleness(address underlying) internal view returns (bool isStale, uint64 publishTime) {
         address oracleAddress = address(underlyingPriceOracle);
 
-        // Try PythOracle-style interface (returns bool, uint64)
         // Function selector: isPriceStale(address) -> (bool, uint64)
         (bool success, bytes memory data) =
             oracleAddress.staticcall(abi.encodeWithSignature("isPriceStale(address)", underlying));
 
+        // Expected ABI: (bool, uint64) padded to 64 bytes.
         if (success && data.length >= 64) {
-            // Try to decode as (bool, uint64) first (PythOracle style)
-            bool decoded;
-            uint64 time64;
-            (decoded, time64) = abi.decode(data, (bool, uint64));
-
-            // If decoded successfully and time is reasonable, use it
-            // Check if time64 is within reasonable bounds (not overflow from uint256)
-            if (time64 > 0 && time64 <= uint64(block.timestamp + 86400)) {
-                return (decoded, time64);
+            (bool decoded, uint64 time64) = abi.decode(data, (bool, uint64));
+            // Reject implausibly future-dated publish times to prevent a malicious
+            // or skewed underlying oracle from defeating the staleness check.
+            // SEQUENCER_SKEW_TOLERANCE allows a small clock drift only.
+            if (time64 == 0 || time64 > uint64(block.timestamp) + SEQUENCER_SKEW_TOLERANCE) {
+                return (true, 0);
             }
-
-            // Try to decode as (bool, uint256) (ChainlinkOracleFeed style)
-            uint256 time256;
-            (decoded, time256) = abi.decode(data, (bool, uint256));
-
-            // Convert uint256 to uint64 (safe if time is reasonable)
-            if (time256 > 0 && time256 <= type(uint64).max) {
-                return (decoded, uint64(time256));
-            }
+            return (decoded, time64);
         }
 
         // Underlying oracle doesn't support staleness checking or call failed
-        // Fail-closed: treat as stale to prevent using potentially outdated prices
+        // Fail-closed: treat as stale to prevent using potentially outdated prices.
         return (true, 0);
     }
+
+    /// @dev Maximum tolerated future-skew (seconds) on an underlying oracle's
+    ///      publishTime. Anything beyond this is treated as a stale/invalid value.
+    uint64 internal constant SEQUENCER_SKEW_TOLERANCE = 30;
 }
