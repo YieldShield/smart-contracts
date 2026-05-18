@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 10245,
+      "astId": 10236,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "_governanceTimelock",
       "offset": 0,
@@ -9,7 +9,7 @@
       "type": "t_address"
     },
     {
-      "astId": 10247,
+      "astId": 10238,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "_pendingGovernanceTimelock",
       "offset": 0,
@@ -17,7 +17,7 @@
       "type": "t_address"
     },
     {
-      "astId": 10249,
+      "astId": 10240,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "_governanceTimelockCodehash",
       "offset": 0,
@@ -25,7 +25,7 @@
       "type": "t_bytes32"
     },
     {
-      "astId": 10858,
+      "astId": 10849,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "__gap",
       "offset": 0,
@@ -33,7 +33,7 @@
       "type": "t_array(t_uint256)47_storage"
     },
     {
-      "astId": 7486,
+      "astId": 7477,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "splitRiskPoolImplementation",
       "offset": 0,
@@ -41,7 +41,7 @@
       "type": "t_address"
     },
     {
-      "astId": 7488,
+      "astId": 7479,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "compositeOracle",
       "offset": 0,
@@ -49,7 +49,7 @@
       "type": "t_address"
     },
     {
-      "astId": 7490,
+      "astId": 7481,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "pythOracle",
       "offset": 0,
@@ -57,7 +57,7 @@
       "type": "t_address"
     },
     {
-      "astId": 7492,
+      "astId": 7483,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "erc4626OracleFeed",
       "offset": 0,
@@ -65,7 +65,7 @@
       "type": "t_address"
     },
     {
-      "astId": 7494,
+      "astId": 7485,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "defaultProtocolFeeRecipient",
       "offset": 0,
@@ -73,7 +73,7 @@
       "type": "t_address"
     },
     {
-      "astId": 7504,
+      "astId": 7495,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "whitelistedTokens",
       "offset": 0,
@@ -81,7 +81,7 @@
       "type": "t_array(t_address)dyn_storage"
     },
     {
-      "astId": 7508,
+      "astId": 7499,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "isWhitelisted",
       "offset": 0,
@@ -89,15 +89,15 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 7513,
+      "astId": 7504,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "tokenInfo",
       "offset": 0,
       "slot": "57",
-      "type": "t_mapping(t_address,t_struct(TokenInfo)13710_storage)"
+      "type": "t_mapping(t_address,t_struct(TokenInfo)13701_storage)"
     },
     {
-      "astId": 7516,
+      "astId": 7507,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "pools",
       "offset": 0,
@@ -105,15 +105,15 @@
       "type": "t_array(t_address)dyn_storage"
     },
     {
-      "astId": 7522,
+      "astId": 7513,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "_poolInfo",
       "offset": 0,
       "slot": "59",
-      "type": "t_mapping(t_address,t_struct(PoolInfo)11638_storage)"
+      "type": "t_mapping(t_address,t_struct(PoolInfo)11629_storage)"
     },
     {
-      "astId": 7526,
+      "astId": 7517,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "tokenRequiresStrictProtectedPrice",
       "offset": 0,
@@ -121,7 +121,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 7529,
+      "astId": 7520,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "activePools",
       "offset": 0,
@@ -129,7 +129,7 @@
       "type": "t_array(t_address)dyn_storage"
     },
     {
-      "astId": 7533,
+      "astId": 7524,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "_activePoolIndexPlusOne",
       "offset": 0,
@@ -137,7 +137,7 @@
       "type": "t_mapping(t_address,t_uint256)"
     },
     {
-      "astId": 7537,
+      "astId": 7528,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "isPoolActive",
       "offset": 0,
@@ -145,15 +145,15 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 7542,
+      "astId": 7533,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "creationBonds",
       "offset": 0,
       "slot": "64",
-      "type": "t_mapping(t_address,t_struct(CreationBond)11619_storage)"
+      "type": "t_mapping(t_address,t_struct(CreationBond)11610_storage)"
     },
     {
-      "astId": 7544,
+      "astId": 7535,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "minimumCreationBondUsd",
       "offset": 0,
@@ -161,7 +161,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 7546,
+      "astId": 7537,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "bootstrapModeEnabled",
       "offset": 0,
@@ -169,7 +169,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 10168,
+      "astId": 10159,
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
       "label": "__gap",
       "offset": 0,
@@ -218,26 +218,26 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(CreationBond)11619_storage)": {
+    "t_mapping(t_address,t_struct(CreationBond)11610_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct ISplitRiskPoolFactory.CreationBond)",
       "numberOfBytes": "32",
-      "value": "t_struct(CreationBond)11619_storage"
+      "value": "t_struct(CreationBond)11610_storage"
     },
-    "t_mapping(t_address,t_struct(PoolInfo)11638_storage)": {
+    "t_mapping(t_address,t_struct(PoolInfo)11629_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct ISplitRiskPoolFactory.PoolInfo)",
       "numberOfBytes": "32",
-      "value": "t_struct(PoolInfo)11638_storage"
+      "value": "t_struct(PoolInfo)11629_storage"
     },
-    "t_mapping(t_address,t_struct(TokenInfo)13710_storage)": {
+    "t_mapping(t_address,t_struct(TokenInfo)13701_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct TokenWhitelistLib.TokenInfo)",
       "numberOfBytes": "32",
-      "value": "t_struct(TokenInfo)13710_storage"
+      "value": "t_struct(TokenInfo)13701_storage"
     },
     "t_mapping(t_address,t_uint256)": {
       "encoding": "mapping",
@@ -251,13 +251,13 @@
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(CreationBond)11619_storage": {
+    "t_struct(CreationBond)11610_storage": {
       "encoding": "inplace",
       "label": "struct ISplitRiskPoolFactory.CreationBond",
       "numberOfBytes": "96",
       "members": [
         {
-          "astId": 11614,
+          "astId": 11605,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "creator",
           "offset": 0,
@@ -265,7 +265,7 @@
           "type": "t_address"
         },
         {
-          "astId": 11616,
+          "astId": 11607,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "token",
           "offset": 0,
@@ -273,7 +273,7 @@
           "type": "t_address"
         },
         {
-          "astId": 11618,
+          "astId": 11609,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "amount",
           "offset": 0,
@@ -282,13 +282,13 @@
         }
       ]
     },
-    "t_struct(PoolInfo)11638_storage": {
+    "t_struct(PoolInfo)11629_storage": {
       "encoding": "inplace",
       "label": "struct ISplitRiskPoolFactory.PoolInfo",
       "numberOfBytes": "288",
       "members": [
         {
-          "astId": 11621,
+          "astId": 11612,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "shieldedToken",
           "offset": 0,
@@ -296,7 +296,7 @@
           "type": "t_address"
         },
         {
-          "astId": 11623,
+          "astId": 11614,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "backingToken",
           "offset": 0,
@@ -304,7 +304,7 @@
           "type": "t_address"
         },
         {
-          "astId": 11625,
+          "astId": 11616,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "shieldedTokenSymbol",
           "offset": 0,
@@ -312,7 +312,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 11627,
+          "astId": 11618,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "backingTokenSymbol",
           "offset": 0,
@@ -320,7 +320,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 11629,
+          "astId": 11620,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "commissionRate",
           "offset": 0,
@@ -328,7 +328,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 11631,
+          "astId": 11622,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "poolFee",
           "offset": 0,
@@ -336,7 +336,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 11633,
+          "astId": 11624,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "colleteralRatio",
           "offset": 0,
@@ -344,7 +344,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 11635,
+          "astId": 11626,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "createdAt",
           "offset": 0,
@@ -352,7 +352,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 11637,
+          "astId": 11628,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "creator",
           "offset": 0,
@@ -361,13 +361,13 @@
         }
       ]
     },
-    "t_struct(TokenInfo)13710_storage": {
+    "t_struct(TokenInfo)13701_storage": {
       "encoding": "inplace",
       "label": "struct TokenWhitelistLib.TokenInfo",
       "numberOfBytes": "192",
       "members": [
         {
-          "astId": 13699,
+          "astId": 13690,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "name",
           "offset": 0,
@@ -375,7 +375,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 13701,
+          "astId": 13692,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "symbol",
           "offset": 0,
@@ -383,7 +383,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 13703,
+          "astId": 13694,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "token",
           "offset": 0,
@@ -391,7 +391,7 @@
           "type": "t_address"
         },
         {
-          "astId": 13705,
+          "astId": 13696,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "primaryOracleFeed",
           "offset": 0,
@@ -399,7 +399,7 @@
           "type": "t_address"
         },
         {
-          "astId": 13707,
+          "astId": 13698,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "backupOracleFeed",
           "offset": 0,
@@ -407,7 +407,7 @@
           "type": "t_address"
         },
         {
-          "astId": 13709,
+          "astId": 13700,
           "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
           "label": "minCollateralRatioBp",
           "offset": 0,

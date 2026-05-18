@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 6389,
+      "astId": 6380,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "_governanceTimelock",
       "offset": 0,
@@ -9,7 +9,7 @@
       "type": "t_address"
     },
     {
-      "astId": 6391,
+      "astId": 6382,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "_pendingGovernanceTimelock",
       "offset": 0,
@@ -17,7 +17,7 @@
       "type": "t_address"
     },
     {
-      "astId": 6393,
+      "astId": 6384,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "_governanceTimelockCodehash",
       "offset": 0,
@@ -25,7 +25,7 @@
       "type": "t_bytes32"
     },
     {
-      "astId": 7002,
+      "astId": 6993,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "__gap",
       "offset": 0,
@@ -225,7 +225,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6239,
+      "astId": 6230,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "shieldedTokenDecimals",
       "offset": 0,
@@ -233,7 +233,7 @@
       "type": "t_uint8"
     },
     {
-      "astId": 6242,
+      "astId": 6233,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "backingTokenDecimals",
       "offset": 1,
@@ -241,7 +241,7 @@
       "type": "t_uint8"
     },
     {
-      "astId": 6245,
+      "astId": 6236,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "shieldedTokenScale",
       "offset": 0,
@@ -249,7 +249,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6248,
+      "astId": 6239,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "backingTokenScale",
       "offset": 0,
@@ -257,7 +257,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6251,
+      "astId": 6242,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "totalProtectorShares",
       "offset": 0,
@@ -265,7 +265,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6256,
+      "astId": 6247,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorShares",
       "offset": 0,
@@ -273,7 +273,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6259,
+      "astId": 6250,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "hasEverLaunched",
       "offset": 0,
@@ -281,7 +281,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 6262,
+      "astId": 6253,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorShareEpoch",
       "offset": 0,
@@ -289,7 +289,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6267,
+      "astId": 6258,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorShareEpochs",
       "offset": 0,
@@ -297,7 +297,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6272,
+      "astId": 6263,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorEpochFinalRewardPerShare",
       "offset": 0,
@@ -305,7 +305,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6275,
+      "astId": 6266,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "accessControlCanGateWithdrawals",
       "offset": 0,
@@ -313,7 +313,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 6278,
+      "astId": 6269,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "currentEpochCommissionReserve",
       "offset": 0,
@@ -321,7 +321,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6281,
+      "astId": 6272,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "historicalCommissionReserve",
       "offset": 0,
@@ -329,7 +329,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6286,
+      "astId": 6277,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorEpochRemainingShares",
       "offset": 0,
@@ -337,7 +337,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6291,
+      "astId": 6282,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorEpochRemainingReserve",
       "offset": 0,
@@ -345,7 +345,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 6296,
+      "astId": 6287,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorEpochPositionSettled",
       "offset": 0,
@@ -353,7 +353,7 @@
       "type": "t_mapping(t_uint256,t_bool)"
     },
     {
-      "astId": 6299,
+      "astId": 6290,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "POOL_FACTORY",
       "offset": 0,
@@ -361,7 +361,7 @@
       "type": "t_address"
     },
     {
-      "astId": 6302,
+      "astId": 6293,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "_strictProtectedBackingPriceAtInit",
       "offset": 20,
@@ -369,7 +369,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 6305,
+      "astId": 6296,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "_strictProtectedBackingPricePinned",
       "offset": 21,
@@ -377,7 +377,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 6308,
+      "astId": 6299,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "poolFeeRecipient",
       "offset": 0,
@@ -385,7 +385,7 @@
       "type": "t_address"
     },
     {
-      "astId": 6312,
+      "astId": 6303,
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "__gap",
       "offset": 0,
