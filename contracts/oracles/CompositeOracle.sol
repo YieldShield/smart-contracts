@@ -390,13 +390,21 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @notice Get current deviation for a token between primary and backup feeds
+    /// @dev L-5: returns type(uint256).max if either feed fails to produce a
+    ///      price, so off-chain monitoring can distinguish "no signal" from
+    ///      "real deviation" instead of seeing the call revert. The strict
+    ///      internal _calculateFeedDeviation is unchanged and still reverts.
     /// @param token The token to check
-    /// @return deviation The current deviation in basis points
+    /// @return deviation Deviation in basis points, or type(uint256).max on
+    ///         partial feed failure
     function getCurrentDeviation(address token) external view returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.backupFeed == address(0)) revert NotDualFeedToken(token);
 
-        return _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!primarySuccess || !backupSuccess) return type(uint256).max;
+        return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
     }
 
     /// @dev Returns the absolute deviation in bps between two feeds for a token, after
