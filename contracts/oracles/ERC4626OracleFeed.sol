@@ -335,13 +335,17 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             );
         }
 
-        if (failClosedOnUpperDeviation && assetsPerShare > maxAssetsPerShare) {
+        // H-4: always fail closed on the upper bound — clamping silently
+        // under-prices the share rate during organic vault yield AND makes
+        // donation-driven inflation indistinguishable from yield. After the
+        // *Unsafe rename, no production caller can tolerate a clamped price.
+        if (assetsPerShare > maxAssetsPerShare) {
             revert SharePriceDeviationTooHigh(
                 vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
             );
         }
 
-        return assetsPerShare > maxAssetsPerShare ? maxAssetsPerShare : assetsPerShare;
+        return assetsPerShare;
     }
 
     function _getTokenDecimals(address token) internal view returns (uint8 tokenDecimals) {

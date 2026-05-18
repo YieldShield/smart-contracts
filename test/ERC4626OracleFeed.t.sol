@@ -188,15 +188,25 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(vaultPrice, newPrice);
     }
 
-    function test_GetPrice_CapsDonationShareRateAboveReviewedBand() public {
-        // After the safe-default rename, the clamping path lives under `getPriceUnsafe`.
+    function test_GetPriceUnsafe_AlsoRevertsOnDonationShareRateSpike() public {
+        // H-4: previously the *Unsafe path clamped to the upper deviation band,
+        // silently under-pricing the share for as long as the deviation persisted
+        // and making donation-driven inflation indistinguishable from organic
+        // yield. Both paths now fail closed on the upper bound.
         uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
         underlyingAsset.mint(address(vault), donation);
 
-        uint256 expectedCappedPrice =
-            UNDERLYING_PRICE + (UNDERLYING_PRICE * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()) / 10_000;
-
-        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedCappedPrice);
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.getPriceUnsafe(address(vault));
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenShareRateRisesAboveReviewedBand() public {
