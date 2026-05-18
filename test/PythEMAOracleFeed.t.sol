@@ -56,11 +56,14 @@ contract PythEMAOracleFeedTest is Test {
     }
 
     function testGetPrice_RevertsWhenConfidenceTooWide() public {
+        // M-6: EMA feed's default confidence threshold is 1000 bps (10%) — the
+        // permissive band sized for EMA conf widening during volatility. Use
+        // a 15% conf to exceed it.
         vm.warp(block.timestamp + 1);
-        _updatePriceFeed(FEED_ID, 1e8, 3e6, -8, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID, 1e8, 15e6, -8, uint64(block.timestamp));
 
         vm.expectRevert(
-            abi.encodeWithSelector(PythEMAOracleFeed.PriceConfidenceTooWide.selector, address(token), 3e6, 1e8, 200)
+            abi.encodeWithSelector(PythEMAOracleFeed.PriceConfidenceTooWide.selector, address(token), 15e6, 1e8, 1000)
         );
         feed.getPrice(address(token));
     }

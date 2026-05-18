@@ -64,6 +64,9 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
 
+        // L-4: removal is timelocked. Schedule + wait + execute.
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(tokenA));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
         compositeOracle.removeTokenOracleFeed(address(tokenA));
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenA)));
@@ -777,6 +780,10 @@ contract CompositeOracleDualFeedTest is Test {
     function test_ForceResetToPrimary_Succeeds() public {
         _challengeAndFinalize();
 
+        // M-8: schedule + wait for the emergency-override delay before executing.
+        compositeOracle.scheduleForceResetToPrimary(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit OracleSwitched(address(token), false);
 
@@ -1052,6 +1059,10 @@ contract CompositeOracleDualFeedTest is Test {
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertTrue(isChallengePending);
 
+        // M-8: schedule + wait for override delay.
+        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Emergency cancelled by owner");
 
@@ -1064,10 +1075,19 @@ contract CompositeOracleDualFeedTest is Test {
     function test_EmergencyCancelChallenge_RevertsWhenNoChallengePending() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
 
+        // Codex P1 follow-up: scheduling itself now requires a pending
+        // challenge as precondition, so an attempt to schedule a cancel
+        // when there is nothing to cancel reverts up front (no stale
+        // schedule is created and consumable later).
         vm.expectRevert(
-            abi.encodeWithSelector(CompositeOracle.CancelNotPossible.selector, address(token), "No challenge pending")
+            abi.encodeWithSelector(
+                CompositeOracle.EmergencyOverridePreconditionNotMet.selector,
+                address(token),
+                keccak256("emergencyCancelChallenge"),
+                "No challenge pending"
+            )
         );
-        compositeOracle.emergencyCancelChallenge(address(token));
+        compositeOracle.scheduleEmergencyCancelChallenge(address(token));
     }
 
     function test_EmergencyCancelChallenge_RevertsWhenNotOwner() public {
@@ -1082,6 +1102,10 @@ contract CompositeOracleDualFeedTest is Test {
     function test_RemoveFeed_EmitsChallengeCancelledIfPending() public {
         _initiateChallenge();
 
+        // L-4: removal is timelocked. Schedule + wait.
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(token));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Token oracle feed removed");
 
@@ -1091,6 +1115,9 @@ contract CompositeOracleDualFeedTest is Test {
     function test_RemoveFeed_EmitsOracleSwitchedIfBackupActive() public {
         _challengeAndFinalize();
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(token));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
 
         vm.expectEmit(true, false, false, true);
         emit OracleSwitched(address(token), false);
@@ -1103,6 +1130,10 @@ contract CompositeOracleDualFeedTest is Test {
         _initiateChallenge();
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertTrue(isChallengePending);
+
+        // M-8: schedule + wait.
+        compositeOracle.scheduleForceResetToPrimary(address(token));
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
 
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Force reset by owner");

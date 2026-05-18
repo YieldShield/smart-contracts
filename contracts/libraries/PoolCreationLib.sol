@@ -67,6 +67,15 @@ library PoolCreationLib {
         ERC1967Proxy proxy = new ERC1967Proxy(implementation, initCalldata);
         poolAddress = address(proxy);
 
+        // L-10: the deploy → init → setPool → transferOwnership sequence is
+        // not atomic in the formal sense (each is a separate state mutation
+        // within the same external call), but every step is internal to this
+        // delegate-called library: if any reverts, the entire library call
+        // reverts and the proxy/NFTs are not persisted in factory storage.
+        // The factory.createPool transaction is therefore atomic at the
+        // top-level call boundary. No rescue path is needed because partial
+        // state cannot survive — but document this here for any future change
+        // that adds external calls between these steps.
         shieldReceiptNFT.setPool(poolAddress);
         protectorReceiptNFT.setPool(poolAddress);
         shieldReceiptNFT.transferOwnership(poolAddress);

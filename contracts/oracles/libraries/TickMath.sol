@@ -3,7 +3,11 @@ pragma solidity ^0.8.30;
 
 /// @title TickMath
 /// @notice Computes sqrt prices for ticks of size 1.0001
-/// @dev Source: Uniswap v3-core (GPL-2.0-or-later)
+/// @dev Vendored from Uniswap v3-core (GPL-2.0-or-later). Upstream:
+///      https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/libraries/TickMath.sol
+///      (commit d8b1c635c275d2a9450bd6a78f3fa2484fef73eb). I-4: keep this
+///      pin updated when re-syncing so audits can compare bit-for-bit
+///      against a known-good baseline.
 library TickMath {
     int24 internal constant MIN_TICK = -887272;
     int24 internal constant MAX_TICK = -MIN_TICK;

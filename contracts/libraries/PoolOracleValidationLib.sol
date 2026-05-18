@@ -31,6 +31,13 @@ library PoolOracleValidationLib {
 
         _validateProtectedPriceSelector(oracle, shieldedToken);
         _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPrice, (shieldedToken)));
+        // Codex P2: when the wrapper is a CompositeOracle, walk the configured
+        // sub-feeds for the shielded token too. Otherwise a primary feed
+        // lacking the safe/unsafe split (e.g. PythEMA-only, TWAP-only) could
+        // silently get used at runtime — the wrapper itself advertises the
+        // selector, but its delegated sub-feed has no circuit-breaker
+        // discipline, regressing what the old getPriceWithCircuitBreaker
+        // probe would have rejected.
         _validateCompositeFeedsAdvertiseProtectedSelector(oracle, shieldedToken);
         validateBackingTokenOracle(oracle, backingToken, requiresStrictProtectedPrice);
     }

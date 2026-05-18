@@ -193,6 +193,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
 
+        // Codex P2 follow-up: any reconfiguration of the token oracle
+        // invalidates a prior pending removal schedule — the migration window
+        // applied to the *previous* config, not this new one.
+        _clearScheduledRemoval(token);
+
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         // BUG-2 FIX: Emit events if challenge was pending or backup was active
@@ -232,6 +237,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (token == address(0)) revert InvalidTokenAddress(token);
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
+        _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
@@ -263,6 +269,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // BUG-1 FIX: Validate that primary and backup feeds are different
         if (primaryFeed == backupFeed) revert SameFeedNotAllowed(primaryFeed);
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
+        _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
@@ -307,9 +314,69 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         emit StrictCircuitBreakerRequirementUpdated(token, previousRequirement, required);
     }
 
+    /// @notice L-4: removal of a token oracle feed is timelocked. Schedule
+    ///         the removal via scheduleRemoveTokenOracleFeed, wait
+    ///         FEED_REMOVAL_DELAY, then call removeTokenOracleFeed. Users
+    ///         and dependent pools have the window to migrate or unwind.
+    /// @dev Codex P2 follow-up: schedules expire after FEED_REMOVAL_EXPIRY
+    ///      (default 7 days after the delay) so a stale schedule cannot wait
+    ///      indefinitely and surprise integrators long after the original
+    ///      migration window has passed. Schedules are also cleared whenever
+    ///      the token's oracle config changes (setTokenOracleFeed*) so the
+    ///      migration window applies to the actually-being-removed config.
+    uint256 public constant FEED_REMOVAL_DELAY = 1 days;
+    uint256 public constant FEED_REMOVAL_EXPIRY = 7 days;
+
+    mapping(address => uint256) public scheduledRemovalTime;
+
+    event TokenOracleFeedRemovalScheduled(address indexed token, uint256 executableAt);
+    event TokenOracleFeedRemovalCancelled(address indexed token);
+
+    error TokenOracleFeedRemovalNotScheduled(address token);
+    error TokenOracleFeedRemovalTooEarly(address token, uint256 executableAt);
+    error TokenOracleFeedRemovalExpired(address token, uint256 expiredAt);
+
+    function scheduleRemoveTokenOracleFeed(address token) external onlyAuthorized {
+        if (!_isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = block.timestamp + FEED_REMOVAL_DELAY;
+        scheduledRemovalTime[token] = executableAt;
+        emit TokenOracleFeedRemovalScheduled(token, executableAt);
+    }
+
+    function cancelScheduledRemoveTokenOracleFeed(address token) external onlyAuthorized {
+        // slither-disable-next-line incorrect-equality
+        if (scheduledRemovalTime[token] == 0) revert TokenOracleFeedRemovalNotScheduled(token);
+        delete scheduledRemovalTime[token];
+        emit TokenOracleFeedRemovalCancelled(token);
+    }
+
+    /// @dev Internal helper called from every setTokenOracleFeed* path so a
+    ///      mid-window oracle reconfiguration invalidates the prior removal
+    ///      schedule. The new config gets a fresh migration window if removal
+    ///      is later intended.
+    function _clearScheduledRemoval(address token) internal {
+        if (scheduledRemovalTime[token] != 0) {
+            delete scheduledRemovalTime[token];
+            emit TokenOracleFeedRemovalCancelled(token);
+        }
+    }
+
     /// @inheritdoc ICompositeOracle
+    /// @dev L-4: timelocked. Requires a prior scheduleRemoveTokenOracleFeed
+    ///      call at least FEED_REMOVAL_DELAY ago and at most
+    ///      (FEED_REMOVAL_DELAY + FEED_REMOVAL_EXPIRY) ago.
     function removeTokenOracleFeed(address token) external onlyAuthorized {
         if (!_isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = scheduledRemovalTime[token];
+        // slither-disable-next-line incorrect-equality
+        if (executableAt == 0) revert TokenOracleFeedRemovalNotScheduled(token);
+        if (block.timestamp < executableAt) revert TokenOracleFeedRemovalTooEarly(token, executableAt);
+        uint256 expiresAt = executableAt + FEED_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledRemovalTime[token];
+            revert TokenOracleFeedRemovalExpired(token, expiresAt);
+        }
+        delete scheduledRemovalTime[token];
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
@@ -390,13 +457,21 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @notice Get current deviation for a token between primary and backup feeds
+    /// @dev L-5: returns type(uint256).max if either feed fails to produce a
+    ///      price, so off-chain monitoring can distinguish "no signal" from
+    ///      "real deviation" instead of seeing the call revert. The strict
+    ///      internal _calculateFeedDeviation is unchanged and still reverts.
     /// @param token The token to check
-    /// @return deviation The current deviation in basis points
+    /// @return deviation Deviation in basis points, or type(uint256).max on
+    ///         partial feed failure
     function getCurrentDeviation(address token) external view returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.backupFeed == address(0)) revert NotDualFeedToken(token);
 
-        return _calculateFeedDeviation(config.primaryFeed, config.backupFeed, token);
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        if (!primarySuccess || !backupSuccess) return type(uint256).max;
+        return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
     }
 
     /// @dev Returns the absolute deviation in bps between two feeds for a token, after
@@ -616,10 +691,137 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         emit OracleSwitched(token, false);
     }
 
+    /// @notice M-8: timelock on emergency overrides. Owner schedules the
+    ///         action, waits EMERGENCY_OVERRIDE_DELAY, then executes. Users
+    ///         can withdraw / front-run in the window if the override is
+    ///         hostile. Cancellation is unilateral.
+    /// @dev Codex P1 follow-up: schedules are bound to a state nonce
+    ///      (`challengeStartTime` for ACTION_EMERGENCY_CANCEL, `isBackupActive`
+    ///      for ACTION_FORCE_RESET) so a schedule made before any challenge
+    ///      exists cannot be silently reused against a *later* challenge —
+    ///      the timelock window resets on every state change. Schedules also
+    ///      expire after EMERGENCY_OVERRIDE_EXPIRY to avoid indefinite stale
+    ///      entries.
+    uint256 public constant EMERGENCY_OVERRIDE_DELAY = 2 hours;
+    uint256 public constant EMERGENCY_OVERRIDE_EXPIRY = 1 days;
+
+    struct EmergencyOverrideSchedule {
+        uint64 executableAt;
+        uint64 expiresAt;
+        bytes32 stateNonce; // hash of the live oracle state at schedule time
+    }
+
+    /// @dev Scheduled override per (token, action). executableAt == 0 = not scheduled.
+    mapping(bytes32 => EmergencyOverrideSchedule) public emergencyOverrides;
+
+    event EmergencyOverrideScheduled(
+        address indexed token, bytes32 indexed action, uint256 executableAt, bytes32 stateNonce
+    );
+    event EmergencyOverrideCancelled(address indexed token, bytes32 indexed action);
+
+    error EmergencyOverrideNotScheduled(address token, bytes32 action);
+    error EmergencyOverrideTooEarly(address token, bytes32 action, uint256 executableAt);
+    error EmergencyOverrideExpired(address token, bytes32 action, uint256 expiredAt);
+    error EmergencyOverrideStateChanged(address token, bytes32 action);
+    error EmergencyOverridePreconditionNotMet(address token, bytes32 action, string reason);
+
+    bytes32 private constant ACTION_FORCE_RESET = keccak256("forceResetToPrimary");
+    bytes32 private constant ACTION_EMERGENCY_CANCEL = keccak256("emergencyCancelChallenge");
+
+    function _overrideKey(address token, bytes32 action) internal pure returns (bytes32) {
+        return keccak256(abi.encode(token, action));
+    }
+
+    function _stateNonce(address token, bytes32 action) internal view returns (bytes32) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (action == ACTION_EMERGENCY_CANCEL) {
+            // Bind to the active challenge so a cancel scheduled for one
+            // challenge cannot be reused against a later challenge.
+            return keccak256(abi.encode("CANCEL", config.challengeStartTime));
+        }
+        // ACTION_FORCE_RESET binds to whether backup is currently active —
+        // resetting a system that is already on primary is meaningless, and
+        // a schedule taken before backup activation must not survive into a
+        // future activation.
+        return keccak256(abi.encode("RESET", config.isBackupActive, config.challengeStartTime));
+    }
+
+    function _requireOverridePrecondition(address token, bytes32 action) internal view {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (action == ACTION_EMERGENCY_CANCEL) {
+            if (config.challengeStartTime == 0) {
+                revert EmergencyOverridePreconditionNotMet(token, action, "No challenge pending");
+            }
+        } else if (action == ACTION_FORCE_RESET) {
+            if (!config.isBackupActive && config.challengeStartTime == 0) {
+                revert EmergencyOverridePreconditionNotMet(token, action, "Already on primary");
+            }
+        }
+    }
+
+    function _scheduleOverride(address token, bytes32 action) internal {
+        // Require the action to be meaningful right now: there must be a
+        // pending challenge to cancel, or an active backup / challenge to reset.
+        _requireOverridePrecondition(token, action);
+
+        bytes32 key = _overrideKey(token, action);
+        emergencyOverrides[key] = EmergencyOverrideSchedule({
+            executableAt: uint64(block.timestamp + EMERGENCY_OVERRIDE_DELAY),
+            expiresAt: uint64(block.timestamp + EMERGENCY_OVERRIDE_DELAY + EMERGENCY_OVERRIDE_EXPIRY),
+            stateNonce: _stateNonce(token, action)
+        });
+        emit EmergencyOverrideScheduled(
+            token, action, block.timestamp + EMERGENCY_OVERRIDE_DELAY, emergencyOverrides[key].stateNonce
+        );
+    }
+
+    function _consumeOverride(address token, bytes32 action) internal {
+        bytes32 key = _overrideKey(token, action);
+        EmergencyOverrideSchedule memory schedule = emergencyOverrides[key];
+        // slither-disable-next-line incorrect-equality
+        if (schedule.executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
+        if (block.timestamp < schedule.executableAt) {
+            revert EmergencyOverrideTooEarly(token, action, schedule.executableAt);
+        }
+        if (block.timestamp >= schedule.expiresAt) {
+            delete emergencyOverrides[key];
+            revert EmergencyOverrideExpired(token, action, schedule.expiresAt);
+        }
+        // Re-check the state nonce so an override scheduled against one
+        // challenge cannot be executed against a different one finalised
+        // during the timelock window.
+        if (schedule.stateNonce != _stateNonce(token, action)) {
+            delete emergencyOverrides[key];
+            revert EmergencyOverrideStateChanged(token, action);
+        }
+        // Also re-check the precondition — the live state may have advanced
+        // back to a state where the action would be a no-op.
+        _requireOverridePrecondition(token, action);
+        delete emergencyOverrides[key];
+    }
+
+    function scheduleForceResetToPrimary(address token) external onlyOwner {
+        _scheduleOverride(token, ACTION_FORCE_RESET);
+    }
+
+    function scheduleEmergencyCancelChallenge(address token) external onlyOwner {
+        _scheduleOverride(token, ACTION_EMERGENCY_CANCEL);
+    }
+
+    function cancelScheduledOverride(address token, bytes32 action) external onlyOwner {
+        bytes32 key = _overrideKey(token, action);
+        // slither-disable-next-line incorrect-equality
+        if (emergencyOverrides[key].executableAt == 0) revert EmergencyOverrideNotScheduled(token, action);
+        delete emergencyOverrides[key];
+        emit EmergencyOverrideCancelled(token, action);
+    }
+
     /// @notice Admin function to force reset a token to primary oracle (emergency use)
-    /// @dev Only owner can call this. Use with caution. Preserves lastChallengeTime for cooldown.
+    /// @dev Now timelocked — first call scheduleForceResetToPrimary, then wait
+    ///      EMERGENCY_OVERRIDE_DELAY before this executes.
     /// @param token The token to reset
     function forceResetToPrimary(address token) external onlyOwner {
+        _consumeOverride(token, ACTION_FORCE_RESET);
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         // BUG-5 FIX: Emit ChallengeCancelled if a challenge was pending
@@ -635,9 +837,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @notice Emergency cancel a pending challenge without price checks (for oracle outage)
-    /// @dev BUG-3 FIX: Only owner can call this. Use when oracle feeds are reverting.
+    /// @dev Now timelocked — first call scheduleEmergencyCancelChallenge, then
+    ///      wait EMERGENCY_OVERRIDE_DELAY before this executes.
     /// @param token The token to cancel challenge for
     function emergencyCancelChallenge(address token) external onlyOwner {
+        _consumeOverride(token, ACTION_EMERGENCY_CANCEL);
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
         if (config.challengeStartTime == 0) {

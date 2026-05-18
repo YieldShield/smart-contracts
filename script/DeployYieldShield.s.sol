@@ -24,7 +24,7 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
-import { MockTokenFaucet } from "../contracts/MockTokenFaucet.sol";
+import { MockTokenFaucet } from "../contracts/mocks/MockTokenFaucet.sol";
 
 /**
  * @notice Local-only deployment script for YieldShield development environments

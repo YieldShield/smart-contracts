@@ -9,6 +9,12 @@ library TokenWhitelistLib {
     error TokenNotWhitelisted();
     error TokenAlreadyWhitelisted();
     error InvalidTokenAddress();
+    error WhitelistCapExceeded(uint256 cap);
+
+    /// @notice L-16: hard cap on whitelisted tokens to bound loops in
+    ///         setCompositeOracle (which iterates every whitelisted token).
+    ///         Picked to leave comfortable gas headroom for the migration loop.
+    uint256 internal constant MAX_WHITELISTED_TOKENS = 100;
 
     struct TokenInfo {
         string name; // the name of the token
@@ -28,6 +34,7 @@ library TokenWhitelistLib {
     function addToken(address[] storage tokens, mapping(address => bool) storage whitelist, address token) external {
         if (token == address(0)) revert InvalidTokenAddress();
         if (whitelist[token]) revert TokenAlreadyWhitelisted();
+        if (tokens.length >= MAX_WHITELISTED_TOKENS) revert WhitelistCapExceeded(MAX_WHITELISTED_TOKENS);
 
         tokens.push(token);
         whitelist[token] = true;

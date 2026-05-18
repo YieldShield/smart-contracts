@@ -111,6 +111,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /* Rewards-per-share accumulator (MasterChef pattern) - fixes late-joiner exploit */
     uint256 public rewardPerShareAccumulated; // Accumulated rewards per share (scaled by REWARD_PRECISION)
     mapping(uint256 => uint256) public rewardDebt; // tokenId => reward debt (rewards accumulated before deposit)
+    // L-14: cooldown is keyed by tokenId, not owner. When a shield NFT is
+    // transferred, the new owner inherits the previous owner's cooldown
+    // window. This is intentional for accounting consistency (fee baselines
+    // travel with the NFT, so claim metadata should too) but means a
+    // secondary-market buyer cannot crystallise fees immediately on receipt.
+    // Resetting on transfer would require an NFT→pool callback into _update;
+    // tracked as an accepted limitation. Documented in SECURITY.md.
     mapping(uint256 => uint256) public lastClaimRewardsTime; // tokenId => last claim timestamp
 
     /* Per-position fee baselines (USD, 8 decimals) to prevent re-taxing already charged yield */
@@ -206,6 +213,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         BACKING_TOKEN = _backingTokenInfo.token;
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
         (backingTokenDecimals, backingTokenScale) = _getTokenMetadata(_backingTokenInfo.token);
+
+        // M-14: default the fee recipient to the pool creator at init.
+        poolFeeRecipient = _poolCreator;
 
         // H-5: snapshot the factory's strict-protected-backing-price policy at
         // initialize so a future factory regression cannot silently downgrade
@@ -1090,9 +1100,29 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 amount = accumulatedPoolFee;
         accumulatedPoolFee = 0;
 
-        if (_payAccumulatedFee(amount, POOL_CREATOR) > 0) {
-            emit EventsLib.PoolFeePaid(POOL_CREATOR, amount);
+        // M-14: legacy upgraded pools have poolFeeRecipient == address(0) until
+        // POOL_CREATOR sets one; fall back to POOL_CREATOR in that case so
+        // behavior is unchanged for old proxies.
+        address recipient = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
+        if (_payAccumulatedFee(amount, recipient) > 0) {
+            emit EventsLib.PoolFeePaid(recipient, amount);
         }
+    }
+
+    /// @notice Rotate the recipient of accumulated pool fees (M-14)
+    /// @dev Only POOL_CREATOR can rotate. Useful if the original recipient is
+    ///      blacklisted by the SHIELDED_TOKEN issuer, preventing fees from
+    ///      becoming permanently unreachable.
+    function setPoolFeeRecipient(address newRecipient) external {
+        if (msg.sender != POOL_CREATOR) revert ErrorsLib.AccessControlDenied(msg.sender, "setPoolFeeRecipient");
+        if (newRecipient == address(0)) revert ErrorsLib.InvalidProtocolFeeRecipient();
+        address previous = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
+        poolFeeRecipient = newRecipient;
+        emit EventsLib.ParameterUpdated("poolFeeRecipient", uint256(uint160(newRecipient)));
+        // Emit also the previous→current pair through the existing
+        // ProtocolFeeRecipientUpdated topic so monitoring tools that watch
+        // recipient changes pick this up.
+        emit EventsLib.ProtocolFeeRecipientUpdated(previous, newRecipient);
     }
 
     /**
@@ -1312,14 +1342,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalProtectorTokens += received;
         totalProtectorShares = currentTotalShares + sharesMinted;
 
-        // Mint NFT
-        tokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
+        // M-12: pre-compute the tokenId and initialise per-id mappings BEFORE
+        // the external mint call. _safeMint invokes onERC721Received on
+        // contract recipients; any view-only inspection from that callback
+        // (or a future state mutation moved post-mint) must see a consistent
+        // position, not a half-initialised one.
+        tokenId = IProtectorReceiptNFT(protectorReceiptNFT).nextTokenId();
         protectorShares[tokenId] = sharesMinted;
         protectorShareEpochs[tokenId] = protectorShareEpoch;
-
-        // Record reward debt at current accumulator value (MasterChef pattern)
-        // This "debits" the position for rewards it didn't earn, preventing late-joiner exploit
         rewardDebt[tokenId] = (rewardPerShareAccumulated * sharesMinted) / ConstantsLib.REWARD_PRECISION;
+
+        uint256 mintedTokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
+        require(mintedTokenId == tokenId, "protector tokenId mismatch");
 
         emit EventsLib.ProtectorAssetDeposited(msg.sender, asset, received, tokenId);
     }
@@ -1386,9 +1420,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalValueAtDeposit += valueAtDeposit;
         totalShieldCollateralAmount += collateralAmount;
 
-        // Mint NFT with collateral amount stored
-        tokenId = IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
+        // M-12: pre-compute the tokenId and initialise per-id mappings BEFORE
+        // the external mint call. _safeMint invokes onERC721Received on
+        // contract recipients; any view-only inspection from that callback
+        // must see a consistent position.
+        tokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
         feeValueBaselineUsd[tokenId] = valueAtDeposit;
+
+        uint256 mintedTokenId =
+            IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
+        require(mintedTokenId == tokenId, "shield tokenId mismatch");
 
         emit EventsLib.ShieldedAssetDeposited(msg.sender, asset, received, tokenId);
     }
@@ -1440,8 +1481,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 totalFees;
         if (preferredAsset == SHIELDED_TOKEN) {
-            // Same-asset withdrawals may proceed even when protected shielded pricing is unavailable.
-            // In those cases the position exits with no newly priced fees rather than freezing the user.
+            // M-13: refuse same-asset withdrawals while the shielded leg has a
+            // pending dual-feed challenge. Previously fees silently rounded to
+            // zero in that window, so a user could intentionally trigger a
+            // challenge to exit without paying yield fees. Generic oracle
+            // outages (price unavailable but no formal challenge) still
+            // permit a no-fee exit so users aren't trapped by a broken feed.
+            _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
                 _tryCalculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
@@ -1460,11 +1507,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Update total original deposit value (subtract original value at deposit)
         totalValueAtDeposit -= pos.valueAtDeposit;
-        totalShieldCollateralAmount -= pos.collateralAmount;
 
         uint256 payoutAmount;
 
         if (preferredAsset == SHIELDED_TOKEN) {
+            // Same-asset exit: no backing tokens leave the pool, so the full
+            // backing-collateral reservation for this position can be released.
+            totalShieldCollateralAmount -= pos.collateralAmount;
+
             // Normal withdrawal: user gets shielded tokens back (minus fees)
             payoutAmount = pos.amount - totalFees;
 
@@ -1495,6 +1545,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             if (payoutAmount > maxBackingTokens) {
                 payoutAmount = maxBackingTokens;
             }
+
+            // M-4: decrement totalShieldCollateralAmount by the AMOUNT ACTUALLY
+            // PAID OUT (capped at the original reservation), not the full
+            // pos.collateralAmount. When backing token price rises post-deposit
+            // the cap is not hit and payoutAmount < pos.collateralAmount;
+            // releasing the full original reservation creates phantom headroom
+            // for remaining protector withdrawals beyond the original
+            // collateralization promise.
+            uint256 collateralReleased = payoutAmount < pos.collateralAmount ? payoutAmount : pos.collateralAmount;
+            totalShieldCollateralAmount -= collateralReleased;
 
             // Deduct from protector pool (TOKEN-BASED accounting)
             // Check balance before deduction to prevent underflow
@@ -1581,11 +1641,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
 
         // 3. Create new position with remaining amount
-        // Calculate new collateral amount proportionally to remaining amount
-        uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees);
-        // Calculate new valueAtDeposit proportionally from original (not from current price)
-        // This ensures collateralization is based on original deposit values
-        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees);
+        // L-13: round the recalculated value/collateral UP (Ceil) so repeated
+        // partial withdrawals don't slowly under-collateralise the remaining
+        // position relative to its USD value. The asymmetry slightly inflates
+        // totalValueAtDeposit / totalShieldCollateralAmount per call — bounded
+        // by 1 wei per recompute — but is the correct rounding direction for
+        // the user's protection.
+        uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees, Math.Rounding.Ceil);
+        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
         newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
             .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
@@ -1739,9 +1802,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 revert ErrorsLib.NoTokensToWithdraw();
             }
             dustExit = true;
-            if (positionShares_ == currentTotalShares) {
-                amount = totalProtectorTokens;
-            }
+            // I-14: the previous "sole-holder ⇒ amount = totalProtectorTokens"
+            // branch is unreachable: dust-exit availability requires
+            // positionAmount == 0 AND totalProtectorTokens != 0, but with
+            // positionShares_ == currentTotalShares the positionAmount
+            // would equal totalProtectorTokens (≠ 0) by definition, so the
+            // outer check would have failed. Removed; if dust-exit semantics
+            // ever extend to sole holders that branch must be reinstated
+            // with a proper guard.
         }
 
         if (pos.unlockRequestTime == 0 || pos.unlockRequestTime > block.timestamp) {
@@ -2162,18 +2230,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _validateAccessControl(address newAccessControl) internal view {
+        // L-15: probe each hook with two distinct addresses (zero + a known
+        // non-zero) so a malicious ACL that returns true for address(0) but
+        // reverts for every real caller can't pass validation.
+        address probe = address(this);
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (address(0)))
         );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (address(0)))
         );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (address(0)))
         );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (address(0)))
         );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (probe)));
     }
 
     function _validateAccessControlHook(address newAccessControl, bytes memory callData) internal view {
@@ -2275,5 +2351,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice One-bit tracker so legacy upgraded pools fall back to the runtime lookup
     ///         until governance explicitly snapshots a value via the refresh function.
     bool internal _strictProtectedBackingPricePinned;
-    uint256[31] private __gap;
+    /// @notice M-14: explicit recipient for accumulated pool fees, rotatable by
+    ///         POOL_CREATOR. Defaults to POOL_CREATOR at initialize; legacy
+    ///         upgraded pools read this as zero and the payPoolFee path falls
+    ///         back to POOL_CREATOR.
+    address public poolFeeRecipient;
+    uint256[30] private __gap;
 }

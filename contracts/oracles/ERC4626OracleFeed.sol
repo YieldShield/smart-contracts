@@ -300,6 +300,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
+        // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
+        // the vault's unsafe getter forwards useCircuitBreaker=false so the
+        // underlying read must take the unsafe path too. `_getUnderlyingPrice`
+        // (introduced on main alongside this PR) picks the right delegate and
+        // propagates revert reasons faithfully.
         uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
         uint8 priceDecimals = _getUnderlyingPriceDecimals();
 

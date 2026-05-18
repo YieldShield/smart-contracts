@@ -3,7 +3,10 @@ pragma solidity ^0.8.30;
 
 /// @title FullMath
 /// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
-/// @dev Source: Uniswap v3-core (GPL-2.0-or-later)
+/// @dev Vendored from Uniswap v3-core (GPL-2.0-or-later). Upstream:
+///      https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/libraries/FullMath.sol
+///      (commit d8b1c635c275d2a9450bd6a78f3fa2484fef73eb). I-4: keep this
+///      pin updated when re-syncing.
 library FullMath {
     /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
     /// @param a The multiplicand
