@@ -5,6 +5,12 @@ pragma solidity ^0.8.30;
 /// @title EventsLib
 /// @author David Hawig
 /// @notice Library containing all events used across the protocol
+/// @dev I-16: governance-config events (ParameterUpdated, PoolConfigUpdated,
+///      ProtocolFeeRecipientUpdated, …) do not currently include the caller as
+///      an indexed field. Adding it would break the existing event ABI and
+///      require off-chain indexers to migrate. Deferred to the next breaking
+///      event-schema change; until then, txn-level metadata (msg.sender on the
+///      enclosing call) provides the same information off-chain.
 library EventsLib {
     // SplitRiskPool events
     event ShieldActivated(
