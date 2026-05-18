@@ -3,6 +3,7 @@
 pragma solidity ^0.8.30;
 
 import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import { IERC721 } from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IShieldReceiptNFT } from "./interfaces/IShieldReceiptNFT.sol";
 import { ErrorsLib } from "./libraries/ErrorsLib.sol";
@@ -16,6 +17,9 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
 
     /// @dev Mapping from token ID to position data
     mapping(uint256 => ShieldPosition) public positions;
+
+    /// @dev Operator approvals are valid for a locked token only if granted after that token unlocked.
+    mapping(address => mapping(address => uint64)) private _operatorApprovalTimestamp;
 
     /// @dev Next token ID to mint
     uint256 public nextTokenId;
@@ -150,14 +154,47 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         return super._update(to, tokenId, auth);
     }
 
+    function setApprovalForAll(address operator, bool approved) public virtual override(ERC721, IERC721) {
+        super.setApprovalForAll(operator, approved);
+
+        if (approved) {
+            _operatorApprovalTimestamp[msg.sender][operator] = uint64(block.timestamp);
+        } else {
+            delete _operatorApprovalTimestamp[msg.sender][operator];
+        }
+    }
+
+    function _isAuthorized(address owner, address spender, uint256 tokenId)
+        internal
+        view
+        virtual
+        override
+        returns (bool)
+    {
+        if (spender == address(0)) {
+            return false;
+        }
+        if (owner == spender || _getApproved(tokenId) == spender) {
+            return true;
+        }
+        if (!isApprovedForAll(owner, spender)) {
+            return false;
+        }
+
+        uint64 approvalTimestamp = _operatorApprovalTimestamp[owner][spender];
+        if (approvalTimestamp == 0) {
+            return false;
+        }
+        return approvalTimestamp >= _unlockTime(tokenId);
+    }
+
     /// @dev Block per-token approvals during the lock window. Without this gate,
     ///      an owner could approve a wrapper contract immediately after deposit
     ///      and the wrapper could `transferFrom` the position the instant the
     ///      lock expires — defeating the economic intent of the lock. (H-7)
     function _approve(address to, uint256 tokenId, address auth, bool emitEvent) internal virtual override {
         if (to != address(0)) {
-            ShieldPosition storage pos = positions[tokenId];
-            uint256 unlockTime = pos.depositTime + transferLockPeriod;
+            uint256 unlockTime = _unlockTime(tokenId);
             if (block.timestamp < unlockTime) {
                 revert ErrorsLib.TransferLocked(unlockTime);
             }
@@ -165,10 +202,9 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         super._approve(to, tokenId, auth, emitEvent);
     }
 
-    /// @dev setApprovalForAll is operator-scoped, not token-scoped. Per-token
-    ///      lock guards live in _approve and _update; an operator approval is
-    ///      harmless on its own because every subsequent transferFrom routes
-    ///      through _update and re-checks the lock.
+    function _unlockTime(uint256 tokenId) internal view returns (uint256) {
+        return uint256(positions[tokenId].depositTime) + transferLockPeriod;
+    }
 
     /// @dev Modifier to ensure only pool can call
     modifier onlyPool() {

@@ -190,6 +190,45 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         assertEq(shieldNFT.getApproved(tokenId), recipient);
     }
 
+    function test_ShieldNFT_OperatorApprovalBeforeDepositCannotSweepAfterUnlock() public {
+        vm.prank(shielded);
+        shieldNFT.setApprovalForAll(recipient, true);
+
+        uint256 tokenId = _depositShielded(1000e18);
+        vm.warp(block.timestamp + SHIELD_LOCK_PERIOD);
+
+        vm.prank(recipient);
+        vm.expectRevert();
+        shieldNFT.transferFrom(shielded, recipient, tokenId);
+
+        vm.prank(shielded);
+        shieldNFT.setApprovalForAll(recipient, true);
+
+        vm.prank(recipient);
+        shieldNFT.transferFrom(shielded, recipient, tokenId);
+        assertEq(shieldNFT.ownerOf(tokenId), recipient);
+    }
+
+    function test_ShieldNFT_OperatorApprovalDuringLockCannotSweepAfterUnlock() public {
+        uint256 tokenId = _depositShielded(1000e18);
+
+        vm.prank(shielded);
+        shieldNFT.setApprovalForAll(recipient, true);
+
+        vm.warp(block.timestamp + SHIELD_LOCK_PERIOD);
+
+        vm.prank(recipient);
+        vm.expectRevert();
+        shieldNFT.transferFrom(shielded, recipient, tokenId);
+
+        vm.prank(shielded);
+        shieldNFT.setApprovalForAll(recipient, true);
+
+        vm.prank(recipient);
+        shieldNFT.transferFrom(shielded, recipient, tokenId);
+        assertEq(shieldNFT.ownerOf(tokenId), recipient);
+    }
+
     // ============ Protector NFT Transfer Lock Tests ============
 
     function test_ProtectorNFT_TransferBlockedDuringLock() public {
@@ -261,6 +300,45 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         protectorNFT.approve(recipient, tokenId);
         vm.stopPrank();
         assertEq(protectorNFT.getApproved(tokenId), recipient);
+    }
+
+    function test_ProtectorNFT_OperatorApprovalBeforeDepositCannotSweepAfterUnlock() public {
+        vm.prank(protector);
+        protectorNFT.setApprovalForAll(recipient, true);
+
+        uint256 tokenId = _depositProtector(1000e18);
+        vm.warp(block.timestamp + PROTECTOR_LOCK_PERIOD);
+
+        vm.prank(recipient);
+        vm.expectRevert();
+        protectorNFT.transferFrom(protector, recipient, tokenId);
+
+        vm.prank(protector);
+        protectorNFT.setApprovalForAll(recipient, true);
+
+        vm.prank(recipient);
+        protectorNFT.transferFrom(protector, recipient, tokenId);
+        assertEq(protectorNFT.ownerOf(tokenId), recipient);
+    }
+
+    function test_ProtectorNFT_OperatorApprovalDuringLockCannotSweepAfterUnlock() public {
+        uint256 tokenId = _depositProtector(1000e18);
+
+        vm.prank(protector);
+        protectorNFT.setApprovalForAll(recipient, true);
+
+        vm.warp(block.timestamp + PROTECTOR_LOCK_PERIOD);
+
+        vm.prank(recipient);
+        vm.expectRevert();
+        protectorNFT.transferFrom(protector, recipient, tokenId);
+
+        vm.prank(protector);
+        protectorNFT.setApprovalForAll(recipient, true);
+
+        vm.prank(recipient);
+        protectorNFT.transferFrom(protector, recipient, tokenId);
+        assertEq(protectorNFT.ownerOf(tokenId), recipient);
     }
 
     // ============ Edge Case: Multiple NFTs - Basic Independence Test ============
