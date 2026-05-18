@@ -26,6 +26,10 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
     /// @dev Maximum transfer lock period (safety limit)
     uint256 public constant MAX_TRANSFER_LOCK = 30 days;
 
+    /// @dev Minimum transfer lock period - protects against governance accidentally
+    ///      or maliciously disabling the lock that prevents wash-trading shielded positions.
+    uint256 public constant MIN_TRANSFER_LOCK = 1 hours;
+
     /// @dev Address of the SplitRiskPool that can mint/burn
     address public pool;
 
@@ -123,7 +127,9 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
 
     /// @notice Set transfer lock period (only governance)
     function setTransferLockPeriod(uint256 newPeriod) external onlyOwner {
-        if (newPeriod > MAX_TRANSFER_LOCK) revert ErrorsLib.InvalidUnlockDuration();
+        if (newPeriod < MIN_TRANSFER_LOCK || newPeriod > MAX_TRANSFER_LOCK) {
+            revert ErrorsLib.InvalidUnlockDuration();
+        }
         transferLockPeriod = newPeriod;
         emit EventsLib.ParameterUpdated("transferLockPeriod", newPeriod);
     }

@@ -41,4 +41,21 @@ contract ShieldReceiptNFTGuardsTest is Test {
         assertEq(pos.amount, 90);
         assertEq(pos.lastFeeClaimTime, uint64(block.timestamp));
     }
+
+    function test_setTransferLockPeriod_RevertsForZero() public {
+        vm.expectRevert(ErrorsLib.InvalidUnlockDuration.selector);
+        nft.setTransferLockPeriod(0);
+    }
+
+    function test_setTransferLockPeriod_RevertsBelowMinimum() public {
+        uint256 belowMin = nft.MIN_TRANSFER_LOCK() - 1;
+        vm.expectRevert(ErrorsLib.InvalidUnlockDuration.selector);
+        nft.setTransferLockPeriod(belowMin);
+    }
+
+    function test_setTransferLockPeriod_AcceptsMinimum() public {
+        uint256 minLock = nft.MIN_TRANSFER_LOCK();
+        nft.setTransferLockPeriod(minLock);
+        assertEq(nft.transferLockPeriod(), minLock);
+    }
 }
