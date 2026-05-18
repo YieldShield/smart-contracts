@@ -1481,11 +1481,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Update total original deposit value (subtract original value at deposit)
         totalValueAtDeposit -= pos.valueAtDeposit;
-        totalShieldCollateralAmount -= pos.collateralAmount;
 
         uint256 payoutAmount;
 
         if (preferredAsset == SHIELDED_TOKEN) {
+            // Same-asset exit: no backing tokens leave the pool, so the full
+            // backing-collateral reservation for this position can be released.
+            totalShieldCollateralAmount -= pos.collateralAmount;
+
             // Normal withdrawal: user gets shielded tokens back (minus fees)
             payoutAmount = pos.amount - totalFees;
 
@@ -1516,6 +1519,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             if (payoutAmount > maxBackingTokens) {
                 payoutAmount = maxBackingTokens;
             }
+
+            // M-4: decrement totalShieldCollateralAmount by the AMOUNT ACTUALLY
+            // PAID OUT (capped at the original reservation), not the full
+            // pos.collateralAmount. When backing token price rises post-deposit
+            // the cap is not hit and payoutAmount < pos.collateralAmount;
+            // releasing the full original reservation creates phantom headroom
+            // for remaining protector withdrawals beyond the original
+            // collateralization promise.
+            uint256 collateralReleased =
+                payoutAmount < pos.collateralAmount ? payoutAmount : pos.collateralAmount;
+            totalShieldCollateralAmount -= collateralReleased;
 
             // Deduct from protector pool (TOKEN-BASED accounting)
             // Check balance before deduction to prevent underflow
