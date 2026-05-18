@@ -298,7 +298,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
     }
 
     function test_ProposalThreshold() public view {
-        assertEq(governor.proposalThreshold(), 1000e18);
+        assertEq(governor.proposalThreshold(), 10_000e18);
     }
 
     function test_QuorumPercent() public view {
@@ -690,11 +690,12 @@ contract ProtocolAccessControlUpgradeableTest is Test {
 
         replacementGovernance.setDefaultAdmin(address(this), true);
 
+        // H-8: enumeration catches the extra admin first.
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                ProtocolAccessControlUpgradeable.GovernanceTimelockHasExtraAdmins.selector,
                 address(replacementGovernance),
-                address(this)
+                uint256(2)
             )
         );
         vm.prank(address(replacementGovernance));
