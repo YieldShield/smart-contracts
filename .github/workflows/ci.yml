@@ -185,10 +185,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      # I-3: gate the job on slither high-severity findings even though the
-      # outer job is continue-on-error. This step exits non-zero when slither
-      # detects any high-severity issue, so a new high blocks the PR while
-      # transient slither tooling failures still allow merges.
+  # Codex P2 follow-up: the high-severity gate lives in its own job (no
+  # continue-on-error) so a non-zero --fail-high exit actually blocks the PR.
+  # The reporting job above is allowed to fail so transient slither tooling
+  # errors don't take down CI while still uploading the SARIF / markdown
+  # report; this job runs slither again strictly for the gate.
+  slither-gate:
+    name: Slither high-severity gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: slither
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Slither
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install slither-analyzer==0.10.3
+
+      - name: Build contracts
+        run: forge build
+
       - name: Fail on Slither high-severity findings
         run: |
           slither . \
