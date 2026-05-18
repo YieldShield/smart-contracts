@@ -14,6 +14,49 @@ import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
+import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+
+contract PartialWithdrawReceiver is IERC721Receiver {
+    SplitRiskPool public immutable pool;
+    address public immutable shieldedToken;
+
+    uint256 public expectedTokenId;
+    uint256 public expectedTotalValueAtDeposit;
+    uint256 public expectedTotalShieldCollateralAmount;
+    uint256 public expectedFeeBaselineUsd;
+    bool public observedCallback;
+
+    constructor(SplitRiskPool pool_, address shieldedToken_) {
+        pool = pool_;
+        shieldedToken = shieldedToken_;
+    }
+
+    function expectCallback(
+        uint256 tokenId,
+        uint256 totalValueAtDeposit,
+        uint256 totalShieldCollateralAmount,
+        uint256 feeBaselineUsd
+    ) external {
+        expectedTokenId = tokenId;
+        expectedTotalValueAtDeposit = totalValueAtDeposit;
+        expectedTotalShieldCollateralAmount = totalShieldCollateralAmount;
+        expectedFeeBaselineUsd = feeBaselineUsd;
+        observedCallback = false;
+    }
+
+    function partialWithdraw(uint256 tokenId, uint256 amount) external {
+        pool.partialWithdrawShielded(tokenId, amount, shieldedToken, 0);
+    }
+
+    function onERC721Received(address, address, uint256 tokenId, bytes calldata) external returns (bytes4) {
+        require(tokenId == expectedTokenId, "unexpected tokenId");
+        require(pool.totalValueAtDeposit() == expectedTotalValueAtDeposit, "stale total value");
+        require(pool.totalShieldCollateralAmount() == expectedTotalShieldCollateralAmount, "stale collateral total");
+        require(pool.feeValueBaselineUsd(tokenId) == expectedFeeBaselineUsd, "stale fee baseline");
+        observedCallback = true;
+        return IERC721Receiver.onERC721Received.selector;
+    }
+}
 
 /// @title Tests for totalShieldedTokens accounting consistency
 /// @notice Verifies that totalShieldedTokens always equals sum of active position amounts
@@ -155,6 +198,21 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
         }
     }
 
+    /// @notice Calculate sum of all active shielded position collateral amounts
+    function _sumActivePositionCollateralAmount() internal view returns (uint256 total) {
+        uint256 nextId = shieldNFT.nextTokenId();
+        for (uint256 i = 0; i < nextId; i++) {
+            try shieldNFT.ownerOf(i) returns (address owner) {
+                if (owner != address(0)) {
+                    IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(i);
+                    total += pos.collateralAmount;
+                }
+            } catch {
+                // Token doesn't exist (burned), skip
+            }
+        }
+    }
+
     /// @notice Assert that totalShieldedTokens matches sum of position amounts
     function _assertTotalShieldedTokensConsistent() internal view {
         uint256 recorded = pool.totalShieldedTokens();
@@ -167,6 +225,13 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
         uint256 recorded = pool.totalValueAtDeposit();
         uint256 actual = _sumActivePositionValueAtDeposit();
         assertEq(recorded, actual, "totalValueAtDeposit != sum of position valueAtDeposit values");
+    }
+
+    /// @notice Assert that totalShieldCollateralAmount matches sum of active position collateral amounts
+    function _assertTotalShieldCollateralAmountConsistent() internal view {
+        uint256 recorded = pool.totalShieldCollateralAmount();
+        uint256 actual = _sumActivePositionCollateralAmount();
+        assertEq(recorded, actual, "totalShieldCollateralAmount != sum of position collateral amounts");
     }
 
     function _claimRewardsAsOwner(uint256 tokenId) internal {
@@ -214,6 +279,30 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
 
         _assertTotalShieldedTokensConsistent();
         assertEq(pool.totalShieldedTokens(), 0);
+    }
+
+    function test_crossAssetWithdraw_ReleasesFullStoredCollateralCap() public {
+        vm.startPrank(shielded1);
+        shieldedToken.approve(address(pool), 1000e18);
+        uint256 tokenId1 = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+        vm.stopPrank();
+
+        vm.startPrank(shielded2);
+        shieldedToken.approve(address(pool), 2000e18);
+        uint256 tokenId2 = pool.depositShieldedAsset(address(shieldedToken), 2000e18, 0);
+        vm.stopPrank();
+
+        IShieldReceiptNFT.ShieldPosition memory pos2 = shieldNFT.getPosition(tokenId2);
+        _assertTotalShieldCollateralAmountConsistent();
+
+        oracle.setPrice(address(backingToken), 2e8);
+        vm.warp(block.timestamp + 7 days + 1);
+
+        vm.prank(shielded1);
+        pool.shieldedWithdraw(tokenId1, address(backingToken), 0);
+
+        assertEq(pool.totalShieldCollateralAmount(), pos2.collateralAmount);
+        _assertTotalShieldCollateralAmountConsistent();
     }
 
     // ============ Test: Partial Withdrawal ============
@@ -330,6 +419,31 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
             valueAtDepositAfter, valueAtDepositBefore, "totalValueAtDeposit should remain unchanged after claimRewards"
         );
         _assertTotalValueAtDepositConsistent();
+    }
+
+    function test_partialWithdrawShielded_InitializesPoolStateBeforeSafeMintCallback() public {
+        vm.startPrank(shielded1);
+        shieldedToken.approve(address(pool), 1000e18);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+        vm.stopPrank();
+
+        PartialWithdrawReceiver receiver = new PartialWithdrawReceiver(pool, address(shieldedToken));
+
+        vm.warp(block.timestamp + shieldNFT.transferLockPeriod());
+        vm.prank(shielded1);
+        shieldNFT.transferFrom(shielded1, address(receiver), tokenId);
+
+        uint256 newTokenId = shieldNFT.nextTokenId();
+        receiver.expectCallback({
+            tokenId: newTokenId, totalValueAtDeposit: 700e8, totalShieldCollateralAmount: 1050e18, feeBaselineUsd: 700e8
+        });
+
+        receiver.partialWithdraw(tokenId, 300e18);
+
+        assertTrue(receiver.observedCallback(), "receiver callback not observed");
+        _assertTotalShieldedTokensConsistent();
+        _assertTotalValueAtDepositConsistent();
+        _assertTotalShieldCollateralAmountConsistent();
     }
 
     // ============ Test: Multiple Claims ============

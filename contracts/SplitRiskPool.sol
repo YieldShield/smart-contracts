@@ -1546,15 +1546,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 payoutAmount = maxBackingTokens;
             }
 
-            // M-4: decrement totalShieldCollateralAmount by the AMOUNT ACTUALLY
-            // PAID OUT (capped at the original reservation), not the full
-            // pos.collateralAmount. When backing token price rises post-deposit
-            // the cap is not hit and payoutAmount < pos.collateralAmount;
-            // releasing the full original reservation creates phantom headroom
-            // for remaining protector withdrawals beyond the original
-            // collateralization promise.
-            uint256 collateralReleased = payoutAmount < pos.collateralAmount ? payoutAmount : pos.collateralAmount;
-            totalShieldCollateralAmount -= collateralReleased;
+            // The whole shield NFT is burned, so release its whole stored
+            // collateral cap. The cap is per-position accounting, not a record
+            // of how many backing tokens actually left during this withdrawal.
+            totalShieldCollateralAmount -= pos.collateralAmount;
 
             // Deduct from protector pool (TOKEN-BASED accounting)
             // Check balance before deduction to prevent underflow
@@ -1640,7 +1635,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // 2. Burn old NFT
         IShieldReceiptNFT(shieldReceiptNFT).burn(tokenId);
 
-        // 3. Create new position with remaining amount
+        // 3. Prepare the new position with remaining amount
         // L-13: round the recalculated value/collateral UP (Ceil) so repeated
         // partial withdrawals don't slowly under-collateralise the remaining
         // position relative to its USD value. The asymmetry slightly inflates
@@ -1649,11 +1644,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // the user's protection.
         uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees, Math.Rounding.Ceil);
         uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
-        newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
-            .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
-        feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
-        delete feeValueBaselineUsd[tokenId];
-        delete lastClaimRewardsTime[tokenId];
 
         // 4. Update pool totals (TOKEN-BASED)
         // Deduct both withdrawn amount AND fees from totalShieldedTokens
@@ -1670,6 +1660,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalValueAtDeposit += newValueAtDeposit;
         totalShieldCollateralAmount -= pos.collateralAmount;
         totalShieldCollateralAmount += newCollateralAmount;
+
+        // 5. Initialise per-id pool mappings BEFORE the safe mint callback can
+        // inspect the new receipt. This mirrors depositShieldedAsset's ordering.
+        newTokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
+        feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
+        delete feeValueBaselineUsd[tokenId];
+        delete lastClaimRewardsTime[tokenId];
+
+        uint256 mintedTokenId = IShieldReceiptNFT(shieldReceiptNFT)
+            .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
+        require(mintedTokenId == newTokenId, "shield tokenId mismatch");
 
         // === ATOMIC SECTION END ===
 
