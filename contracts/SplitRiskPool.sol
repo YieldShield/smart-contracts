@@ -207,6 +207,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
         (backingTokenDecimals, backingTokenScale) = _getTokenMetadata(_backingTokenInfo.token);
 
+        // M-14: default the fee recipient to the pool creator at init.
+        poolFeeRecipient = _poolCreator;
+
         // H-5: snapshot the factory's strict-protected-backing-price policy at
         // initialize so a future factory regression cannot silently downgrade
         // strict-mode pricing for this pool.
@@ -1094,9 +1097,29 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 amount = accumulatedPoolFee;
         accumulatedPoolFee = 0;
 
-        if (_payAccumulatedFee(amount, POOL_CREATOR) > 0) {
-            emit EventsLib.PoolFeePaid(POOL_CREATOR, amount);
+        // M-14: legacy upgraded pools have poolFeeRecipient == address(0) until
+        // POOL_CREATOR sets one; fall back to POOL_CREATOR in that case so
+        // behavior is unchanged for old proxies.
+        address recipient = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
+        if (_payAccumulatedFee(amount, recipient) > 0) {
+            emit EventsLib.PoolFeePaid(recipient, amount);
         }
+    }
+
+    /// @notice Rotate the recipient of accumulated pool fees (M-14)
+    /// @dev Only POOL_CREATOR can rotate. Useful if the original recipient is
+    ///      blacklisted by the SHIELDED_TOKEN issuer, preventing fees from
+    ///      becoming permanently unreachable.
+    function setPoolFeeRecipient(address newRecipient) external {
+        if (msg.sender != POOL_CREATOR) revert ErrorsLib.AccessControlDenied(msg.sender, "setPoolFeeRecipient");
+        if (newRecipient == address(0)) revert ErrorsLib.InvalidProtocolFeeRecipient();
+        address previous = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
+        poolFeeRecipient = newRecipient;
+        emit EventsLib.ParameterUpdated("poolFeeRecipient", uint256(uint160(newRecipient)));
+        // Emit also the previous→current pair through the existing
+        // ProtocolFeeRecipientUpdated topic so monitoring tools that watch
+        // recipient changes pick this up.
+        emit EventsLib.ProtocolFeeRecipientUpdated(previous, newRecipient);
     }
 
     /**
@@ -2310,5 +2333,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice One-bit tracker so legacy upgraded pools fall back to the runtime lookup
     ///         until governance explicitly snapshots a value via the refresh function.
     bool internal _strictProtectedBackingPricePinned;
-    uint256[31] private __gap;
+    /// @notice M-14: explicit recipient for accumulated pool fees, rotatable by
+    ///         POOL_CREATOR. Defaults to POOL_CREATOR at initialize; legacy
+    ///         upgraded pools read this as zero and the payPoolFee path falls
+    ///         back to POOL_CREATOR.
+    address public poolFeeRecipient;
+    uint256[30] private __gap;
 }
