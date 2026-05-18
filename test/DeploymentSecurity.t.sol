@@ -195,7 +195,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         ysToken.burn(burnAmount);
 
-        assertLt(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
+        // M-15: proposalThreshold is now equal to MIN_GOVERNANCE_SUPPLY (both 10k).
+        // After M-15, the burn floor and propose threshold coincide — assertLe
+        // captures the invariant that you can still propose at the floor.
+        assertLe(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
     }
 
     function test_ProductionProtocol_RoutesOracleOwnershipThroughFactoryGovernance() public {

@@ -142,20 +142,21 @@ contract OracleBoundsTest is Test {
     // ============ ChainlinkOracleFeed: maxPriceAge bounds ============
 
     function testChainlink_SetMaxPriceAge_RevertsAboveMaximum() public {
+        // M-1: MAX_PRICE_AGE_LIMIT raised from 1h to 24h for long-heartbeat RWA feeds.
         ChainlinkOracleFeed feed = new ChainlinkOracleFeed(60);
-        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.PriceAgeTooHigh.selector, 3601, 3600));
-        feed.setMaxPriceAge(3601);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        feed.setMaxPriceAge(86_401);
     }
 
     function testChainlink_SetMaxPriceAge_AcceptsMaximum() public {
         ChainlinkOracleFeed feed = new ChainlinkOracleFeed(60);
-        feed.setMaxPriceAge(3600);
-        assertEq(feed.maxPriceAge(), 3600);
+        feed.setMaxPriceAge(86_400);
+        assertEq(feed.maxPriceAge(), 86_400);
     }
 
     function testChainlink_Constructor_RevertsAboveMaxPriceAge() public {
-        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.PriceAgeTooHigh.selector, 7200, 3600));
-        new ChainlinkOracleFeed(7200);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        new ChainlinkOracleFeed(86_401);
     }
 
     function testChainlink_Constructor_RevertsBelowMinPriceAge() public {
@@ -167,8 +168,8 @@ contract OracleBoundsTest is Test {
         ChainlinkOracleFeed feedMin = new ChainlinkOracleFeed(10);
         assertEq(feedMin.maxPriceAge(), 10);
 
-        ChainlinkOracleFeed feedMax = new ChainlinkOracleFeed(3600);
-        assertEq(feedMax.maxPriceAge(), 3600);
+        ChainlinkOracleFeed feedMax = new ChainlinkOracleFeed(86_400);
+        assertEq(feedMax.maxPriceAge(), 86_400);
     }
 
     // ============ UniswapV3TWAPFeed: TWAP period bounds ============
@@ -220,7 +221,7 @@ contract OracleBoundsTest is Test {
 
     function testChainlink_MaxPriceAgeLimit() public {
         ChainlinkOracleFeed feed = new ChainlinkOracleFeed(60);
-        assertEq(feed.MAX_PRICE_AGE_LIMIT(), 3600);
+        assertEq(feed.MAX_PRICE_AGE_LIMIT(), 86_400);
     }
 
     function testTWAP_MinTwapPeriod() public {
