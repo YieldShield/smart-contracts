@@ -1003,13 +1003,19 @@ contract CompositeOracleDualFeedTest is Test {
         assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
     }
 
-    function test_StrictCircuitBreaker_UsesHealthyActiveFeedWhenInactiveBackupReverts() public {
+    function test_StrictCircuitBreaker_FailsClosedWhenInactiveBackupReverts() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
 
         backupOracle.setShouldRevertOnCircuitBreaker(true);
 
-        assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), PRIMARY_PRICE);
+        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
     // BUG-2 FIX: Test reconfiguration emits challenge cancelled event
@@ -1162,6 +1168,10 @@ contract CompositeOracleDualFeedTest is Test {
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
         compositeOracle.getValue(address(token), 1e18);
 
+        (uint256 fallbackValue, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(fallbackValue, 0, "fallback must not serve active disputed feed during challenge");
+        assertFalse(isReliable);
+
         // For `getEquivalentAmount` the gate must fire on either side of the conversion.
         // Configure a second token with a single (challenge-free) feed so the disputed
         // side dominates.
@@ -1192,6 +1202,10 @@ contract CompositeOracleDualFeedTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
         compositeOracle.getValue(address(token), 1e18);
+
+        (uint256 fallbackValue, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(fallbackValue, 0, "fallback must not serve active disputed feed");
+        assertFalse(isReliable);
 
         // Unsafe path still serves the active feed.
         assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);

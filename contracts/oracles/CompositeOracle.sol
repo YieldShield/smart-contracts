@@ -524,7 +524,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
         if (!backupSuccess || !_supportsCircuitBreaker(config.backupFeed, token)) {
-            return false;
+            return true;
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
@@ -998,6 +998,8 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @inheritdoc ICompositeOracle
     /// @dev Fails closed when the active feed is disputed:
+    ///      - If a challenge is pending, the active primary is explicitly under dispute.
+    ///      - If the backup/comparison feed is unavailable, the active primary cannot be verified.
     ///      - If `isBackupActive == true`, the primary feed is the known-bad inactive feed;
     ///        do NOT silently fall back to it (H-3).
     ///      - If `_hasUnresolvedDualFeedDeviation == true`, the dual-feed challenge mechanism
@@ -1017,6 +1019,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // Determine which feed is currently active
         address activeFeed = config.isBackupActive ? config.backupFeed : config.primaryFeed;
         address inactiveFeed = config.isBackupActive ? config.primaryFeed : config.backupFeed;
+        bool activeFeedDisputed = (config.challengeStartTime != 0 && !config.isBackupActive)
+            || _hasUnresolvedDualFeedDeviation(config, token);
+
+        if (activeFeedDisputed) {
+            return (0, false);
+        }
 
         // Try active feed first
         try IOracleFeed(activeFeed).getPrice(token) returns (uint256 price) {
