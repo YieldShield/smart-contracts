@@ -1455,8 +1455,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 totalFees;
         if (preferredAsset == SHIELDED_TOKEN) {
-            // Same-asset withdrawals may proceed even when protected shielded pricing is unavailable.
-            // In those cases the position exits with no newly priced fees rather than freezing the user.
+            // M-13: refuse same-asset withdrawals while the shielded leg has a
+            // pending dual-feed challenge. Previously fees silently rounded to
+            // zero in that window, so a user could intentionally trigger a
+            // challenge to exit without paying yield fees. Generic oracle
+            // outages (price unavailable but no formal challenge) still
+            // permit a no-fee exit so users aren't trapped by a broken feed.
+            _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
                 _tryCalculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
