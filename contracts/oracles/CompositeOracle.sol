@@ -676,9 +676,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return abi.decode(data, (bool, uint64));
         }
 
-        // Active feed doesn't support staleness — treat as fresh since CompositeOracle
-        // already validates prices through the feed's getPrice()
-        return (false, uint64(block.timestamp));
+        // M-9: active feed doesn't expose isPriceStale. Fail closed (true, 0)
+        // instead of pretending the price is fresh — a downstream consumer
+        // (e.g., ERC4626OracleFeed._checkUnderlyingStaleness) would otherwise
+        // silently lose its staleness gate when the underlying composite
+        // resolves to a feed without the helper.
+        return (true, 0);
     }
 
     // ============ IPriceOracle Implementation ============
