@@ -114,8 +114,17 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for price age exceeding upper bound
     error PriceAgeTooHigh(uint256 provided, uint256 maximum);
 
-    /// @notice Maximum allowed maxPriceAge value (1 hour)
-    uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
+    /// @notice Maximum allowed maxPriceAge value (24h, to accommodate long-heartbeat
+    ///         RWA feeds like LBTC, sDAI, USDY whose Chainlink publish cadence is daily).
+    /// @dev M-1: raised from 1h. Pair with per-token overrides via
+    ///      `setMaxPriceAgeForToken` when a specific feed needs a tighter bound.
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
+
+    /// @notice Per-token max price age override. Zero means "use the global maxPriceAge".
+    mapping(address => uint256) public maxPriceAgeForToken;
+
+    /// @notice Emitted when a per-token max price age is set
+    event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
 
     /// @notice Constructor
     /// @param _maxPriceAge Maximum age of price data in seconds
@@ -195,7 +204,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         emit TokenFeedSet(token, address(0));
     }
 
-    /// @notice Set the maximum age for price data
+    /// @notice Set the global maximum age for price data
     /// @param _maxPriceAge The maximum age in seconds (minimum 10)
     function setMaxPriceAge(uint256 _maxPriceAge) external onlyOwner {
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
@@ -203,6 +212,22 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         uint256 oldAge = maxPriceAge;
         maxPriceAge = _maxPriceAge;
         emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set a per-token max price age that overrides the global value.
+    /// @dev Set to 0 to clear the override and revert to the global maxPriceAge.
+    function setMaxPriceAgeForToken(address token, uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAgeForToken[token];
+        maxPriceAgeForToken[token] = _maxPriceAge;
+        emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Resolve the effective max-price-age for a token (override or global)
+    function effectiveMaxPriceAge(address token) public view returns (uint256) {
+        uint256 perToken = maxPriceAgeForToken[token];
+        return perToken == 0 ? maxPriceAge : perToken;
     }
 
     /// @notice Set the L2 sequencer uptime feed (for Arbitrum/Optimism/Base)
@@ -263,10 +288,12 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = feed.latestRoundData();
 
-        // Validate price data using shared library
+        // Validate price data using shared library. Use per-token max-age if
+        // overridden — long-heartbeat RWA feeds need their own bound. (M-1)
+        uint256 effectiveAge = effectiveMaxPriceAge(token);
         OracleValidationLib.validatePositivePrice(answer, token);
-        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, maxPriceAge);
-        OracleValidationLib.validateStaleness(updatedAt, maxPriceAge, token);
+        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, effectiveAge);
+        OracleValidationLib.validateStaleness(updatedAt, effectiveAge, token);
 
         // Venus-style protection: if the underlying aggregator's min/max answer
         // bounds were retrievable at registration time, reject prices that have
@@ -322,7 +349,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (updatedAt > block.timestamp) {
             return (true, updatedAt);
         }
-        isStale = block.timestamp - updatedAt > maxPriceAge;
+        isStale = block.timestamp - updatedAt > effectiveMaxPriceAge(token);
     }
 
     /// @notice Check L2 sequencer status (for monitoring/frontend)
