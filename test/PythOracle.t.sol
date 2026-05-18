@@ -310,6 +310,16 @@ contract PythOracleTest is Test {
         assertEq(price, 12_300e8, "Price should convert correctly with positive expo");
     }
 
+    function testPriceWithNegativeExpoThatTruncatesToZeroReverts() public {
+        // price = 1, expo = -12. adjustment = -4, so result = 1 / 10^4 = 0.
+        // Must revert as InvalidPrice instead of silently propagating 0.
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1, 0, -12, uint64(block.timestamp));
+
+        vm.expectRevert();
+        oracle.getPrice(address(token1));
+    }
+
     function testPriceWithZeroExpo() public {
         // price=1e8, expo=0 means the raw Pyth value is 100,000,000.
         // Normalized to 8 USD decimals, that is 1e8 * 1e8 = 1e16.

@@ -305,16 +305,21 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         // Calculate the adjustment needed: 10^(expo + 8)
         int32 adjustment = expo + 8;
 
+        uint256 result;
         if (adjustment == 0) {
             // Already in 8 decimals
-            return uint256(price);
+            result = uint256(price);
         } else if (adjustment > 0) {
             // Need to multiply: price * 10^adjustment
-            return uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
+            result = uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
         } else {
-            // Need to divide: price / 10^(-adjustment)
-            return uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
+            // Need to divide: price / 10^(-adjustment).
+            // Truncation can yield zero for tiny prices with very negative expo;
+            // fail closed so a silent zero never propagates into composition.
+            result = uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
         }
+        if (result == 0) revert InvalidPrice(token, 0);
+        return result;
     }
 
     function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {
