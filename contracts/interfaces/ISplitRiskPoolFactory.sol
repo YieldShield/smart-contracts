@@ -103,6 +103,11 @@ interface ISplitRiskPoolFactory {
     function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external;
     function setCompositeOracleDeviationThreshold(uint256 newThresholdBps) external;
     function setCompositeOracleChallengeDuration(uint256 newDurationSec) external;
+    function scheduleCompositeOracleForceResetToPrimary(address token) external;
+    function executeCompositeOracleForceResetToPrimary(address token) external;
+    function scheduleCompositeOracleEmergencyCancelChallenge(address token) external;
+    function executeCompositeOracleEmergencyCancelChallenge(address token) external;
+    function cancelCompositeOracleScheduledOverride(address token, bytes32 action) external;
     function setPythTokenPriceFeed(address token, bytes32 feedId) external;
     function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
     function removePythToken(address token) external;

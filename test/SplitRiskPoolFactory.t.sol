@@ -381,6 +381,73 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracle(address(newOracle));
     }
 
+    function testFactoryCanEmergencyCancelCompositeOracleChallengeWhenOwner() public {
+        MockOracle backupOracle = new MockOracle();
+        backupOracle.setPrice(address(tokenB), 2e8);
+        compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
+        compositeOracle.transferOwnership(address(factory));
+
+        compositeOracle.challengeForToken(address(tokenB));
+        (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(tokenB));
+        assertTrue(isChallengePending);
+
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleEmergencyCancelChallenge(address(tokenB));
+
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
+        vm.prank(governanceTimelock);
+        factory.executeCompositeOracleEmergencyCancelChallenge(address(tokenB));
+
+        (,,,, isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(tokenB));
+        assertFalse(isChallengePending);
+    }
+
+    function testFactoryCanForceResetCompositeOracleWhenOwner() public {
+        MockOracle backupOracle = new MockOracle();
+        backupOracle.setPrice(address(tokenB), 2e8);
+        compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
+        compositeOracle.transferOwnership(address(factory));
+
+        compositeOracle.challengeForToken(address(tokenB));
+        vm.warp(block.timestamp + compositeOracle.challengeDurationSec() + 1);
+        compositeOracle.finalizeChallenge(address(tokenB));
+        assertTrue(compositeOracle.isBackupActiveForToken(address(tokenB)));
+
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleForceResetToPrimary(address(tokenB));
+
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+
+        vm.prank(governanceTimelock);
+        factory.executeCompositeOracleForceResetToPrimary(address(tokenB));
+
+        assertFalse(compositeOracle.isBackupActiveForToken(address(tokenB)));
+    }
+
+    function testFactoryCanCancelCompositeOracleScheduledOverrideWhenOwner() public {
+        MockOracle backupOracle = new MockOracle();
+        backupOracle.setPrice(address(tokenB), 2e8);
+        compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
+        compositeOracle.transferOwnership(address(factory));
+
+        compositeOracle.challengeForToken(address(tokenB));
+
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleEmergencyCancelChallenge(address(tokenB));
+
+        bytes32 action = keccak256("emergencyCancelChallenge");
+        vm.prank(governanceTimelock);
+        factory.cancelCompositeOracleScheduledOverride(address(tokenB), action);
+
+        vm.warp(block.timestamp + compositeOracle.EMERGENCY_OVERRIDE_DELAY());
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.EmergencyOverrideNotScheduled.selector, address(tokenB), action)
+        );
+        factory.executeCompositeOracleEmergencyCancelChallenge(address(tokenB));
+    }
+
     function testFactoryInterfaceExposesAdminSurface() public {
         ISplitRiskPoolFactory factoryInterface = ISplitRiskPoolFactory(address(factory));
         SplitRiskPool newImplementation = new SplitRiskPool();

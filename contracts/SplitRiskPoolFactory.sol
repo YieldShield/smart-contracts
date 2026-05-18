@@ -29,6 +29,11 @@ interface ICompositeOracleAdmin {
     function setAuthorizedCaller(address caller, bool authorized) external;
     function setDeviationThreshold(uint256 newThresholdBps) external;
     function setChallengeDuration(uint256 newDurationSec) external;
+    function scheduleForceResetToPrimary(address token) external;
+    function forceResetToPrimary(address token) external;
+    function scheduleEmergencyCancelChallenge(address token) external;
+    function emergencyCancelChallenge(address token) external;
+    function cancelScheduledOverride(address token, bytes32 action) external;
 }
 
 interface IPythOracleAdmin {
@@ -295,6 +300,31 @@ contract SplitRiskPoolFactory is
     function setCompositeOracleChallengeDuration(uint256 newDurationSec) external onlyGovernance {
         _requireManagedOracleConfigured(compositeOracle);
         ICompositeOracleAdmin(compositeOracle).setChallengeDuration(newDurationSec);
+    }
+
+    function scheduleCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).scheduleForceResetToPrimary(token);
+    }
+
+    function executeCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).forceResetToPrimary(token);
+    }
+
+    function scheduleCompositeOracleEmergencyCancelChallenge(address token) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).scheduleEmergencyCancelChallenge(token);
+    }
+
+    function executeCompositeOracleEmergencyCancelChallenge(address token) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).emergencyCancelChallenge(token);
+    }
+
+    function cancelCompositeOracleScheduledOverride(address token, bytes32 action) external onlyGovernance {
+        _requireManagedOracleConfigured(compositeOracle);
+        ICompositeOracleAdmin(compositeOracle).cancelScheduledOverride(token, action);
     }
 
     function setPythTokenPriceFeed(address token, bytes32 feedId) external onlyGovernance {
