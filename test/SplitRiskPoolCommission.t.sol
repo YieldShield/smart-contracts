@@ -960,6 +960,12 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 500e18, 0);
 
         IShieldReceiptNFT shieldNFT = IShieldReceiptNFT(pool.shieldReceiptNFT());
+
+        // H-7: approve is lock-gated; warp past the lock period so approval succeeds.
+        // We're testing claimRewards access control, not the lock.
+        ShieldReceiptNFT shieldNFTConcrete = ShieldReceiptNFT(address(shieldNFT));
+        vm.warp(block.timestamp + shieldNFTConcrete.transferLockPeriod());
+
         vm.prank(shielded);
         shieldNFT.approve(protector2, tokenId);
 

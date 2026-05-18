@@ -5,7 +5,6 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
-import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
@@ -677,79 +676,130 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return abi.decode(data, (bool, uint64));
         }
 
-        // Active feed doesn't support staleness — treat as fresh since CompositeOracle
-        // already validates prices through the feed's getPrice()
-        return (false, uint64(block.timestamp));
+        // M-9: active feed doesn't expose isPriceStale. Fail closed (true, 0)
+        // instead of pretending the price is fresh — a downstream consumer
+        // (e.g., ERC4626OracleFeed._checkUnderlyingStaleness) would otherwise
+        // silently lose its staleness gate when the underlying composite
+        // resolves to a feed without the helper.
+        return (true, 0);
     }
 
     // ============ IPriceOracle Implementation ============
 
-    /// @notice Internal helper to get price for a token (respects dual-feed active state)
+    /// @notice Internal helper for the SAFE price path
+    /// @dev Fails closed when a challenge is pending, when an unresolved dual-feed deviation
+    ///      exists, or when the active feed lacks a circuit-breaker discipline. The
+    ///      challenge-gate checks live in this helper so every safe entry point
+    ///      (`getPrice`, `getValue`, `getEquivalentAmount`) inherits them automatically.
     /// @param token The token address
     /// @return price The price in USD with 8 decimals
     function _getPrice(address token) internal view returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
+        if (_hasUnresolvedDualFeedDeviation(config, token)) revert OraclePriceDisputed(token);
 
-        // Determine which feed to use
-        address activeFeed;
-        if (config.backupFeed != address(0) && config.isBackupActive) {
-            activeFeed = config.backupFeed;
-        } else {
-            activeFeed = config.primaryFeed;
-        }
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
 
-        // Get price from the active feed
+        // After the safe-default rename, every CB-capable feed exposes its protected
+        // computation under `getPrice` (the unprotected path lives behind `getPriceUnsafe`).
+        // Calling `getPrice` here therefore inherits the feed-level circuit breaker.
         uint256 price = IOracleFeed(activeFeed).getPrice(token);
         uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
 
-        // Normalize to USD_DECIMALS (8)
         return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
     }
 
-    /// @dev Tries to fetch a circuit-breaker-protected price from the active feed.
-    ///      Returns (false, 0) only when the feed does not implement the function.
-    ///      If the feed implements it and reverts, the revert is bubbled to preserve safety.
-    function _tryGetCircuitBreakerPrice(address feed, address token)
-        internal
-        view
-        returns (bool supported, uint256 price)
-    {
-        (bool success, bytes memory data) =
-            feed.staticcall(abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (token)));
+    /// @notice Internal helper for the UNSAFE price path
+    /// @dev Bypasses challenge-gate checks and returns the active feed's price even when
+    ///      the dual-feed challenge mechanism flags it as disputed. Used only by the
+    ///      explicit `*Unsafe` external entry points.
+    function _getPriceUnsafe(address token) internal view returns (uint256) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
 
-        if (success) {
-            uint8 feedDecimals = IOracleFeed(feed).decimals();
-            return (true, abi.decode(data, (uint256)).normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+
+        // Probe the feed's `getPriceUnsafe(address)` selector first so callers that
+        // explicitly opted into the unsafe path receive raw spot pricing where available.
+        // Feeds without the unsafe split (PythEMA, UniswapV3 TWAP) fall back to `getPrice`,
+        // which is their canonical (and only) price computation.
+        (bool unsafeSupported, uint256 unsafePrice) = _tryGetUnsafePrice(activeFeed, token);
+        if (unsafeSupported) {
+            uint8 unsafeDecimals = IOracleFeed(activeFeed).decimals();
+            return unsafePrice.normalize(unsafeDecimals, ConstantsLib.USD_DECIMALS);
         }
 
-        // Missing function / no fallback.
+        uint256 price = IOracleFeed(activeFeed).getPrice(token);
+        uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
+        return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
+    }
+
+    /// @dev Best-effort wrapper around the feed's `getPriceUnsafe(address)` selector.
+    ///      Returns (false, 0) when the feed does not implement it. Reverts that the
+    ///      feed surfaces from a present selector are bubbled so callers do not silently
+    ///      receive a stale or zero value.
+    function _tryGetUnsafePrice(address feed, address token) internal view returns (bool supported, uint256 price) {
+        if (feed.code.length == 0) {
+            return (false, 0);
+        }
+
+        (bool success, bytes memory data) = feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
+
+        if (success) {
+            if (data.length < 32) {
+                return (false, 0);
+            }
+            return (true, abi.decode(data, (uint256)));
+        }
+
+        // Selector not implemented — fall back to the canonical `getPrice` path.
         if (data.length == 0) {
             return (false, 0);
         }
 
-        // Bubble real circuit-breaker or oracle errors instead of silently downgrading to spot.
+        // Bubble real revert reasons from a present `getPriceUnsafe` implementation.
         assembly ("memory-safe") {
             revert(add(data, 0x20), mload(data))
         }
     }
 
-    /// @notice Get the price for a token by routing to its registered oracle feed
+    /// @notice Get the safest-available price for a token via its registered oracle feed
+    /// @dev Honours the dual-feed challenge gate and feed-level circuit breakers.
+    ///      Production write paths must use this entry point.
     /// @param token The token address
     /// @return price The price in USD with 8 decimals
     function getPrice(address token) external view override returns (uint256) {
         return _getPrice(token);
     }
 
-    /// @notice Calculate the value of an amount of tokens in USD
-    /// @param token The token address
-    /// @param amount The amount of tokens in the token's native ERC20 units
-    /// @return value The value in USD with 8 decimals
+    /// @notice Unprotected price getter — bypasses dual-feed challenge gates
+    /// @dev Reserved for read-only callers (off-chain analytics, NFT metadata, monitoring).
+    function getPriceUnsafe(address token) external view override returns (uint256) {
+        return _getPriceUnsafe(token);
+    }
+
+    /// @notice Calculate the protected USD value of an amount of tokens
+    /// @dev Uses the same circuit-breaker-validated price as `getPrice`.
     function getValue(address token, uint256 amount) external view override returns (uint256) {
         return _getValueForPrice(token, amount, _getPrice(token));
     }
 
+    /// @notice Unprotected USD value getter — bypasses dual-feed challenge gates
+    function getValueUnsafe(address token, uint256 amount) external view override returns (uint256) {
+        return _getValueForPrice(token, amount, _getPriceUnsafe(token));
+    }
+
     /// @inheritdoc ICompositeOracle
+    /// @dev Fails closed when the active feed is disputed:
+    ///      - If `isBackupActive == true`, the primary feed is the known-bad inactive feed;
+    ///        do NOT silently fall back to it (H-3).
+    ///      - If `_hasUnresolvedDualFeedDeviation == true`, the dual-feed challenge mechanism
+    ///        has already flagged the active feed as unsafe; skip the inactive feed too.
+    ///      Otherwise the inactive feed is the legitimate backup of an undisputed primary
+    ///      and may safely serve as a fallback when the active feed has a transient failure.
     function getValueWithFallback(address token, uint256 amount)
         external
         view
@@ -772,11 +822,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
                 return (Math.mulDiv(amount, normalizedPrice, tokenScale), true);
             }
         } catch {
-            // Active feed failed, continue to try backup
+            // Active feed failed, continue to evaluate the fallback policy below.
         }
 
-        // Try inactive feed if available (backup when primary is active, or primary when backup is active)
-        if (inactiveFeed != address(0)) {
+        // H-3 FIX: never silently re-promote a feed governance has already moved off of.
+        // When the backup is active, the inactive feed is the disabled primary. When
+        // an unresolved deviation exists, both feeds are mutually suspect — fail closed.
+        bool inactiveFeedDisputed = config.isBackupActive || _hasUnresolvedDualFeedDeviation(config, token);
+
+        if (inactiveFeed != address(0) && !inactiveFeedDisputed) {
             try IOracleFeed(inactiveFeed).getPrice(token) returns (uint256 price) {
                 if (price > 0) {
                     uint8 feedDecimals = IOracleFeed(inactiveFeed).decimals();
@@ -788,15 +842,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             }
         }
 
-        // All sources failed
+        // All sources failed (or the inactive feed is disputed and intentionally skipped).
         return (0, false);
     }
 
     /// @notice Calculate how many tokenB are needed to match the value of tokenA amount
-    /// @param tokenA The first token address
-    /// @param amountA The amount of tokenA in tokenA's native ERC20 units
-    /// @param tokenB The second token address
-    /// @return amountB The amount of tokenB in tokenB's native ERC20 units
+    /// @dev Uses the safe `_getPrice` path for both tokens.
     function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB)
         external
         view
@@ -812,29 +863,25 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
     }
 
-    /// @notice Get price with circuit breaker protection
-    /// @dev Delegates to the active feed's getPriceWithCircuitBreaker() and fails closed
-    ///      when the feed does not expose a protected pricing path.
-    /// @param token The token address
-    /// @return price The price in USD with 8 decimals
-    function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
-        TokenOracleConfig storage config = _tokenOracleConfig[token];
-        if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
-        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
-        if (_hasUnresolvedDualFeedDeviation(config, token)) revert OraclePriceDisputed(token);
+    /// @notice Unprotected equivalent-amount calculator — bypasses dual-feed challenge gates
+    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint256 priceA = _getPriceUnsafe(tokenA);
+        uint256 priceB = _getPriceUnsafe(tokenB);
 
-        address activeFeed =
-            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+        OracleValidationLib.validateNonZeroPrice(priceB, tokenB);
 
-        (bool supported, uint256 price) = _tryGetCircuitBreakerPrice(activeFeed, token);
-        if (supported) {
-            return price;
-        }
-
-        revert CircuitBreakerNotSupported(token, activeFeed);
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
     }
 
     /// @inheritdoc ICompositeOracle
+    /// @dev Strict variant additionally requires the active feed to advertise the safe/unsafe
+    ///      split (i.e. expose a `getPriceUnsafe(address)` selector). Feeds that do not
+    ///      (PythEMA, UniswapV3 TWAP) are rejected with `CircuitBreakerNotSupported`.
     function getPriceWithStrictCircuitBreaker(address token) external view override returns (uint256) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
@@ -844,33 +891,16 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
 
-        (bool supported, uint256 price) = _tryGetCircuitBreakerPrice(activeFeed, token);
-        if (!supported) {
+        if (!_supportsCircuitBreaker(activeFeed, token)) {
             revert CircuitBreakerNotSupported(token, activeFeed);
         }
 
-        return price;
-    }
-
-    /// @notice Calculate equivalent amount with circuit breaker protection
-    /// @dev Uses getPriceWithCircuitBreaker() for both tokens to ensure circuit breaker is applied
-    /// @param tokenA The first token address
-    /// @param amountA The amount of tokenA
-    /// @param tokenB The second token address
-    /// @return amountB The amount of tokenB with equivalent value
-    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
-        external
-        view
-        override
-        returns (uint256)
-    {
-        uint256 priceA = this.getPriceWithCircuitBreaker(tokenA);
-        uint256 priceB = this.getPriceWithCircuitBreaker(tokenB);
-
-        // Prevent division by zero using shared library
-        OracleValidationLib.validateNonZeroPrice(priceB, tokenB);
-
-        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+        uint256 price = IOracleFeed(activeFeed).getPrice(token);
+        if (price == 0) {
+            revert CircuitBreakerNotSupported(token, activeFeed);
+        }
+        uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
+        return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
     }
 
     // ============ Internal Helper Functions ============
@@ -927,6 +957,16 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
+    /// @dev A feed "supports the circuit breaker" if it advertises the safe/unsafe split by
+    ///      exposing `getPriceUnsafe(address)` AND its protected `getPrice(address)` is
+    ///      currently usable. After the safe-default rename every feed with a real
+    ///      circuit-breaker discipline (Pyth spot/EMA, ERC4626 share-rate cap, Chainlink
+    ///      stale-round + sequencer checks, CompositeOracle dual-feed) publishes the
+    ///      `getPriceUnsafe` selector; feeds that only have a single canonical price
+    ///      (PythEMA, Uniswap V3 TWAP) deliberately do not, and are rejected by every
+    ///      strict pricing path. The additional protected-call probe preserves the prior
+    ///      behaviour of also rejecting feeds whose protected getter currently reverts or
+    ///      returns zero.
     function _supportsCircuitBreaker(address feed, address token) internal view returns (bool) {
         if (feed == address(0)) {
             return false;
@@ -937,18 +977,25 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return false;
         }
 
-        (bool success, bytes memory data) =
-            feed.staticcall(abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (token)));
+        (bool unsafeSuccess, bytes memory unsafeData) =
+            feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
-        if (success) {
-            if (data.length < 32) {
-                return false;
-            }
-            uint256 protectedPrice = abi.decode(data, (uint256));
-            return protectedPrice != 0;
+        if (!unsafeSuccess || unsafeData.length < 32) {
+            return false;
+        }
+        if (abi.decode(unsafeData, (uint256)) == 0) {
+            return false;
         }
 
-        return false;
+        // Probe the protected getter (the safe-default `getPrice`) to ensure it is currently
+        // usable. A feed whose protected path reverts is rejected just like before the
+        // safe-default rename, when this helper probed `getPriceWithCircuitBreaker` directly.
+        (bool safeSuccess, bytes memory safeData) = feed.staticcall(abi.encodeWithSignature("getPrice(address)", token));
+
+        if (!safeSuccess || safeData.length < 32) {
+            return false;
+        }
+        return abi.decode(safeData, (uint256)) != 0;
     }
 
     /// @notice Detect oracle type from feed description

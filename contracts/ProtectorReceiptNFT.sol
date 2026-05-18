@@ -30,6 +30,10 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
     /// @dev Maximum transfer lock period (safety limit)
     uint256 public constant MAX_TRANSFER_LOCK = 90 days;
 
+    /// @dev Minimum transfer lock period - protects against governance accidentally
+    ///      or maliciously disabling the lock that prevents wash-trading protector positions.
+    uint256 public constant MIN_TRANSFER_LOCK = 1 hours;
+
     /// @dev Address of the SplitRiskPool that can mint/burn
     address public pool;
 
@@ -91,7 +95,9 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
 
     /// @notice Set transfer lock period (only governance)
     function setTransferLockPeriod(uint256 newPeriod) external onlyOwner {
-        if (newPeriod > MAX_TRANSFER_LOCK) revert ErrorsLib.InvalidUnlockDuration();
+        if (newPeriod < MIN_TRANSFER_LOCK || newPeriod > MAX_TRANSFER_LOCK) {
+            revert ErrorsLib.InvalidUnlockDuration();
+        }
         transferLockPeriod = newPeriod;
         emit EventsLib.ParameterUpdated("transferLockPeriod", newPeriod);
     }
@@ -112,6 +118,21 @@ contract ProtectorReceiptNFT is ERC721, Ownable, IProtectorReceiptNFT {
         }
 
         return super._update(to, tokenId, auth);
+    }
+
+    /// @dev Block per-token approvals during the lock window. Without this gate,
+    ///      an owner could approve a wrapper contract immediately after deposit
+    ///      and the wrapper could `transferFrom` the position the instant the
+    ///      lock expires — defeating the economic intent of the lock. (H-7)
+    function _approve(address to, uint256 tokenId, address auth, bool emitEvent) internal virtual override {
+        if (to != address(0)) {
+            ProtectorPosition storage pos = positions[tokenId];
+            uint256 unlockTime = pos.depositTime + transferLockPeriod;
+            if (block.timestamp < unlockTime) {
+                revert ErrorsLib.TransferLocked(unlockTime);
+            }
+        }
+        super._approve(to, tokenId, auth, emitEvent);
     }
 
     /// @dev Modifier to ensure only pool can call

@@ -33,7 +33,10 @@ contract YSGovernor is
         GovernorSettings(
             86400, // initialVotingDelay (seconds) - 1 day
             432000, // initialVotingPeriod (seconds) - 5 days
-            1000 * 10 ** 18 // initialProposalThreshold - 1000 YS tokens required to create a proposal
+            // M-15: raise propose threshold from 1k to 10k YS (1% of supply).
+            // Makes flash-loan-propose prohibitively expensive if YS ever gets
+            // listed on a lending market with a flash-loan path.
+            10_000 * 10 ** 18
         )
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4) // 4% quorum

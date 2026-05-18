@@ -12,6 +12,7 @@ import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /**
@@ -70,7 +71,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _validateProductionBootstrapHolder(bootstrapHolder);
 
         address[] memory emptyAccounts = new address[](0);
-        TimelockController timelock = new TimelockController(timelockDelay, emptyAccounts, emptyAccounts, deployer);
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(timelockDelay, emptyAccounts, emptyAccounts, deployer)))
+        );
         timelockAddr = address(timelock);
         console.log("Timelock Controller deployed at:", timelockAddr);
         console.log("Timelock delay set to:", timelockDelay, "seconds");

@@ -6,6 +6,7 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
@@ -66,13 +67,25 @@ contract YSTokenTest is Test {
     }
 
     function test_BurnCannotReduceSupplyBelowGovernanceQuorumFloor() public {
-        ysToken.burn(ysToken.INITIAL_SUPPLY() - ysToken.MIN_GOVERNANCE_SUPPLY());
-        assertEq(ysToken.totalSupply(), ysToken.MIN_GOVERNANCE_SUPPLY());
+        ysToken.burn(ysToken.INITIAL_SUPPLY() - ysToken.MIN_GOVERNANCE_SUPPLY() - 1);
+        assertEq(ysToken.totalSupply(), ysToken.MIN_GOVERNANCE_SUPPLY() + 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 YSToken.BurnWouldReduceSupplyBelowGovernanceQuorum.selector,
-                ysToken.MIN_GOVERNANCE_SUPPLY() - 1,
+                ysToken.MIN_GOVERNANCE_SUPPLY(),
+                ysToken.MIN_GOVERNANCE_SUPPLY()
+            )
+        );
+        ysToken.burn(1);
+    }
+
+    function test_BurnDownToExactlyQuorumFloorReverts() public {
+        ysToken.burn(ysToken.INITIAL_SUPPLY() - ysToken.MIN_GOVERNANCE_SUPPLY() - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSToken.BurnWouldReduceSupplyBelowGovernanceQuorum.selector,
+                ysToken.MIN_GOVERNANCE_SUPPLY(),
                 ysToken.MIN_GOVERNANCE_SUPPLY()
             )
         );
@@ -121,15 +134,16 @@ contract FakeSelfAdminTimelock {
 
 contract MutableGovernanceTimelock {
     mapping(bytes32 => mapping(address => bool)) private _roles;
+    mapping(bytes32 => address[]) private _roleMembers;
     uint256 private _minDelay;
 
     constructor(uint256 minDelay, address[] memory extraAdmins) {
         _minDelay = minDelay;
-        _roles[bytes32(0)][address(this)] = true;
+        _setAdmin(address(this), true);
 
         uint256 extraAdminCount = extraAdmins.length;
         for (uint256 i = 0; i < extraAdminCount; i++) {
-            _roles[bytes32(0)][extraAdmins[i]] = true;
+            _setAdmin(extraAdmins[i], true);
         }
     }
 
@@ -146,7 +160,31 @@ contract MutableGovernanceTimelock {
     }
 
     function setDefaultAdmin(address account, bool enabled) external {
+        _setAdmin(account, enabled);
+    }
+
+    function _setAdmin(address account, bool enabled) internal {
+        if (enabled && !_roles[bytes32(0)][account]) {
+            _roleMembers[bytes32(0)].push(account);
+        } else if (!enabled && _roles[bytes32(0)][account]) {
+            address[] storage members = _roleMembers[bytes32(0)];
+            for (uint256 i = 0; i < members.length; i++) {
+                if (members[i] == account) {
+                    members[i] = members[members.length - 1];
+                    members.pop();
+                    break;
+                }
+            }
+        }
         _roles[bytes32(0)][account] = enabled;
+    }
+
+    function getRoleMemberCount(bytes32 role) external view returns (uint256) {
+        return _roleMembers[role].length;
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) external view returns (address) {
+        return _roleMembers[role][index];
     }
 }
 
@@ -172,7 +210,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
     uint256 constant VOTING_DELAY = 86_400; // 1 day
     uint256 constant VOTING_PERIOD = 432_000; // 5 days
-    uint256 constant TIMELOCK_DELAY = 1 days;
+    uint256 constant TIMELOCK_DELAY = 2 days;
 
     function setUp() public {
         deployer = address(this);
@@ -182,7 +220,9 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         // 2. Deploy timelock (proposers & executors set after governor deploy)
         address[] memory emptyAddrs = new address[](0);
-        timelock = new TimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer);
+        timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer)))
+        );
 
         // 3. Deploy governor
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
@@ -260,7 +300,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
     }
 
     function test_ProposalThreshold() public view {
-        assertEq(governor.proposalThreshold(), 1000e18);
+        assertEq(governor.proposalThreshold(), 10_000e18);
     }
 
     function test_QuorumPercent() public view {
@@ -277,8 +317,9 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController replacementTimelock =
-            new TimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer);
+        TimelockController replacementTimelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer)))
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, deployer)
@@ -519,7 +560,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
         address[] memory emptyAddrs = new address[](0);
-        TimelockController shortDelayTimelock = new TimelockController(12 hours, emptyAddrs, emptyAddrs, deployer);
+        TimelockController shortDelayTimelock =
+            TimelockController(payable(address(new YSTimelockController(12 hours, emptyAddrs, emptyAddrs, deployer))));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPoolFactory.initialize.selector, deployer, address(shortDelayTimelock), address(poolImpl)
         );
@@ -540,16 +582,19 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
         address[] memory emptyAddrs = new address[](0);
-        TimelockController unsafeTimelock = new TimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+        TimelockController unsafeTimelock =
+            TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPoolFactory.initialize.selector, deployer, address(unsafeTimelock), address(poolImpl)
         );
 
+        // H-8: the enumeration check fires first when there is more than one
+        // DEFAULT_ADMIN_ROLE member on the candidate (timelock + deployer = 2).
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                ProtocolAccessControlUpgradeable.GovernanceTimelockHasExtraAdmins.selector,
                 address(unsafeTimelock),
-                deployer
+                uint256(2)
             )
         );
         new ERC1967Proxy(address(implementation), initData);
@@ -559,7 +604,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController zeroDelayTimelock = new TimelockController(0, emptyAddrs, emptyAddrs, deployer);
+        TimelockController zeroDelayTimelock =
+            TimelockController(payable(address(new YSTimelockController(0, emptyAddrs, emptyAddrs, deployer))));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -576,15 +622,17 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController unsafeTimelock = new TimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
+        TimelockController unsafeTimelock =
+            TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
         unsafeTimelock.grantRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), address(timelock));
         unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
 
+        // H-8: count is 2 (self + prior timelock).
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                ProtocolAccessControlUpgradeable.GovernanceTimelockHasExtraAdmins.selector,
                 address(unsafeTimelock),
-                address(timelock)
+                uint256(2)
             )
         );
         vm.prank(address(timelock));
@@ -614,8 +662,8 @@ contract ProtocolAccessControlUpgradeableTest is Test {
         vm.chainId(421614);
 
         address[] memory noExtraAdmins = new address[](0);
-        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
-        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
         ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
         harness.initializeHarness(address(this), address(currentGovernance));
 
@@ -639,8 +687,8 @@ contract ProtocolAccessControlUpgradeableTest is Test {
         vm.chainId(421614);
 
         address[] memory noExtraAdmins = new address[](0);
-        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
-        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(1 days, noExtraAdmins);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
         ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
         harness.initializeHarness(address(this), address(currentGovernance));
 
@@ -649,11 +697,12 @@ contract ProtocolAccessControlUpgradeableTest is Test {
 
         replacementGovernance.setDefaultAdmin(address(this), true);
 
+        // H-8: enumeration catches the extra admin first.
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockAdminRetained.selector,
+                ProtocolAccessControlUpgradeable.GovernanceTimelockHasExtraAdmins.selector,
                 address(replacementGovernance),
-                address(this)
+                uint256(2)
             )
         );
         vm.prank(address(replacementGovernance));

@@ -58,7 +58,7 @@ contract YSToken is ERC20, ERC20Permit, ERC20Votes {
     function burn(uint256 amount) external {
         uint256 currentSupply = totalSupply();
         uint256 supplyAfterBurn = amount < currentSupply ? currentSupply - amount : 0;
-        if (supplyAfterBurn < MIN_GOVERNANCE_SUPPLY) {
+        if (supplyAfterBurn <= MIN_GOVERNANCE_SUPPLY) {
             revert BurnWouldReduceSupplyBelowGovernanceQuorum(supplyAfterBurn, MIN_GOVERNANCE_SUPPLY);
         }
 

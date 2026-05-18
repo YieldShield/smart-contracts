@@ -86,15 +86,16 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(tokenC));
     }
 
-    /// @notice Test that getEquivalentAmountWithCircuitBreaker reverts with InvalidPrice when priceB is 0
-    function test_getEquivalentAmountWithCircuitBreaker_ZeroPriceB_Reverts() public {
-        // Set tokenC price to 0
+    /// @notice Test that the unsafe equivalent-amount getter reverts with InvalidPrice when priceB is 0
+    /// @dev After the safe-default rename, `getEquivalentAmount` IS the protected variant;
+    ///      the old `getEquivalentAmountWithCircuitBreaker` test now exercises the explicit
+    ///      `getEquivalentAmountUnsafe` getter that still needs to fail on a zero divisor.
+    function test_getEquivalentAmountUnsafe_ZeroPriceB_Reverts() public {
         mockOracle.setPrice(address(tokenC), 0);
         compositeOracle.setTokenOracleFeed(address(tokenC), address(mockOracle));
 
-        // Try to get equivalent amount with tokenC (zero price) as tokenB
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.InvalidPrice.selector, address(tokenC), 0));
-        compositeOracle.getEquivalentAmountWithCircuitBreaker(address(tokenA), 10e18, address(tokenC));
+        compositeOracle.getEquivalentAmountUnsafe(address(tokenA), 10e18, address(tokenC));
     }
 
     /// @notice Test that getEquivalentAmount works normally with non-zero prices
@@ -104,10 +105,9 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertEq(equivalentAmount, 5e18, "Should return correct equivalent amount");
     }
 
-    /// @notice Test that getEquivalentAmountWithCircuitBreaker works normally with non-zero prices
-    function test_getEquivalentAmountWithCircuitBreaker_ValidPrices_Succeeds() public view {
-        uint256 equivalentAmount =
-            compositeOracle.getEquivalentAmountWithCircuitBreaker(address(tokenA), 10e18, address(tokenB));
+    /// @notice Test that the unsafe equivalent-amount getter agrees with the safe one for healthy feeds
+    function test_getEquivalentAmountUnsafe_ValidPrices_Succeeds() public view {
+        uint256 equivalentAmount = compositeOracle.getEquivalentAmountUnsafe(address(tokenA), 10e18, address(tokenB));
         assertEq(equivalentAmount, 5e18, "Should return correct equivalent amount");
     }
 

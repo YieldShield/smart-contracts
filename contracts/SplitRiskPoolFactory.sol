@@ -256,6 +256,7 @@ contract SplitRiskPoolFactory is
     /// @dev During bootstrap, the owner may register it once before governance takes over.
     function setManagedPythOracle(address newOracle) external {
         _requireGovernanceOrBootstrapOwner(pythOracle == address(0) && _bootstrapOwnerActionsAllowed());
+        if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _requireOwnedByFactory(newOracle);
         address previousOracle = pythOracle;
         pythOracle = newOracle;
@@ -266,6 +267,7 @@ contract SplitRiskPoolFactory is
     /// @dev During bootstrap, the owner may register it once before governance takes over.
     function setManagedERC4626OracleFeed(address newOracle) external {
         _requireGovernanceOrBootstrapOwner(erc4626OracleFeed == address(0) && _bootstrapOwnerActionsAllowed());
+        if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _requireOwnedByFactory(newOracle);
         address previousOracle = erc4626OracleFeed;
         erc4626OracleFeed = newOracle;

@@ -46,9 +46,11 @@ contract PythEMAOracleFeedTest is Test {
         feed.getPrice(address(token));
     }
 
-    function testGetPriceWithCircuitBreakerSelectorFailsClosed() public view {
-        (bool success,) =
-            address(feed).staticcall(abi.encodeWithSignature("getPriceWithCircuitBreaker(address)", address(token)));
+    function testGetPriceUnsafeSelectorFailsClosed() public view {
+        // After the safe-default rename, the marker for "feed advertises the safe/unsafe split"
+        // is the `getPriceUnsafe(address)` selector. PythEMA deliberately does not expose it,
+        // so CompositeOracle's `_supportsCircuitBreaker` probe must fail for this feed.
+        (bool success,) = address(feed).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", address(token)));
 
         assertFalse(success);
     }
@@ -76,10 +78,13 @@ contract PythEMAOracleFeedTest is Test {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(address(token), address(feed));
 
+        // After the safe-default rename, the strict variant continues to reject feeds that
+        // do not advertise the safe/unsafe split. The default `getPrice` succeeds because it
+        // simply forwards to the EMA feed (which is its canonical price).
         vm.expectRevert(
             abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(feed))
         );
-        compositeOracle.getPriceWithCircuitBreaker(address(token));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
     function testGetPriceWithPositiveExpo() public {

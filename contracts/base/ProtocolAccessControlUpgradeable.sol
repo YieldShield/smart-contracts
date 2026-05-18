@@ -23,6 +23,8 @@ abstract contract ProtocolAccessControlUpgradeable is
     error GovernanceTimelockDelayTooShort(address candidate, uint256 minDelay);
     error GovernanceTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
     error GovernanceTimelockAdminRetained(address candidate, address retainedAdmin);
+    /// @notice Thrown when the timelock candidate has admin role members beyond the candidate itself.
+    error GovernanceTimelockHasExtraAdmins(address candidate, uint256 adminCount);
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
@@ -33,8 +35,10 @@ abstract contract ProtocolAccessControlUpgradeable is
 
     bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
     bytes4 private constant HAS_ROLE_SELECTOR = bytes4(keccak256("hasRole(bytes32,address)"));
+    bytes4 private constant GET_ROLE_MEMBER_COUNT_SELECTOR = bytes4(keccak256("getRoleMemberCount(bytes32)"));
+    bytes4 private constant GET_ROLE_MEMBER_SELECTOR = bytes4(keccak256("getRoleMember(bytes32,uint256)"));
     bytes32 private constant DEFAULT_ADMIN_ROLE_VALUE = 0x00;
-    uint256 private constant MIN_PUBLIC_GOVERNANCE_DELAY = 1 days;
+    uint256 private constant MIN_PUBLIC_GOVERNANCE_DELAY = 2 days;
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
@@ -117,6 +121,28 @@ abstract contract ProtocolAccessControlUpgradeable is
         (success, data) =
             candidate.staticcall(abi.encodeWithSelector(HAS_ROLE_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE, candidate));
         if (!success || data.length < 32 || !abi.decode(data, (bool))) revert InvalidGovernanceTimelock(candidate);
+
+        // H-8: enumerate DEFAULT_ADMIN_ROLE members on the candidate timelock.
+        // The previous validator only confirmed the candidate admins itself and
+        // the known owner/current-timelock are not admins — but any *other*
+        // pre-granted admin (attacker EOA, secondary multisig, …) would pass.
+        // Require the candidate to use AccessControlEnumerable and to hold the
+        // role exclusively for itself.
+        (success, data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE));
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+        uint256 adminCount = abi.decode(data, (uint256));
+        if (adminCount != 1) {
+            revert GovernanceTimelockHasExtraAdmins(candidate, adminCount);
+        }
+        (success, data) = candidate.staticcall(
+            abi.encodeWithSelector(GET_ROLE_MEMBER_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE, uint256(0))
+        );
+        if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
+        address soleAdmin = abi.decode(data, (address));
+        if (soleAdmin != candidate) {
+            revert GovernanceTimelockAdminRetained(candidate, soleAdmin);
+        }
     }
 
     function _governanceTimelockImplementationHash() internal view returns (bytes32 codehash) {

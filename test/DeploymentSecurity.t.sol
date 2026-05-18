@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
@@ -194,7 +195,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         ysToken.burn(burnAmount);
 
-        assertLt(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
+        // M-15: proposalThreshold is now equal to MIN_GOVERNANCE_SUPPLY (both 10k).
+        // After M-15, the burn floor and propose threshold coincide — assertLe
+        // captures the invariant that you can still propose at the floor.
+        assertLe(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
     }
 
     function test_ProductionProtocol_RoutesOracleOwnershipThroughFactoryGovernance() public {
@@ -235,7 +239,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {
         address[] memory emptyAccounts = new address[](0);
-        timelock = new TimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer);
+        timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer)))
+        );
         ysToken = new YSToken(bootstrapHolder);
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
 

@@ -185,6 +185,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (_protocolFeeRecipient == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_shieldReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_protectorReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        if (initialOwner == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_backingTokenInfo.token == _shieldedTokenInfo.token) revert ErrorsLib.InvalidAssetAddress();
         if (_commissionRate > ConstantsLib.MAX_COMMISSION_RATE) revert ErrorsLib.InvalidCommissionRate();
         if (_poolFee > ConstantsLib.MAX_POOL_FEE) revert ErrorsLib.InvalidPoolFee();
@@ -205,6 +206,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         BACKING_TOKEN = _backingTokenInfo.token;
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
         (backingTokenDecimals, backingTokenScale) = _getTokenMetadata(_backingTokenInfo.token);
+
+        // H-5: snapshot the factory's strict-protected-backing-price policy at
+        // initialize so a future factory regression cannot silently downgrade
+        // strict-mode pricing for this pool.
+        {
+            (bool success, bytes memory data) = initialOwner.staticcall(
+                abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (_backingTokenInfo.token))
+            );
+            _strictProtectedBackingPriceAtInit = success && data.length >= 32 ? abi.decode(data, (bool)) : false;
+            _strictProtectedBackingPricePinned = true;
+        }
 
         poolConfig = PoolConfig({
             shieldedMinDepositAmount: _defaultMinDepositAmount(shieldedTokenScale),
@@ -315,13 +327,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        price = IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(BACKING_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
     /// @dev Returns the current shielded-token price using the strongest available protection.
     function _getShieldedPrice() internal view returns (uint256 price) {
-        price = IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(SHIELDED_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
@@ -358,16 +370,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
+    ///      Intentionally uses the unprotected getter — view paths must opt into the raw
+    ///      active-feed value because the safe `getPrice` would otherwise revert during a
+    ///      dual-feed challenge window or fully halt view callers when the protected path
+    ///      is temporarily unavailable.
     function _getShieldedSpotPrice() internal view returns (uint256 price) {
-        price = IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPriceUnsafe(SHIELDED_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
-        try IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(SHIELDED_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {
@@ -409,9 +423,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        try IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(BACKING_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {
@@ -420,7 +432,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @inheritdoc ISplitRiskPool
+    /// @dev H-5: prefer the snapshot pinned at initialize over the runtime factory
+    ///      lookup, so a future factory regression cannot silently downgrade strict
+    ///      pricing. Legacy pools upgraded from a version before the snapshot existed
+    ///      fall back to the runtime lookup; governance can call
+    ///      refreshStrictProtectedBackingPriceFlag() to opt back into strict-mode.
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
+        if (_strictProtectedBackingPricePinned) {
+            return _strictProtectedBackingPriceAtInit;
+        }
+
         address factory = _poolFactoryController();
         if (factory == address(0) || factory.code.length == 0) {
             return false;
@@ -435,6 +456,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         return abi.decode(data, (bool));
+    }
+
+    /// @notice Re-snapshot the strict-protected-backing-price flag from the factory.
+    /// @dev Governance-only. Use when factory policy has intentionally changed and
+    ///      the pool should adopt the new value. Without this call, the pinned
+    ///      snapshot from initialize is used.
+    function refreshStrictProtectedBackingPriceFlag() external onlyGovernance {
+        address factory = _poolFactoryController();
+        bool newValue = false;
+        if (factory != address(0) && factory.code.length != 0) {
+            (bool success, bytes memory data) = factory.staticcall(
+                abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
+            );
+            if (success && data.length >= 32) {
+                newValue = abi.decode(data, (bool));
+            }
+        }
+        _strictProtectedBackingPriceAtInit = newValue;
+        _strictProtectedBackingPricePinned = true;
+        emit EventsLib.ParameterUpdated("strictProtectedBackingPrice", newValue ? 1 : 0);
     }
 
     /// @dev Resolves whether backing-token pricing must use the strict protected-price path.
@@ -960,25 +1001,30 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 _scaleFeesToAvailableAmount(commissionAmount, poolFeeAmount, protocolFeeAmount, pos.amount);
         }
 
-        // Prevent unbounded fee accumulation
+        // Prevent unbounded fee accumulation. If any fee bucket cannot fit the
+        // increment, revert rather than silently zeroing the amount: zeroing
+        // would let the position retain the yield AND advance the baseline
+        // past it, permanently forgiving that fee. Reverting forces the
+        // operator to drain the bucket via payPoolFee/payProtocolFee before
+        // yield accrual continues — matching the cross-asset path's
+        // RewardAccumulationIncomplete invariant. (H-6)
         uint256 maxSafeAccumulation = ConstantsLib.MAX_SAFE_ACCUMULATION;
 
-        // Accumulate pool fee in native shielded token units.
         if (accumulatedPoolFee + poolFeeAmount > maxSafeAccumulation) {
-            emit EventsLib.FeeDropped("poolFee", poolFeeAmount, accumulatedPoolFee);
-            poolFeeAmount = 0;
+            revert ErrorsLib.RewardAccumulationIncomplete(poolFeeAmount, accumulatedPoolFee, 0);
         }
         accumulatedPoolFee += poolFeeAmount;
 
-        // Accumulate protocol fee in native shielded token units.
         if (accumulatedProtocolFee + protocolFeeAmount > maxSafeAccumulation) {
-            emit EventsLib.FeeDropped("protocolFee", protocolFeeAmount, accumulatedProtocolFee);
-            protocolFeeAmount = 0;
+            revert ErrorsLib.RewardAccumulationIncomplete(protocolFeeAmount, accumulatedProtocolFee, 0);
         }
         accumulatedProtocolFee += protocolFeeAmount;
 
         // Accumulate commissions in native shielded token units via rewards-per-share.
         // If no effective protector capital exists, redirect commissions to protocol fee.
+        // _accumulateProtectorReward applies its own cap checks internally and returns
+        // the actual accumulated amount + redirected portion. (Internal caps still
+        // silently truncate today; tracked separately — see SplitRiskPool TODO.)
         uint256 redirectedCommission;
         (commissionAmount, redirectedCommission) = _accumulateProtectorReward(commissionAmount, maxSafeAccumulation);
         protocolFeeAmount += redirectedCommission;
@@ -2220,5 +2266,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice Factory pinned at initialization for shared policy lookups and shutdown hooks
     /// @dev Legacy pools upgraded from older versions read this as zero and fall back to owner().
     address public POOL_FACTORY;
-    uint256[33] private __gap;
+    /// @notice H-5: strict-protected-backing-price requirement, pinned at initialize.
+    /// @dev Snapshotted from the factory's tokenRequiresStrictProtectedPrice(BACKING_TOKEN)
+    ///      at deploy time. A future factory upgrade or storage-layout regression cannot
+    ///      silently downgrade strict pricing for live pools. Governance can refresh via
+    ///      `refreshStrictProtectedBackingPriceFlag()`.
+    bool internal _strictProtectedBackingPriceAtInit;
+    /// @notice One-bit tracker so legacy upgraded pools fall back to the runtime lookup
+    ///         until governance explicitly snapshots a value via the refresh function.
+    bool internal _strictProtectedBackingPricePinned;
+    uint256[31] private __gap;
 }

@@ -61,38 +61,44 @@ contract MockOracle is IPriceOracle, IOracleFeed, Ownable {
     }
 
     /**
-     * @notice Get the price for a token
+     * @notice Get the protected (circuit-breaker validated) price for a token
+     * @dev Mock honours the `shouldRevertOnCircuitBreaker` flag so tests can simulate
+     *      a feed-level circuit-breaker trip. Use `getPriceUnsafe` for raw mock prices.
      * @param token The token address
      * @return price The price in USD with 8 decimals
-     * @dev Returns $1.00 (1e8) as default if price is not set
-     *      Returns 0 if explicitly set to 0 (for testing zero price scenarios)
      */
     function getPrice(address token) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
-        if (!_priceIsSet[token]) {
-            return 1e8; // Default to $1.00 (8 decimals)
-        }
-        return _prices[token];
+        if (shouldRevertOnCircuitBreaker) revert MockCircuitBreakerTriggered(token);
+        return _rawPrice(token);
     }
 
     /**
-     * @notice Calculate the value of an amount of tokens in USD
+     * @notice Unprotected price getter (bypasses the simulated circuit breaker)
      * @param token The token address
-     * @param amount The amount of tokens in the token's native ERC20 units
-     * @return value The value in USD with 8 decimals
-     * @dev Returns value based on $1.00 default if price is not set
+     * @return price The price in USD with 8 decimals
+     */
+    function getPriceUnsafe(address token) external view override returns (uint256) {
+        return _rawPrice(token);
+    }
+
+    /**
+     * @notice Calculate the protected USD value of an amount of tokens
      */
     function getValue(address token, uint256 amount) external view override returns (uint256) {
-        uint256 price = _priceIsSet[token] ? _prices[token] : 1e8;
-        return Math.mulDiv(amount, price, _getTokenScale(token));
+        if (shouldRevertOnCircuitBreaker) revert MockCircuitBreakerTriggered(token);
+        return Math.mulDiv(amount, _rawPrice(token), _getTokenScale(token));
+    }
+
+    /**
+     * @notice Unprotected USD value getter (bypasses the simulated circuit breaker)
+     */
+    function getValueUnsafe(address token, uint256 amount) external view override returns (uint256) {
+        return Math.mulDiv(amount, _rawPrice(token), _getTokenScale(token));
     }
 
     /**
      * @notice Calculate how many tokenB are needed to match the value of tokenA amount
-     * @param tokenA The first token address
-     * @param amountA The amount of tokenA in tokenA's native ERC20 units
-     * @param tokenB The second token address
-     * @return amountB The amount of tokenB in tokenB's native ERC20 units
-     * @dev Returns equivalent amount based on $1.00 default for any unset prices
+     * @dev Mock honours both the equivalent-revert flag and circuit-breaker-revert flag.
      */
     function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB)
         external
@@ -101,48 +107,27 @@ contract MockOracle is IPriceOracle, IOracleFeed, Ownable {
         returns (uint256)
     {
         if (shouldRevertOnEquivalent) revert MockOracleRevert();
+        if (shouldRevertOnCircuitBreaker) revert MockCircuitBreakerTriggered(tokenA);
 
-        uint256 priceA = _priceIsSet[tokenA] ? _prices[tokenA] : 1e8;
-        uint256 priceB = _priceIsSet[tokenB] ? _prices[tokenB] : 1e8;
-
-        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, _rawPrice(tokenA), _rawPrice(tokenB));
     }
 
     /**
-     * @notice Get price with circuit breaker protection (mock - same as getPrice)
-     * @dev In mock oracle, no EMA available, so just returns spot price
-     *      This allows tests to work without Pyth infrastructure
-     * @param token The token address
-     * @return price The price in USD with 8 decimals
+     * @notice Unprotected equivalent-amount calculator
      */
-    function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
-        if (shouldRevertOnCircuitBreaker) revert MockCircuitBreakerTriggered(token);
-        if (!_priceIsSet[token]) {
-            return 1e8; // Default to $1.00 (8 decimals)
-        }
-        return _prices[token];
-    }
-
-    /**
-     * @notice Calculate equivalent amount with circuit breaker (mock - same as getEquivalentAmount)
-     * @dev In mock oracle, no EMA available, so just returns standard calculation
-     *      This allows tests to work without Pyth infrastructure
-     * @param tokenA The first token address
-     * @param amountA The amount of tokenA in tokenA's native ERC20 units
-     * @param tokenB The second token address
-     * @return amountB The amount of tokenB in tokenB's native ERC20 units
-     */
-    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
+    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB)
         external
         view
         override
         returns (uint256)
     {
-        if (shouldRevertOnCircuitBreaker) revert MockCircuitBreakerTriggered(tokenA);
-        uint256 priceA = _priceIsSet[tokenA] ? _prices[tokenA] : 1e8;
-        uint256 priceB = _priceIsSet[tokenB] ? _prices[tokenB] : 1e8;
+        if (shouldRevertOnEquivalent) revert MockOracleRevert();
 
-        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, _rawPrice(tokenA), _rawPrice(tokenB));
+    }
+
+    function _rawPrice(address token) internal view returns (uint256) {
+        return _priceIsSet[token] ? _prices[token] : 1e8;
     }
 
     // ============ IOracleFeed Implementation ============

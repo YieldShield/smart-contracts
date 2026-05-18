@@ -114,8 +114,7 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         compositeOracle.setTokenOracleFeed(address(token6), address(mockOracle));
 
-        uint256 equivalentAmount =
-            compositeOracle.getEquivalentAmountWithCircuitBreaker(address(tokenA), 10e18, address(token6));
+        uint256 equivalentAmount = compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(token6));
         assertEq(equivalentAmount, 10e6);
     }
 
@@ -166,17 +165,19 @@ contract CompositeOracleTest is Test {
     }
 
     function testPriceWithCircuitBreaker() public {
+        // After the safe-default rename, `getPrice` IS the protected variant. The protected
+        // and unprotected getters must agree for a healthy single-feed mock token.
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
 
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(tokenA)), compositeOracle.getPrice(address(tokenA)));
+        assertEq(compositeOracle.getPrice(address(tokenA)), compositeOracle.getPriceUnsafe(address(tokenA)));
     }
 
     function testEquivalentAmountWithCircuitBreaker() public {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         compositeOracle.setTokenOracleFeed(address(tokenB), address(mockOracle));
 
-        uint256 withCB = compositeOracle.getEquivalentAmountWithCircuitBreaker(address(tokenA), 10e18, address(tokenB));
-        uint256 without = compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(tokenB));
+        uint256 withCB = compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(tokenB));
+        uint256 without = compositeOracle.getEquivalentAmountUnsafe(address(tokenA), 10e18, address(tokenB));
 
         assertEq(withCB, without);
     }
@@ -186,21 +187,29 @@ contract CompositeOracleTest is Test {
         mockOracle.setShouldRevertOnCircuitBreaker(true);
 
         vm.expectRevert(abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(tokenA)));
-        compositeOracle.getPriceWithCircuitBreaker(address(tokenA));
+        compositeOracle.getPrice(address(tokenA));
     }
 
-    function testPriceWithCircuitBreaker_RevertsForFeedWithoutSupport() public {
+    function testStrictCircuitBreaker_RevertsForFeedWithoutSupport() public {
+        // After the safe-default rename, `getPrice` returns the feed's canonical price even
+        // when the feed has no distinct circuit-breaker discipline (the protection in that
+        // case is provided by the dual-feed challenge gate). Only the strict variant
+        // continues to reject feeds that do not advertise the safe/unsafe split.
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(tokenA), 2e8);
 
         compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
 
+        // Default `getPrice` succeeds (it routes to the feed's only price path).
+        assertEq(compositeOracle.getPrice(address(tokenA)), 2e8);
+
+        // Strict variant still rejects feeds without the safe/unsafe split.
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.getPriceWithCircuitBreaker(address(tokenA));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(tokenA));
     }
 
     function testPriceWithStrictCircuitBreaker() public {
@@ -424,12 +433,16 @@ contract CompositeOracleDualFeedTest is Test {
     function test_DualFeed_GetPrice_ReturnsPrimary() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
 
-        // Set different prices
+        // Set divergent prices. After the H-2 safe-default rename, `getPrice` honours the
+        // dual-feed challenge gate and reverts with `OraclePriceDisputed` because the feeds
+        // disagree above threshold. Only the explicit `getPriceUnsafe` getter still returns
+        // the active (primary) feed's value during a disputed window.
         primaryOracle.setPrice(address(token), 1e8);
         backupOracle.setPrice(address(token), 2e8);
 
-        // Should return primary price
-        assertEq(compositeOracle.getPrice(address(token)), 1e8);
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), 1e8);
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPrice(address(token));
     }
 
     function test_SingleFeed_ClearsBackupWhenSetting() public {
@@ -473,7 +486,7 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(publishTime, 0);
 
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
-        compositeOracle.getPriceWithCircuitBreaker(address(token));
+        compositeOracle.getPrice(address(token));
 
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
         compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
@@ -485,10 +498,14 @@ contract CompositeOracleDualFeedTest is Test {
         backupOracle.setPrice(address(token), deviatedPrice);
 
         assertTrue(compositeOracle.isTokenChallengeable(address(token)));
-        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
+
+        // After H-2 fix, the safe-default `getPrice` honours the challenge gate and
+        // fails closed when the dual feeds disagree above threshold. Only the explicit
+        // `getPriceUnsafe` getter still returns the disputed primary's value.
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
 
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPriceWithCircuitBreaker(address(token));
+        compositeOracle.getPrice(address(token));
 
         vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
         compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
@@ -503,7 +520,7 @@ contract CompositeOracleDualFeedTest is Test {
         backupOracle.setPrice(address(token), PRIMARY_PRICE);
 
         assertFalse(compositeOracle.isTokenChallengeable(address(token)));
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
     }
 
     function test_ChallengeableDeviationDoesNotBlockFinalizedBackup() public {
@@ -511,7 +528,7 @@ contract CompositeOracleDualFeedTest is Test {
 
         assertFalse(compositeOracle.isTokenChallengeable(address(token)));
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), (PRIMARY_PRICE * 10076) / 10000);
+        assertEq(compositeOracle.getPrice(address(token)), (PRIMARY_PRICE * 10076) / 10000);
     }
 
     function test_Challenge_RevertsWhenNotDualFeed() public {
@@ -574,7 +591,7 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.finalizeChallenge(address(token));
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
     }
 
     function test_Challenge_AllowsFailoverWhenPrimaryProtectedPriceRevertsDespiteMatchingSpot() public {
@@ -589,12 +606,15 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.finalizeChallenge(address(token));
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(address(token)), PRIMARY_PRICE);
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
 
+        // After the safe-default rename, the feed's `getPrice` IS the protected variant.
+        // A primary feed that reverts on its protected path therefore makes the price
+        // unavailable through `_tryGetNormalizedFeedPrice`, so `revertToPrimary` fails closed
+        // with "Oracle unavailable" — semantically equivalent to the old "Deviation still
+        // exceeds threshold" outcome (the unsafe primary stays disabled either way).
         vm.expectRevert(
-            abi.encodeWithSelector(
-                CompositeOracle.RevertNotPossible.selector, address(token), "Deviation still exceeds threshold"
-            )
+            abi.encodeWithSelector(CompositeOracle.RevertNotPossible.selector, address(token), "Oracle unavailable")
         );
         compositeOracle.revertToPrimary(address(token));
     }
@@ -828,8 +848,11 @@ contract CompositeOracleDualFeedTest is Test {
         // 3. Challenge initiated
         compositeOracle.challengeForToken(address(token));
 
-        // 4. Still using primary during challenge
-        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
+        // 4. During challenge, safe-default `getPrice` fails closed (H-2). The primary feed's
+        //    last reading is still observable through the explicit `getPriceUnsafe` getter.
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
 
         // 5. Timelock elapses
         vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
@@ -1090,6 +1113,108 @@ contract CompositeOracleDualFeedTest is Test {
 
         (,,,, isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
         assertFalse(isChallengePending);
+    }
+
+    // ============ H-2 / H-3 / L-3 Safe-Default Regressions ============
+
+    /// @notice H-2: every non-strict price entry point honours the dual-feed challenge gate.
+    /// @dev Before the safe-default rename only `getPriceWithCircuitBreaker` reverted with
+    ///      `OracleChallengePending` during an open challenge; `getPrice`, `getValue` and
+    ///      `getEquivalentAmount` silently kept serving the disputed primary. The rename
+    ///      moves the gate into `_getPrice` itself so every safe entry inherits it.
+    function test_H2_AllSafeEntryPointsRevertDuringPendingChallenge() public {
+        _initiateChallenge();
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getValue(address(token), 1e18);
+
+        // For `getEquivalentAmount` the gate must fire on either side of the conversion.
+        // Configure a second token with a single (challenge-free) feed so the disputed
+        // side dominates.
+        MockERC20 tokenB = new MockERC20("Other Token", "OTH");
+        primaryOracle.setPrice(address(tokenB), PRIMARY_PRICE);
+        compositeOracle.setTokenOracleFeed(address(tokenB), address(primaryOracle));
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(token)));
+        compositeOracle.getEquivalentAmount(address(token), 1e18, address(tokenB));
+
+        // The explicit `*Unsafe` getters keep working — they are the documented escape
+        // hatch for the rare callers that consciously opt out of the challenge gate.
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
+        assertGt(compositeOracle.getValueUnsafe(address(token), 1e18), 0);
+        assertGt(compositeOracle.getEquivalentAmountUnsafe(address(token), 1e18, address(tokenB)), 0);
+    }
+
+    /// @notice H-2: unresolved dual-feed deviation also flips the safe entry points.
+    function test_H2_SafeEntryPointsFailWhenDeviationUnresolved() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        // Set a wide deviation but never call `challengeForToken` — the helper
+        // `_hasUnresolvedDualFeedDeviation` must still flag the price as disputed.
+        backupOracle.setPrice(address(token), (PRIMARY_PRICE * 10076) / 10000);
+
+        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getValue(address(token), 1e18);
+
+        // Unsafe path still serves the active feed.
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
+    }
+
+    /// @notice H-3: `getValueWithFallback` never silently falls back to a disabled primary
+    ///         when the backup has been promoted by the challenge mechanism.
+    function test_H3_FallbackDoesNotResurrectDisabledPrimaryWhenBackupActive() public {
+        _challengeAndFinalize();
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+
+        uint256 backupPrice = (PRIMARY_PRICE * 10076) / 10000;
+        // Backup briefly fails.
+        backupOracle.setPrice(address(token), 0);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, 0, "must not silently fall back to the disabled primary");
+        assertFalse(isReliable);
+
+        // Once the backup recovers it serves the fallback as expected.
+        backupOracle.setPrice(address(token), backupPrice);
+        (value, isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, backupPrice);
+        assertTrue(isReliable);
+    }
+
+    /// @notice H-3: `getValueWithFallback` skips the inactive feed when the dual feeds disagree
+    ///         (even before a public challenge has been started).
+    function test_H3_FallbackSkipsInactiveFeedWhenDeviationUnresolved() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        uint256 backupPrice = (PRIMARY_PRICE * 10076) / 10000;
+        backupOracle.setPrice(address(token), backupPrice);
+
+        // Force the active feed (primary) to fail. The inactive backup feed remains usable —
+        // but because there is an unresolved deviation, we must NOT silently promote it.
+        primaryOracle.setPrice(address(token), 0);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, 0, "must not silently fall back to a disputed inactive feed");
+        assertFalse(isReliable);
+    }
+
+    /// @notice L-3: the safe-default `getPrice` is the protected variant on the leaf feed.
+    function test_L3_SafeDefaultGetPriceUsesProtectedVariantOnLeafFeed() public {
+        compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
+        primaryOracle.setShouldRevertOnCircuitBreaker(true);
+
+        // After the rename, the safe-default `getPrice` flows to the feed's safe `getPrice`,
+        // so a feed-level circuit-breaker revert surfaces by default.
+        vm.expectRevert(abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+
+        // The explicit unsafe getter is unaffected by the feed-level circuit breaker.
+        assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
     }
 
     // ============ Helper Functions ============

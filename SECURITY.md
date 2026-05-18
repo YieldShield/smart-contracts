@@ -64,3 +64,46 @@ forge coverage --ffi --report summary
 
 Document triaged security findings in a dated note under
 `docs_ok/security/analyses/` or in the relevant launch/security document.
+
+## Known Trust Assumptions
+
+These are deliberately accepted properties of the design, not bugs. They
+constrain who is trusted with what during specific lifecycle phases.
+
+### Bootstrap-holder concentration (pre-distribution)
+
+`YSToken` mints `INITIAL_SUPPLY` (1,000,000 YS) to a single bootstrap holder
+(production: a 2-of-N Safe), and self-delegates. `YSGovernor`'s
+`proposalThreshold` is 10,000 YS and `MIN_QUORUM_VOTES` is 10,000 YS — so the
+bootstrap Safe controls 100% of voting power and trivially meets quorum on
+its own.
+
+Consequence: until YS tokens are broadly distributed, the bootstrap Safe can
+unilaterally pass any proposal — upgrade pools, change oracle policy, alter
+NFT transfer locks, install a new (potentially malicious-but-validly-shaped)
+governance timelock, or transfer factory/NFT ownership. There is no on-chain
+gate preventing this; the only protections are:
+
+- a `MIN_PUBLIC_GOVERNANCE_DELAY = 2 days` on timelock changes (gives the
+  community a withdraw-window if a malicious proposal slips through),
+- `_validateGovernanceTimelock`'s enumeration check (H-8) requiring a fresh
+  timelock to have exactly one DEFAULT_ADMIN_ROLE member equal to itself,
+- the Safe-shape requirement on the bootstrap holder (≥2 owners, threshold
+  ≥2; production-validated by `_validateProductionBootstrapHolder`).
+
+Anyone evaluating protocol risk pre-distribution should assume that the
+bootstrap Safe's quorum is the trust boundary. After tokens are distributed
+broadly enough that the bootstrap holder no longer controls quorum, normal
+governance dynamics apply.
+
+### Permissionless Pyth update messages
+
+`PythOracle.updatePriceFeeds` is intentionally permissionless — Pyth itself
+authenticates the data, and gating the call would block any user from posting
+the latest Hermes message. As a consequence, an attacker can select the
+most-favorable still-valid Hermes message (~2-3 second window of signed
+prices) and post it ahead of their own transaction. Consumers MUST therefore
+use the protected `getPrice`/`getValue` path (the default after the H-2/L-3
+rename); the `*Unsafe` variants intentionally do NOT include EMA-deviation
+or spot/EMA cross-checks.
+

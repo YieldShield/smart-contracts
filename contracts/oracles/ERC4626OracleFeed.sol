@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
-import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -199,26 +198,31 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     }
 
     /// @inheritdoc IOracleFeed
-    /// @notice Returns the price of vault shares in USD (8 decimals)
-    /// @dev Includes share inflation attack protection via minimum supply check.
-    ///      Checks underlying price staleness and reverts if stale.
+    /// @notice Returns the protected (circuit-breaker validated) price of vault shares in USD (8 decimals)
+    /// @dev Applies share-rate cap, share inflation attack protection (minimum supply check),
+    ///      and underlying price staleness check. Production callers must use this entry point;
+    ///      the unprotected share-rate path is available via `getPriceUnsafe`.
     function getPrice(address vault) external view override returns (uint256) {
-        return _getValidatedPrice(vault, false);
+        return _getValidatedPrice(vault, true);
     }
 
-    /// @notice Returns the price of vault shares using the protected ERC4626 share-rate path
+    /// @notice Unprotected price getter that skips underlying circuit-breaker gates
+    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Share-rate
+    ///      bounds still fail closed; only the underlying oracle path uses `getPriceUnsafe`.
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
-    function getPriceWithCircuitBreaker(address vault) external view returns (uint256) {
-        return _getValidatedPrice(vault, true);
+    function getPriceUnsafe(address vault) external view returns (uint256) {
+        return _getValidatedPrice(vault, false);
     }
 
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 
-        (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
-        if (isStale) {
-            revert StaleUnderlyingPrice(vault, config.underlying);
+        if (useCircuitBreaker) {
+            (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
+            if (isStale) {
+                revert StaleUnderlyingPrice(vault, config.underlying);
+            }
         }
 
         return _getPriceFromConfig(vault, config, useCircuitBreaker);
@@ -296,21 +300,53 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        uint256 underlyingPrice = useCircuitBreaker
-            ? IPriceOracle(address(underlyingPriceOracle)).getPriceWithCircuitBreaker(config.underlying)
-            : underlyingPriceOracle.getPrice(config.underlying);
-        uint8 priceDecimals = underlyingPriceOracle.decimals();
+        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
+        uint8 priceDecimals = _getUnderlyingPriceDecimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
     }
 
-    function _boundedAssetsPerShare(
-        address vault,
-        uint256 assetsPerShare,
-        VaultConfig memory config,
-        bool failClosedOnUpperDeviation
-    ) internal pure returns (uint256) {
+    function _getUnderlyingPrice(address underlying, bool useCircuitBreaker) internal view returns (uint256) {
+        if (useCircuitBreaker) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", underlying));
+
+        if (success) {
+            if (data.length >= 32) {
+                return abi.decode(data, (uint256));
+            }
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        if (data.length == 0) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
+
+    function _getUnderlyingPriceDecimals() internal view returns (uint8) {
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("decimals()"));
+
+        if (success && data.length >= 32) {
+            return abi.decode(data, (uint8));
+        }
+
+        return ConstantsLib.USD_DECIMALS;
+    }
+
+    function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config, bool)
+        internal
+        pure
+        returns (uint256)
+    {
         uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
         if (referenceAssetsPerShare == 0) {
             revert SharePriceDeviationTooHigh(
@@ -330,13 +366,17 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             );
         }
 
-        if (failClosedOnUpperDeviation && assetsPerShare > maxAssetsPerShare) {
+        // H-4: always fail closed on the upper bound — clamping silently
+        // under-prices the share rate during organic vault yield AND makes
+        // donation-driven inflation indistinguishable from yield. After the
+        // *Unsafe rename, no production caller can tolerate a clamped price.
+        if (assetsPerShare > maxAssetsPerShare) {
             revert SharePriceDeviationTooHigh(
                 vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
             );
         }
 
-        return assetsPerShare > maxAssetsPerShare ? maxAssetsPerShare : assetsPerShare;
+        return assetsPerShare;
     }
 
     function _getTokenDecimals(address token) internal view returns (uint8 tokenDecimals) {
@@ -367,45 +407,39 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     /// @notice Check if underlying oracle price is stale
     /// @dev Uses low-level calls to detect and call staleness functions on underlying oracle
-    ///      Supports different oracle types:
-    ///      - PythOracle: returns (bool, uint64)
-    ///      - ChainlinkOracleFeed: returns (bool, uint256)
-    ///      - Other oracles: gracefully returns (false, 0) if no staleness support
+    ///      All in-protocol oracles implement isPriceStale(address) -> (bool, uint64).
+    ///      Future timestamps beyond the small sequencer-skew tolerance are rejected;
+    ///      previously the function accepted publishTimes up to 24h in the future.
+    ///      Any oracle that does not expose the helper, or that returns malformed
+    ///      data, is treated as stale (fail closed).
     /// @param underlying The underlying asset address
     /// @return isStale True if the price is stale
     /// @return publishTime The timestamp of the price (0 if not available)
     function _checkUnderlyingStaleness(address underlying) internal view returns (bool isStale, uint64 publishTime) {
         address oracleAddress = address(underlyingPriceOracle);
 
-        // Try PythOracle-style interface (returns bool, uint64)
         // Function selector: isPriceStale(address) -> (bool, uint64)
         (bool success, bytes memory data) =
             oracleAddress.staticcall(abi.encodeWithSignature("isPriceStale(address)", underlying));
 
+        // Expected ABI: (bool, uint64) padded to 64 bytes.
         if (success && data.length >= 64) {
-            // Try to decode as (bool, uint64) first (PythOracle style)
-            bool decoded;
-            uint64 time64;
-            (decoded, time64) = abi.decode(data, (bool, uint64));
-
-            // If decoded successfully and time is reasonable, use it
-            // Check if time64 is within reasonable bounds (not overflow from uint256)
-            if (time64 > 0 && time64 <= uint64(block.timestamp + 86400)) {
-                return (decoded, time64);
+            (bool decoded, uint64 time64) = abi.decode(data, (bool, uint64));
+            // Reject implausibly future-dated publish times to prevent a malicious
+            // or skewed underlying oracle from defeating the staleness check.
+            // SEQUENCER_SKEW_TOLERANCE allows a small clock drift only.
+            if (time64 == 0 || time64 > uint64(block.timestamp) + SEQUENCER_SKEW_TOLERANCE) {
+                return (true, 0);
             }
-
-            // Try to decode as (bool, uint256) (ChainlinkOracleFeed style)
-            uint256 time256;
-            (decoded, time256) = abi.decode(data, (bool, uint256));
-
-            // Convert uint256 to uint64 (safe if time is reasonable)
-            if (time256 > 0 && time256 <= type(uint64).max) {
-                return (decoded, uint64(time256));
-            }
+            return (decoded, time64);
         }
 
         // Underlying oracle doesn't support staleness checking or call failed
-        // Fail-closed: treat as stale to prevent using potentially outdated prices
+        // Fail-closed: treat as stale to prevent using potentially outdated prices.
         return (true, 0);
     }
+
+    /// @dev Maximum tolerated future-skew (seconds) on an underlying oracle's
+    ///      publishTime. Anything beyond this is treated as a stale/invalid value.
+    uint64 internal constant SEQUENCER_SKEW_TOLERANCE = 30;
 }

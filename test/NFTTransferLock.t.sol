@@ -169,21 +169,25 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         assertEq(shieldNFT.ownerOf(tokenId), recipient);
     }
 
-    function test_ShieldNFT_ApprovalDuringLockPeriod() public {
+    function test_ShieldNFT_ApprovalDuringLockPeriod_Reverts() public {
         uint256 tokenId = _depositShielded(1000e18);
 
-        // Approval should work even during lock
+        // H-7: approvals during lock are rejected so pre-approval of a
+        // wrapper contract cannot sweep the position the instant the lock
+        // expires.
+        vm.startPrank(shielded);
+        vm.expectRevert();
+        shieldNFT.approve(recipient, tokenId);
+        vm.stopPrank();
+    }
+
+    function test_ShieldNFT_ApprovalAllowedAfterLockExpiry() public {
+        uint256 tokenId = _depositShielded(1000e18);
+        vm.warp(block.timestamp + SHIELD_LOCK_PERIOD);
         vm.startPrank(shielded);
         shieldNFT.approve(recipient, tokenId);
         vm.stopPrank();
-
         assertEq(shieldNFT.getApproved(tokenId), recipient);
-
-        // But transfer by approved address should fail during lock
-        vm.startPrank(recipient);
-        vm.expectRevert();
-        shieldNFT.transferFrom(shielded, recipient, tokenId);
-        vm.stopPrank();
     }
 
     // ============ Protector NFT Transfer Lock Tests ============
@@ -240,21 +244,23 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         assertEq(protectorNFT.ownerOf(tokenId), recipient);
     }
 
-    function test_ProtectorNFT_ApprovalDuringLockPeriod() public {
+    function test_ProtectorNFT_ApprovalDuringLockPeriod_Reverts() public {
         uint256 tokenId = _depositProtector(1000e18);
 
-        // Approval should work even during lock
+        // H-7: approvals during lock are rejected.
+        vm.startPrank(protector);
+        vm.expectRevert();
+        protectorNFT.approve(recipient, tokenId);
+        vm.stopPrank();
+    }
+
+    function test_ProtectorNFT_ApprovalAllowedAfterLockExpiry() public {
+        uint256 tokenId = _depositProtector(1000e18);
+        vm.warp(block.timestamp + PROTECTOR_LOCK_PERIOD);
         vm.startPrank(protector);
         protectorNFT.approve(recipient, tokenId);
         vm.stopPrank();
-
         assertEq(protectorNFT.getApproved(tokenId), recipient);
-
-        // But transfer by approved address should fail during lock
-        vm.startPrank(recipient);
-        vm.expectRevert();
-        protectorNFT.transferFrom(protector, recipient, tokenId);
-        vm.stopPrank();
     }
 
     // ============ Edge Case: Multiple NFTs - Basic Independence Test ============

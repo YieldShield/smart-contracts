@@ -153,7 +153,7 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
 
         vm.mockCallRevert(
             address(oracle),
-            abi.encodeWithSelector(MockOracle.getPriceWithCircuitBreaker.selector, address(backingToken)),
+            abi.encodeWithSelector(MockOracle.getPrice.selector, address(backingToken)),
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(backingToken))
         );
         assertEq(pool.getAvailableForWithdrawal(tokenId), 0, "price outage should fail closed for 18->6 pools");
@@ -180,7 +180,7 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
 
         vm.mockCallRevert(
             address(oracle),
-            abi.encodeWithSelector(MockOracle.getPriceWithCircuitBreaker.selector, address(shieldedToken)),
+            abi.encodeWithSelector(MockOracle.getPrice.selector, address(shieldedToken)),
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(shieldedToken))
         );
 
@@ -221,7 +221,7 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
 
         vm.mockCallRevert(
             address(oracle),
-            abi.encodeWithSelector(MockOracle.getPriceWithCircuitBreaker.selector, address(shieldedToken)),
+            abi.encodeWithSelector(MockOracle.getPrice.selector, address(shieldedToken)),
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(shieldedToken))
         );
 
@@ -286,7 +286,7 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
 
         vm.mockCall(
             address(oracle),
-            abi.encodeWithSelector(MockOracle.getPriceWithCircuitBreaker.selector, address(shieldedToken)),
+            abi.encodeWithSelector(MockOracle.getPrice.selector, address(shieldedToken)),
             abi.encode(2e8)
         );
 

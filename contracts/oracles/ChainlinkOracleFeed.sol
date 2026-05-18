@@ -18,6 +18,20 @@ interface AggregatorV3Interface {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
+/// @title IChainlinkAggregatorProxy
+/// @notice Subset of the EACAggregatorProxy interface used to read the
+///         underlying aggregator and its min/max answer bounds. Many
+///         Chainlink price-feed proxies expose `aggregator()`; the
+///         underlying contract exposes `minAnswer()`/`maxAnswer()`.
+interface IChainlinkAggregatorProxy {
+    function aggregator() external view returns (address);
+}
+
+interface IChainlinkAggregatorBounds {
+    function minAnswer() external view returns (int192);
+    function maxAnswer() external view returns (int192);
+}
+
 /// @title ChainlinkOracleFeed
 /// @author David Hawig
 /// @notice Oracle feed adapter for Chainlink price feeds
@@ -47,6 +61,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
+    /// @notice Cached min/max answer bounds for each feed, queried at registration.
+    /// @dev If the proxy doesn't expose `aggregator()` or the inner aggregator doesn't
+    ///      expose `minAnswer`/`maxAnswer`, both bounds remain zero and the runtime
+    ///      check is skipped (logged via FeedBoundsUnavailable on registration).
+    mapping(address => int192) public tokenFeedMinAnswer;
+    mapping(address => int192) public tokenFeedMaxAnswer;
+
     /// @notice Emitted when a token's feed is set or updated
     event TokenFeedSet(address indexed token, address indexed feed);
 
@@ -55,6 +76,12 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted when sequencer uptime feed is set
     event SequencerUptimeFeedSet(address indexed oldFeed, address indexed newFeed);
+
+    /// @notice Emitted when min/max answer bounds are cached for a feed
+    event FeedBoundsCached(address indexed token, address indexed feed, int192 minAnswer, int192 maxAnswer);
+
+    /// @notice Emitted when a feed proxy does not expose min/max answer bounds
+    event FeedBoundsUnavailable(address indexed token, address indexed feed);
 
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
@@ -71,6 +98,11 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error when L2 sequencer is down
     error SequencerDown();
 
+    /// @notice Custom error when the feed answer has saturated at its min/max bound
+    ///         (Venus-style attack pattern: aggregator pins at floor/ceiling instead
+    ///         of reporting the true price).
+    error PriceOutsideAggregatorBounds(address token, int256 answer, int192 minAnswer, int192 maxAnswer);
+
     /// @notice Custom error when sequencer grace period not over
     /// @param timeSinceUp Seconds since sequencer came back up
     /// @param gracePeriod Required grace period in seconds
@@ -82,8 +114,17 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for price age exceeding upper bound
     error PriceAgeTooHigh(uint256 provided, uint256 maximum);
 
-    /// @notice Maximum allowed maxPriceAge value (1 hour)
-    uint256 public constant MAX_PRICE_AGE_LIMIT = 3600;
+    /// @notice Maximum allowed maxPriceAge value (24h, to accommodate long-heartbeat
+    ///         RWA feeds like LBTC, sDAI, USDY whose Chainlink publish cadence is daily).
+    /// @dev M-1: raised from 1h. Pair with per-token overrides via
+    ///      `setMaxPriceAgeForToken` when a specific feed needs a tighter bound.
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
+
+    /// @notice Per-token max price age override. Zero means "use the global maxPriceAge".
+    mapping(address => uint256) public maxPriceAgeForToken;
+
+    /// @notice Emitted when a per-token max price age is set
+    event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
 
     /// @notice Constructor
     /// @param _maxPriceAge Maximum age of price data in seconds
@@ -111,18 +152,57 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         tokenFeeds[token] = aggregator;
         isTokenSupported[token] = true;
 
+        // Best-effort cache of the underlying aggregator's min/max answer
+        // bounds. Used at runtime to reject prices saturated at the floor or
+        // ceiling (the Venus-style failure mode where the feed pins at a
+        // hard-coded bound instead of reporting the true price).
+        _cacheFeedBounds(token, feed);
+
         emit TokenFeedSet(token, feed);
+    }
+
+    /// @dev Resolves the underlying aggregator behind a Chainlink proxy and
+    ///      caches its min/max answer. If any step fails (non-proxy feed,
+    ///      bounds not exposed), both bounds are cleared and an event is
+    ///      emitted so the operator can decide whether to accept the feed.
+    function _cacheFeedBounds(address token, address feed) internal {
+        // Resolve underlying aggregator (proxies expose aggregator(); raw
+        // aggregators don't and that's fine).
+        address underlying = feed;
+        try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
+            underlying = agg;
+        } catch { }
+
+        try IChainlinkAggregatorBounds(underlying).minAnswer() returns (int192 minA) {
+            try IChainlinkAggregatorBounds(underlying).maxAnswer() returns (int192 maxA) {
+                tokenFeedMinAnswer[token] = minA;
+                tokenFeedMaxAnswer[token] = maxA;
+                emit FeedBoundsCached(token, feed, minA, maxA);
+                return;
+            } catch {
+                // fall through
+            }
+        } catch {
+            // fall through
+        }
+
+        // Bounds not retrievable: clear cache and signal explicitly.
+        tokenFeedMinAnswer[token] = 0;
+        tokenFeedMaxAnswer[token] = 0;
+        emit FeedBoundsUnavailable(token, feed);
     }
 
     /// @notice Remove a token feed
     /// @param token The token address to remove
     function removeTokenFeed(address token) external onlyOwner {
         delete tokenFeeds[token];
+        delete tokenFeedMinAnswer[token];
+        delete tokenFeedMaxAnswer[token];
         isTokenSupported[token] = false;
         emit TokenFeedSet(token, address(0));
     }
 
-    /// @notice Set the maximum age for price data
+    /// @notice Set the global maximum age for price data
     /// @param _maxPriceAge The maximum age in seconds (minimum 10)
     function setMaxPriceAge(uint256 _maxPriceAge) external onlyOwner {
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
@@ -130,6 +210,22 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         uint256 oldAge = maxPriceAge;
         maxPriceAge = _maxPriceAge;
         emit MaxPriceAgeUpdated(oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set a per-token max price age that overrides the global value.
+    /// @dev Set to 0 to clear the override and revert to the global maxPriceAge.
+    function setMaxPriceAgeForToken(address token, uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAgeForToken[token];
+        maxPriceAgeForToken[token] = _maxPriceAge;
+        emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Resolve the effective max-price-age for a token (override or global)
+    function effectiveMaxPriceAge(address token) public view returns (uint256) {
+        uint256 perToken = maxPriceAgeForToken[token];
+        return perToken == 0 ? maxPriceAge : perToken;
     }
 
     /// @notice Set the L2 sequencer uptime feed (for Arbitrum/Optimism/Base)
@@ -142,10 +238,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (_sequencerUptimeFeed != address(0)) {
             AggregatorV3Interface feed = AggregatorV3Interface(_sequencerUptimeFeed);
             // Verify feed responds correctly
-            try feed.latestRoundData() returns (uint80, int256 answer, uint256, uint256, uint80) {
+            try feed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
                 // Sequencer status: 0 = up, 1 = down
-                // Just verify we can read it, don't validate the value
                 if (answer != 0 && answer != 1) {
+                    revert InvalidFeedAddress(_sequencerUptimeFeed);
+                }
+                // Reject feeds that report an uninitialized or future-dated startedAt
+                // at registration; both would brick every L2 price read at runtime.
+                if (startedAt == 0 || startedAt > block.timestamp) {
                     revert InvalidFeedAddress(_sequencerUptimeFeed);
                 }
             } catch {
@@ -158,13 +258,19 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     /// @inheritdoc IOracleFeed
+    /// @dev Chainlink protection is provided by stale-round, answered-in-round, and optional
+    ///      sequencer checks built into `_getPrice`. There is no separate "unsafe" computation
+    ///      path; `getPriceUnsafe` is exposed as an alias so consumers can probe whether the
+    ///      feed advertises the safe/unsafe split.
     function getPrice(address token) external view override returns (uint256) {
         return _getPrice(token);
     }
 
-    /// @notice Get the price through the protected-price selector used by CompositeOracle strict validation.
-    /// @dev Chainlink protection is provided by stale-round, answered-in-round, and optional sequencer checks.
-    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
+    /// @notice Unprotected price getter exposed as an alias so consumers (e.g. CompositeOracle)
+    ///         can detect that this feed advertises a circuit-breaker discipline.
+    /// @dev Chainlink has no distinct unprotected path; this function returns the same
+    ///      stale-round + sequencer validated price as `getPrice`.
+    function getPriceUnsafe(address token) external view returns (uint256) {
         return _getPrice(token);
     }
 
@@ -180,10 +286,25 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = feed.latestRoundData();
 
-        // Validate price data using shared library
+        // Validate price data using shared library. Use per-token max-age if
+        // overridden — long-heartbeat RWA feeds need their own bound. (M-1)
+        uint256 effectiveAge = effectiveMaxPriceAge(token);
         OracleValidationLib.validatePositivePrice(answer, token);
-        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, maxPriceAge);
-        OracleValidationLib.validateStaleness(updatedAt, maxPriceAge, token);
+        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, effectiveAge);
+        OracleValidationLib.validateStaleness(updatedAt, effectiveAge, token);
+
+        // Venus-style protection: if the underlying aggregator's min/max answer
+        // bounds were retrievable at registration time, reject prices that have
+        // saturated at either bound. A pinned price during a real depeg lets
+        // the protocol mis-value assets if the true off-chain price is past
+        // the configured floor/ceiling.
+        int192 minA = tokenFeedMinAnswer[token];
+        int192 maxA = tokenFeedMaxAnswer[token];
+        if (minA != 0 || maxA != 0) {
+            if (answer <= int256(minA) || answer >= int256(maxA)) {
+                revert PriceOutsideAggregatorBounds(token, answer, minA, maxA);
+            }
+        }
 
         // Convert to 8 decimals if necessary
         uint8 feedDecimals = feed.decimals();
@@ -226,7 +347,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (updatedAt > block.timestamp) {
             return (true, updatedAt);
         }
-        isStale = block.timestamp - updatedAt > maxPriceAge;
+        isStale = block.timestamp - updatedAt > effectiveMaxPriceAge(token);
     }
 
     /// @notice Check L2 sequencer status (for monitoring/frontend)

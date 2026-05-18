@@ -136,6 +136,18 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function testCreatePoolRevertsWhenCompositeShieldedFeedLacksCircuitBreaker() public {
+        MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
+        noCircuitBreakerFeed.setPrice(address(shieldedToken), 1e8);
+        _replaceShieldedTokenFeed(address(noCircuitBreakerFeed));
+
+        _approveCreationBond();
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.createPool(
+            address(shieldedToken), "SHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
+        );
+    }
+
     function testCreatePoolRevertsWhenShieldedFeedIsPythEmaOnly() public {
         MockPyth mockPyth = new MockPyth(60, 1e15);
         PythEMAOracleFeed emaFeed = new PythEMAOracleFeed(address(mockPyth), 60);
@@ -187,16 +199,30 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
     }
 
-    function testPoolStrictProtectedPriceRequirementReflectsFactoryPolicyWithoutSync() public {
+    function testPoolStrictProtectedPriceRequirementRequiresExplicitRefresh() public {
+        // H-5: the pool snapshots the strict-pricing flag at init and does NOT
+        // auto-update from runtime factory changes. Adopting a new factory
+        // policy is an explicit governance action.
         assertFalse(pool.requiresStrictProtectedBackingPrice());
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
-        assertTrue(pool.requiresStrictProtectedBackingPrice());
+        assertFalse(pool.requiresStrictProtectedBackingPrice(), "pinned snapshot should not auto-update");
+
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "refresh should adopt the new policy");
     }
 
     function testPoolStrictProtectedPriceRequirementSurvivesPoolOwnerTransfer() public {
+        // H-5: pool snapshots the flag at init. To adopt a new factory policy,
+        // governance must call refreshStrictProtectedBackingPriceFlag(). After
+        // that, the pinned value persists across ownership changes (the whole
+        // point of pinning is decoupling from runtime factory state).
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
 
         vm.prank(address(factory));
         pool.transferOwnership(address(0xBEEF));
