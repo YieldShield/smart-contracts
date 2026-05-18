@@ -167,12 +167,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      emitted so the operator can decide whether to accept the feed.
     function _cacheFeedBounds(address token, address feed) internal {
         // Resolve underlying aggregator (proxies expose aggregator(); raw
-        // aggregators don't and that's fine).
-        address underlying;
+        // aggregators don't and that's fine). Initialise to `feed` so the
+        // variable is never read before assignment — slither flags the
+        // catch-branch reassignment otherwise.
+        address underlying = feed;
         try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
             underlying = agg;
         } catch {
-            underlying = feed;
+            // keep underlying == feed
         }
 
         try IChainlinkAggregatorBounds(underlying).minAnswer() returns (int192 minA) {
