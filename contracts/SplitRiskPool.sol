@@ -1119,6 +1119,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
         bool tracksExpiredEpoch =
             protectorEpochRemainingShares[positionEpoch] != 0 || protectorEpochRemainingReserve[positionEpoch] != 0;
+
+        // An expired-epoch position whose bucket has been fully settled
+        // (both remainingShares and remainingReserve are zero) has nothing to
+        // claim — its commissions either went out or were redirected. Return
+        // zero immediately so the function cannot fall into the "current
+        // epoch" branch below and inadvertently decrement
+        // currentEpochCommissionReserve for an expired-epoch claim.
+        if (isExpiredEpoch && !tracksExpiredEpoch) {
+            return 0;
+        }
+
         claimable = _calculateClaimableCommission(tokenId, positionShares_);
         if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
         if (isExpiredEpoch && tracksExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
