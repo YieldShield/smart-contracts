@@ -239,7 +239,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function _deployGovernance() internal returns (YSToken ysToken, TimelockController timelock, YSGovernor governor) {
         address[] memory emptyAccounts = new address[](0);
-        timelock = TimelockController(payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer))));
+        timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer)))
+        );
         ysToken = new YSToken(bootstrapHolder);
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
 

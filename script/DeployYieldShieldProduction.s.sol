@@ -71,8 +71,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _validateProductionBootstrapHolder(bootstrapHolder);
 
         address[] memory emptyAccounts = new address[](0);
-        TimelockController timelock =
-            TimelockController(payable(address(new YSTimelockController(timelockDelay, emptyAccounts, emptyAccounts, deployer))));
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(timelockDelay, emptyAccounts, emptyAccounts, deployer)))
+        );
         timelockAddr = address(timelock);
         console.log("Timelock Controller deployed at:", timelockAddr);
         console.log("Timelock delay set to:", timelockDelay, "seconds");

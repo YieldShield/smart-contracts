@@ -128,9 +128,8 @@ abstract contract ProtocolAccessControlUpgradeable is
         // pre-granted admin (attacker EOA, secondary multisig, …) would pass.
         // Require the candidate to use AccessControlEnumerable and to hold the
         // role exclusively for itself.
-        (success, data) = candidate.staticcall(
-            abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE)
-        );
+        (success, data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, DEFAULT_ADMIN_ROLE_VALUE));
         if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
         uint256 adminCount = abi.decode(data, (uint256));
         if (adminCount != 1) {

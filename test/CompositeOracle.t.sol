@@ -117,8 +117,7 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         compositeOracle.setTokenOracleFeed(address(token6), address(mockOracle));
 
-        uint256 equivalentAmount =
-            compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(token6));
+        uint256 equivalentAmount = compositeOracle.getEquivalentAmount(address(tokenA), 10e18, address(token6));
         assertEq(equivalentAmount, 10e6);
     }
 

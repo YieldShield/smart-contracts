@@ -391,9 +391,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
-        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {
@@ -435,9 +433,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {
@@ -1557,8 +1553,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // releasing the full original reservation creates phantom headroom
             // for remaining protector withdrawals beyond the original
             // collateralization promise.
-            uint256 collateralReleased =
-                payoutAmount < pos.collateralAmount ? payoutAmount : pos.collateralAmount;
+            uint256 collateralReleased = payoutAmount < pos.collateralAmount ? payoutAmount : pos.collateralAmount;
             totalShieldCollateralAmount -= collateralReleased;
 
             // Deduct from protector pool (TOKEN-BASED accounting)
@@ -1652,10 +1647,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // totalValueAtDeposit / totalShieldCollateralAmount per call — bounded
         // by 1 wei per recompute — but is the correct rounding direction for
         // the user's protection.
-        uint256 newCollateralAmount =
-            Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees, Math.Rounding.Ceil);
-        uint256 newValueAtDeposit =
-            Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
+        uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees, Math.Rounding.Ceil);
+        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
         newTokenId = IShieldReceiptNFT(shieldReceiptNFT)
             .mintWithDepositTime(msg.sender, remaining, newValueAtDeposit, newCollateralAmount, pos.depositTime);
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
@@ -2244,27 +2237,19 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (address(0)))
         );
-        _validateAccessControlHook(
-            newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (probe))
-        );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (address(0)))
         );
-        _validateAccessControlHook(
-            newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (probe))
-        );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (address(0)))
         );
-        _validateAccessControlHook(
-            newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (probe))
-        );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (probe)));
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (address(0)))
         );
-        _validateAccessControlHook(
-            newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (probe))
-        );
+        _validateAccessControlHook(newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (probe)));
     }
 
     function _validateAccessControlHook(address newAccessControl, bytes memory callData) internal view {

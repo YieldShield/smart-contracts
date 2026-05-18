@@ -50,8 +50,7 @@ contract PythEMAOracleFeedTest is Test {
         // After the safe-default rename, the marker for "feed advertises the safe/unsafe split"
         // is the `getPriceUnsafe(address)` selector. PythEMA deliberately does not expose it,
         // so CompositeOracle's `_supportsCircuitBreaker` probe must fail for this feed.
-        (bool success,) =
-            address(feed).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", address(token)));
+        (bool success,) = address(feed).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", address(token)));
 
         assertFalse(success);
     }

@@ -131,8 +131,7 @@ library PoolOracleValidationLib {
     function _validateProtectedPriceSelector(address oracle, address token) private view {
         if (oracle.code.length == 0) revert ErrorsLib.InvalidAssetAddress();
 
-        (bool success, bytes memory data) =
-            oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
+        (bool success, bytes memory data) = oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
         if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
         if (abi.decode(data, (uint256)) == 0) revert ErrorsLib.InvalidOraclePrice();
