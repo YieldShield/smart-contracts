@@ -10,8 +10,9 @@ import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 /// @author David Hawig
 /// @notice Oracle feed that returns Pyth EMA prices (stability-focused)
 /// @dev Used as a plain-price feed in CompositeOracle dual-feed mode for smoother, more stable pricing.
-///      EMA-only pricing intentionally does not expose getPriceWithCircuitBreaker(); protected pool paths
-///      must use a feed that validates spot/EMA deviation or another independent circuit breaker.
+///      EMA-only pricing intentionally does not advertise the safe/unsafe split (no
+///      `getPriceUnsafe(address)` selector); protected pool paths must use a feed that
+///      validates spot/EMA deviation or another independent circuit breaker.
 ///      All price outputs are normalized to 8 decimals (USD format).
 /// - getPrice() returns: EMA price with 8 decimals (e.g., $1.00 = 1e8, $1234.56 = 123456000000)
 /// - Pyth native feeds may use different exponents (-8, -9, etc) but are normalized to 8 decimals

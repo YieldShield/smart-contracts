@@ -41,30 +41,37 @@ contract ShieldActivationLossOracle is IPriceOracle {
     }
 
     function getPrice(address token) external view returns (uint256) {
-        return _price(token);
-    }
-
-    function getValue(address token, uint256 amount) external view returns (uint256) {
-        return amount.mulDiv(_price(token), 1e18);
-    }
-
-    function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB) external view returns (uint256) {
-        return amountA.mulDiv(_price(tokenA), _price(tokenB));
-    }
-
-    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
         if (token == shieldedToken && shieldedCircuitBreakerReverts) {
             revert ShieldedCircuitBreakerUnavailable(token);
         }
         return _price(token);
     }
 
-    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
+    function getPriceUnsafe(address token) external view returns (uint256) {
+        return _price(token);
+    }
+
+    function getValue(address token, uint256 amount) external view returns (uint256) {
+        if (token == shieldedToken && shieldedCircuitBreakerReverts) {
+            revert ShieldedCircuitBreakerUnavailable(token);
+        }
+        return amount.mulDiv(_price(token), 1e18);
+    }
+
+    function getValueUnsafe(address token, uint256 amount) external view returns (uint256) {
+        return amount.mulDiv(_price(token), 1e18);
+    }
+
+    function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB) external view returns (uint256) {
+        return amountA.mulDiv(this.getPrice(tokenA), this.getPrice(tokenB));
+    }
+
+    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB)
         external
         view
         returns (uint256)
     {
-        return amountA.mulDiv(this.getPriceWithCircuitBreaker(tokenA), this.getPriceWithCircuitBreaker(tokenB));
+        return amountA.mulDiv(_price(tokenA), _price(tokenB));
     }
 
     function _price(address token) internal view returns (uint256) {

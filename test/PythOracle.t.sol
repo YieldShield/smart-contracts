@@ -126,7 +126,8 @@ contract PythOracleTest is Test {
     }
 
     function testGetEquivalentAmountWithCircuitBreaker_SixToEightDecimals() public view {
-        uint256 amountB = oracle.getEquivalentAmountWithCircuitBreaker(address(token6), 100e6, address(token8));
+        // After the safe-default rename, the circuit-breaker-protected path lives under `getEquivalentAmount`.
+        uint256 amountB = oracle.getEquivalentAmount(address(token6), 100e6, address(token8));
         assertEq(amountB, 100e8, "Circuit-breaker path should preserve destination token decimals");
     }
 
@@ -351,13 +352,14 @@ contract PythOracleTest is Test {
     }
 
     function testGetPriceWithCircuitBreaker_RevertsWhenEmaConfidenceTooWide() public {
+        // After the safe-default rename, the protected price is exposed under `getPrice`.
         vm.warp(block.timestamp + 1);
         _updatePriceFeed(FEED_ID_1, 1e8, 3e6, -8, uint64(block.timestamp));
 
         vm.expectRevert(
             abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 1e8, 200)
         );
-        oracle.getPriceWithCircuitBreaker(address(token1));
+        oracle.getPrice(address(token1));
     }
 
     function testCompositePriceFeed_MultipliesBaseQuoteByQuoteUsd() public {
@@ -369,7 +371,7 @@ contract PythOracleTest is Test {
         _updatePriceFeed(FEED_ID_2, 95e6, 1e4, -8, uint64(block.timestamp)); // 0.95 USDS/USD
 
         assertEq(oracle.getPrice(address(token1)), 104_500_000, "composite price should be token/USD");
-        assertEq(oracle.getPriceWithCircuitBreaker(address(token1)), 104_500_000);
+        assertEq(oracle.getPriceUnsafe(address(token1)), 104_500_000);
         assertEq(oracle.getEmaPrice(address(token1)), 104_500_000);
     }
 
@@ -455,30 +457,27 @@ contract PythOracleTest is Test {
 
     /* ============ Zero Price Protection Tests ============ */
 
-    /// @notice Test that getEquivalentAmountWithCircuitBreaker reverts when priceB is 0
-    /// @dev When price is 0, getPriceWithCircuitBreaker reverts with InvalidEMAPrice first
-    ///      (since EMA is also 0). The InvalidPrice check in getEquivalentAmountWithCircuitBreaker
-    ///      is defense-in-depth for cases where getPriceWithCircuitBreaker might return 0.
+    /// @notice Test that the safe-default getEquivalentAmount reverts when priceB is 0
+    /// @dev After the safe-default rename, the circuit-breaker-protected path lives under
+    ///      `getEquivalentAmount`. When the underlying price is zero, `_convertPrice` reverts
+    ///      with `InvalidPrice` before the EMA-deviation check is reached.
     function testGetEquivalentAmountWithCircuitBreaker_ZeroPriceB_Reverts() public {
-        // Set token2 price to 0 (both spot and EMA)
         vm.warp(block.timestamp + 10);
         _updatePriceFeed(FEED_ID_2, 0, 0, -8, uint64(block.timestamp));
 
-        // getPriceWithCircuitBreaker(tokenB) is called, which calls _convertPrice first
-        // Since spot price is 0, _convertPrice reverts with InvalidPrice before EMA check
         vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPrice.selector, address(token2), 0));
-        oracle.getEquivalentAmountWithCircuitBreaker(address(token1), 100e18, address(token2));
+        oracle.getEquivalentAmount(address(token1), 100e18, address(token2));
     }
 
-    /// @notice Test that getPriceWithCircuitBreaker reverts when price is 0
+    /// @notice Test that the safe-default getPrice reverts when price is 0
     function testGetPriceWithCircuitBreaker_ZeroEMA_Reverts() public {
         // Set price feed with zero price (MockPyth uses same value for spot and EMA)
         vm.warp(block.timestamp + 10);
         _updatePriceFeed(FEED_ID_1, 0, 0, -8, uint64(block.timestamp));
 
-        // Should revert with InvalidPrice (spot price check happens before EMA check)
+        // After the safe-default rename, the protected price is exposed under `getPrice`.
         vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPrice.selector, address(token1), 0));
-        oracle.getPriceWithCircuitBreaker(address(token1));
+        oracle.getPrice(address(token1));
     }
 
     /// @notice Test that getPriceWithFallback reverts when price is 0

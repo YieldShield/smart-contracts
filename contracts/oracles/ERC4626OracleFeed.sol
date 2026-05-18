@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
-import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -199,18 +198,22 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     }
 
     /// @inheritdoc IOracleFeed
-    /// @notice Returns the price of vault shares in USD (8 decimals)
-    /// @dev Includes share inflation attack protection via minimum supply check.
-    ///      Checks underlying price staleness and reverts if stale.
+    /// @notice Returns the protected (circuit-breaker validated) price of vault shares in USD (8 decimals)
+    /// @dev Applies share-rate cap, share inflation attack protection (minimum supply check),
+    ///      and underlying price staleness check. Production callers must use this entry point;
+    ///      the unprotected share-rate path is available via `getPriceUnsafe`.
     function getPrice(address vault) external view override returns (uint256) {
-        return _getValidatedPrice(vault, false);
+        return _getValidatedPrice(vault, true);
     }
 
-    /// @notice Returns the price of vault shares using the protected ERC4626 share-rate path
+    /// @notice Unprotected price getter that skips the upper-bound share-rate deviation cap
+    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Still applies
+    ///      the lower-bound share-rate floor and underlying staleness check; only the
+    ///      upper-bound deviation handling differs from `getPrice`.
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
-    function getPriceWithCircuitBreaker(address vault) external view returns (uint256) {
-        return _getValidatedPrice(vault, true);
+    function getPriceUnsafe(address vault) external view returns (uint256) {
+        return _getValidatedPrice(vault, false);
     }
 
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
@@ -296,9 +299,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        uint256 underlyingPrice = useCircuitBreaker
-            ? IPriceOracle(address(underlyingPriceOracle)).getPriceWithCircuitBreaker(config.underlying)
-            : underlyingPriceOracle.getPrice(config.underlying);
+        // After the safe-default rename `getPrice` is the protected variant on every feed
+        // (including CompositeOracle, which honours the dual-feed challenge gate). The
+        // unprotected path is reserved for explicit read-only callers and is intentionally
+        // not used here even when `useCircuitBreaker == false`.
+        uint256 underlyingPrice = underlyingPriceOracle.getPrice(config.underlying);
         uint8 priceDecimals = underlyingPriceOracle.decimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);

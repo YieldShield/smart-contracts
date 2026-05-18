@@ -350,7 +350,7 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
 
         vm.mockCallRevert(
             address(oracle),
-            abi.encodeWithSelector(MockOracle.getPriceWithCircuitBreaker.selector, address(shieldedToken)),
+            abi.encodeWithSelector(MockOracle.getPrice.selector, address(shieldedToken)),
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(shieldedToken))
         );
 

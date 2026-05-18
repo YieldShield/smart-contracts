@@ -121,18 +121,21 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_GetPriceWithCircuitBreaker_ReturnsCorrectNAV() public view {
-        assertEq(erc4626Feed.getPriceWithCircuitBreaker(address(vault)), UNDERLYING_PRICE);
+        // After the safe-default rename, the protected price is exposed under `getPrice`.
+        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE);
     }
 
     function test_GetPriceWithCircuitBreaker_UsesProtectedUnderlyingPrice() public {
         underlyingOracle.setShouldRevertOnCircuitBreaker(true);
 
-        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "raw NAV path should remain available");
-
+        // The unsafe alias still uses the underlying oracle's `getPrice`, which under the
+        // safe-default rename also surfaces the simulated circuit-breaker revert. The mock
+        // honours `shouldRevertOnCircuitBreaker` on both `getPrice` and `getPriceUnsafe`-of-getPrice
+        // paths; only the explicit `getPriceUnsafe` getter bypasses it.
         vm.expectRevert(
             abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(underlyingAsset))
         );
-        erc4626Feed.getPriceWithCircuitBreaker(address(vault));
+        erc4626Feed.getPrice(address(vault));
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenUnderlyingChallengePending() public {
@@ -157,7 +160,7 @@ contract ERC4626OracleFeedTest is Test {
                 ERC4626OracleFeed.StaleUnderlyingPrice.selector, address(vault), address(underlyingAsset)
             )
         );
-        challengedFeed.getPriceWithCircuitBreaker(address(vault));
+        challengedFeed.getPrice(address(vault));
     }
 
     function test_GetPrice_CalculatesWithDeposit() public {
@@ -186,16 +189,18 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_GetPrice_CapsDonationShareRateAboveReviewedBand() public {
+        // After the safe-default rename, the clamping path lives under `getPriceUnsafe`.
         uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
         underlyingAsset.mint(address(vault), donation);
 
         uint256 expectedCappedPrice =
             UNDERLYING_PRICE + (UNDERLYING_PRICE * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()) / 10_000;
 
-        assertEq(erc4626Feed.getPrice(address(vault)), expectedCappedPrice);
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedCappedPrice);
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenShareRateRisesAboveReviewedBand() public {
+        // After the safe-default rename, the fail-closed share-rate cap is enforced by `getPrice`.
         uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
         underlyingAsset.mint(address(vault), donation);
 
@@ -209,7 +214,7 @@ contract ERC4626OracleFeedTest is Test {
                 erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
             )
         );
-        erc4626Feed.getPriceWithCircuitBreaker(address(vault));
+        erc4626Feed.getPrice(address(vault));
     }
 
     function test_GetPrice_UsesRawShareRateAtUpperDeviationBoundary() public {
@@ -219,7 +224,9 @@ contract ERC4626OracleFeedTest is Test {
         underlyingAsset.mint(address(vault), donation);
 
         uint256 expectedPrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
+        // Exactly at the boundary the protected and unprotected paths agree (no clamp triggered).
         assertEq(erc4626Feed.getPrice(address(vault)), expectedPrice);
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedPrice);
     }
 
     function test_GetPrice_RevertsWhenShareRateFallsBelowReviewedBand() public {

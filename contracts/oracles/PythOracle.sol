@@ -217,39 +217,61 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         emit MaxConfidenceBpsUpdated(oldConfidenceBps, _maxConfidenceBps);
     }
 
-    /// @notice Get the price for a token in USD (8 decimals)
+    /// @notice Get the protected (circuit-breaker validated) price for a token
+    /// @dev Compares spot price to EMA and reverts if deviation exceeds threshold.
+    ///      Production callers must use this entry point; raw spot-only pricing is
+    ///      available via `getPriceUnsafe`.
     /// @param token The token address
     /// @return price The price in USD with 8 decimals
-    /// @dev Reverts if token is not supported or price is stale
     function getPrice(address token) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
+        return _getPriceWithCircuitBreaker(token);
+    }
+
+    /// @notice Get the raw spot price without spot/EMA deviation validation
+    /// @dev Reserved for read-only callers; production write paths must use `getPrice`.
+    /// @param token The token address
+    /// @return price The price in USD with 8 decimals
+    function getPriceUnsafe(address token) external view override returns (uint256) {
         return _getPythPrice(token, false);
     }
 
-    /// @notice Calculate the value of an amount of tokens in USD (8 decimals)
-    /// @param token The token address
-    /// @param amount The amount of tokens in the token's native ERC20 units
-    /// @return value The value in USD with 8 decimals
-    /// @dev Reverts if token is not supported or price is stale
+    /// @notice Calculate the protected USD value of an amount of tokens
+    /// @dev Uses the same circuit-breaker-validated price as `getPrice`.
     function getValue(address token, uint256 amount) external view override returns (uint256) {
-        return _getValueForPrice(token, amount, this.getPrice(token));
+        return _getValueForPrice(token, amount, _getPriceWithCircuitBreaker(token));
+    }
+
+    /// @notice Unprotected USD value getter (bypasses spot/EMA circuit-breaker check)
+    function getValueUnsafe(address token, uint256 amount) external view override returns (uint256) {
+        return _getValueForPrice(token, amount, _getPythPrice(token, false));
     }
 
     /// @notice Calculate how many tokenB are needed to match the value of tokenA amount
-    /// @param tokenA The first token address
-    /// @param amountA The amount of tokenA in tokenA's native ERC20 units
-    /// @param tokenB The second token address
-    /// @return amountB The amount of tokenB in tokenB's native ERC20 units
-    /// @dev Reverts if either token is not supported or prices are stale
+    /// @dev Uses the circuit-breaker-validated prices for both tokens (safe default).
     function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB)
         external
         view
         override
         returns (uint256)
     {
-        uint256 priceA = this.getPrice(tokenA);
-        uint256 priceB = this.getPrice(tokenB);
+        uint256 priceA = _getPriceWithCircuitBreaker(tokenA);
+        uint256 priceB = _getPriceWithCircuitBreaker(tokenB);
 
-        // Prevent division by zero
+        if (priceB == 0) revert InvalidPrice(tokenB, priceB);
+
+        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
+    }
+
+    /// @notice Unprotected equivalent-amount calculator (bypasses spot/EMA circuit-breaker check)
+    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint256 priceA = _getPythPrice(tokenA, false);
+        uint256 priceB = _getPythPrice(tokenB, false);
+
         if (priceB == 0) revert InvalidPrice(tokenB, priceB);
 
         return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
@@ -377,13 +399,10 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return OracleValidationLib.calculateDeviation(spotPrice, emaPrice);
     }
 
-    /// @notice Get price with circuit breaker protection
-    /// @dev Compares spot price to EMA and reverts if deviation exceeds threshold
-    ///      This prevents oracle manipulation attacks by detecting sudden price swings.
-    ///      Used in SplitRiskPool.shieldedWithdraw() for cross-asset withdrawals.
-    /// @param token The token address
-    /// @return price The spot price in USD with 8 decimals (if within deviation threshold)
-    function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
+    /// @dev Internal helper backing `getPrice` / `getValue` / `getEquivalentAmount`.
+    ///      Compares spot price to EMA and reverts if deviation exceeds the configured
+    ///      threshold, providing defence against oracle manipulation attacks.
+    function _getPriceWithCircuitBreaker(address token) internal view returns (uint256) {
         uint256 spotPrice = _getPythPrice(token, false);
         uint256 emaPrice = _getPythPrice(token, true);
 
@@ -396,29 +415,6 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         }
 
         return spotPrice;
-    }
-
-    /// @notice Calculate equivalent amount with circuit breaker protection
-    /// @dev Uses circuit breaker protected prices for both tokens
-    ///      Prevents manipulation during deposit collateral calculations.
-    ///      Used in SplitRiskPool.depositShieldedAsset() for collateral requirement.
-    /// @param tokenA The first token address
-    /// @param amountA The amount of tokenA in tokenA's native ERC20 units
-    /// @param tokenB The second token address
-    /// @return amountB The amount of tokenB in tokenB's native ERC20 units
-    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
-        external
-        view
-        override
-        returns (uint256)
-    {
-        uint256 priceA = this.getPriceWithCircuitBreaker(tokenA);
-        uint256 priceB = this.getPriceWithCircuitBreaker(tokenB);
-
-        // Prevent division by zero
-        if (priceB == 0) revert InvalidPrice(tokenB, priceB);
-
-        return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
     }
 
     // ============ Graceful Degradation (R3 Implementation) ============

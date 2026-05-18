@@ -81,15 +81,18 @@ contract ChainlinkL2SequencerTest is Test {
     }
 
     function test_GetPriceWithCircuitBreaker_UsesChainlinkValidation() public view {
-        uint256 price = chainlinkFeed.getPriceWithCircuitBreaker(testToken);
+        // After the safe-default rename, the protected price is exposed under `getPrice`.
+        uint256 price = chainlinkFeed.getPrice(testToken);
         assertEq(price, uint256(ETH_PRICE));
+        // The unsafe alias still returns the same value (Chainlink has no separate raw path).
+        assertEq(chainlinkFeed.getPriceUnsafe(testToken), uint256(ETH_PRICE));
     }
 
     function test_CompositeOracleUsesChainlinkCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(testToken, address(chainlinkFeed));
 
-        assertEq(compositeOracle.getPriceWithCircuitBreaker(testToken), uint256(ETH_PRICE));
+        assertEq(compositeOracle.getPrice(testToken), uint256(ETH_PRICE));
     }
 
     function test_GetSequencerStatus_NoFeedConfigured() public view {

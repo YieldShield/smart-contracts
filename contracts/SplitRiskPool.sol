@@ -316,13 +316,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        price = IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(BACKING_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
     /// @dev Returns the current shielded-token price using the strongest available protection.
     function _getShieldedPrice() internal view returns (uint256 price) {
-        price = IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(SHIELDED_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
@@ -359,14 +359,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
+    ///      Intentionally uses the unprotected getter — view paths must opt into the raw
+    ///      active-feed value because the safe `getPrice` would otherwise revert during a
+    ///      dual-feed challenge window or fully halt view callers when the protected path
+    ///      is temporarily unavailable.
     function _getShieldedSpotPrice() internal view returns (uint256 price) {
-        price = IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN);
+        price = IPriceOracle(poolConfig.priceOracle).getPriceUnsafe(SHIELDED_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
-        try IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(SHIELDED_TOKEN) returns (
+        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (
             uint256 protectedPrice
         ) {
             if (protectedPrice == 0) return (false, 0);
@@ -410,7 +414,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        try IPriceOracle(poolConfig.priceOracle).getPriceWithCircuitBreaker(BACKING_TOKEN) returns (
+        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (
             uint256 protectedPrice
         ) {
             if (protectedPrice == 0) return (false, 0);

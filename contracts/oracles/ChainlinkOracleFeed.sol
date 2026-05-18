@@ -235,13 +235,19 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     /// @inheritdoc IOracleFeed
+    /// @dev Chainlink protection is provided by stale-round, answered-in-round, and optional
+    ///      sequencer checks built into `_getPrice`. There is no separate "unsafe" computation
+    ///      path; `getPriceUnsafe` is exposed as an alias so consumers can probe whether the
+    ///      feed advertises the safe/unsafe split.
     function getPrice(address token) external view override returns (uint256) {
         return _getPrice(token);
     }
 
-    /// @notice Get the price through the protected-price selector used by CompositeOracle strict validation.
-    /// @dev Chainlink protection is provided by stale-round, answered-in-round, and optional sequencer checks.
-    function getPriceWithCircuitBreaker(address token) external view returns (uint256) {
+    /// @notice Unprotected price getter exposed as an alias so consumers (e.g. CompositeOracle)
+    ///         can detect that this feed advertises a circuit-breaker discipline.
+    /// @dev Chainlink has no distinct unprotected path; this function returns the same
+    ///      stale-round + sequencer validated price as `getPrice`.
+    function getPriceUnsafe(address token) external view returns (uint256) {
         return _getPrice(token);
     }
 

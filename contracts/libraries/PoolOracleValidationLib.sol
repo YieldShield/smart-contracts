@@ -8,10 +8,13 @@ import { ErrorsLib } from "./ErrorsLib.sol";
 /// @title PoolOracleValidationLib
 /// @author David Hawig
 /// @notice Shared validation logic for price oracles used by SplitRiskPool instances
-/// @dev Pools rely on two distinct oracle paths:
-///      - shielded asset accounting uses getPriceWithCircuitBreaker(shieldedToken)
-///      - backing asset protection uses getPriceWithCircuitBreaker(backingToken)
-///      A configured oracle must satisfy both before it can be used by a pool.
+/// @dev After the safe-default rename, `getPrice` is the circuit-breaker-validated price
+///      on every oracle. Pools rely on two distinct oracle paths:
+///      - shielded asset accounting uses getPrice(shieldedToken)
+///      - backing asset protection uses getPrice(backingToken)
+///      A configured oracle (or sub-feed of a CompositeOracle) must publish the safe/unsafe
+///      split — marked by exposing `getPriceUnsafe(address)` — and answer both safe getters
+///      with a non-zero price before it can be used by a pool.
 library PoolOracleValidationLib {
     /// @notice Validate that an oracle supports the pool's required pricing paths
     /// @param oracle The oracle address to validate
@@ -26,7 +29,8 @@ library PoolOracleValidationLib {
     ) internal view {
         if (oracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
 
-        _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (shieldedToken)));
+        _validateProtectedPriceSelector(oracle, shieldedToken);
+        _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPrice, (shieldedToken)));
         validateBackingTokenOracle(oracle, backingToken, requiresStrictProtectedPrice);
     }
 
@@ -48,12 +52,42 @@ library PoolOracleValidationLib {
                 return;
             }
 
-            // Oracle does not expose the strict entrypoint. Fall back to the generic circuit-breaker API,
-            // which is the strongest guarantee available on non-composite implementations.
+            // Oracle does not expose the strict entrypoint. Fall back to the generic
+            // safe-default price API, which is the strongest guarantee available on
+            // non-composite implementations.
             if (strictData.length != 0) revert ErrorsLib.InvalidAssetAddress();
         }
 
-        _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken)));
+        _validateProtectedPriceSelector(oracle, backingToken);
+        _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
+
+        // For wrapping composite oracles, also require that the configured primary feed
+        // advertises the safe/unsafe split: otherwise a pool would silently rely on a
+        // feed (e.g. PythEMA-only, ad-hoc fallback) that has no circuit-breaker discipline.
+        _validateCompositeFeedsAdvertiseProtectedSelector(oracle, backingToken);
+    }
+
+    /// @dev Walks the CompositeOracle's configured primary/backup feeds for a token and
+    ///      requires each to expose `getPriceUnsafe(address)`. No-op for oracles that do
+    ///      not implement the CompositeOracle interface (the top-level selector check is
+    ///      sufficient in that case).
+    function _validateCompositeFeedsAdvertiseProtectedSelector(address oracle, address token) private view {
+        (bool statusSuccess, bytes memory statusData) =
+            oracle.staticcall(abi.encodeCall(ICompositeOracle.getTokenDualFeedStatus, (token)));
+
+        if (!statusSuccess || statusData.length < 192) {
+            return;
+        }
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            abi.decode(statusData, (bool, address, address, bool, bool, uint256));
+
+        if (primaryFeed != address(0)) {
+            _validateProtectedPriceSelector(primaryFeed, token);
+        }
+        if (isDualFeed && backupFeed != address(0)) {
+            _validateProtectedPriceSelector(backupFeed, token);
+        }
     }
 
     /// @dev CompositeOracle strict pricing reads the active feed. For strict backing assets,
@@ -71,15 +105,13 @@ library PoolOracleValidationLib {
             abi.decode(statusData, (bool, address, address, bool, bool, uint256));
 
         if (primaryFeed != address(0)) {
-            _validateNonZeroOracleResponse(
-                primaryFeed, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken))
-            );
+            _validateProtectedPriceSelector(primaryFeed, backingToken);
+            _validateNonZeroOracleResponse(primaryFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
 
         if (isDualFeed && backupFeed != address(0)) {
-            _validateNonZeroOracleResponse(
-                backupFeed, abi.encodeCall(IPriceOracle.getPriceWithCircuitBreaker, (backingToken))
-            );
+            _validateProtectedPriceSelector(backupFeed, backingToken);
+            _validateNonZeroOracleResponse(backupFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
     }
 
@@ -89,6 +121,21 @@ library PoolOracleValidationLib {
         if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
 
         _validateDecodedPrice(data);
+    }
+
+    /// @dev Confirms the oracle advertises the safe/unsafe split (i.e. exposes the
+    ///      `getPriceUnsafe(address)` selector). Before the safe-default rename this
+    ///      enforcement was implicit in the `getPriceWithCircuitBreaker` probe; preserve
+    ///      it here so pool creation continues to reject oracles or feeds that lack a
+    ///      circuit-breaker discipline (PythEMA-only feeds, ad-hoc price-only mocks).
+    function _validateProtectedPriceSelector(address oracle, address token) private view {
+        if (oracle.code.length == 0) revert ErrorsLib.InvalidAssetAddress();
+
+        (bool success, bytes memory data) =
+            oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
+
+        if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
+        if (abi.decode(data, (uint256)) == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
     function _validateDecodedPrice(bytes memory data) private pure {
