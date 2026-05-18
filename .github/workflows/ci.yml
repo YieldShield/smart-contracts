@@ -109,6 +109,10 @@ jobs:
     name: Slither security analysis
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # I-3: keep continue-on-error so the artifact/SARIF upload still runs
+    # when slither itself errors out, but the dedicated "gate on
+    # high-severity findings" step below is NOT in continue-on-error and
+    # blocks the PR when slither flags a new high.
     continue-on-error: true
     permissions:
       actions: read
@@ -180,6 +184,17 @@ jobs:
             slither-results.sarif
           if-no-files-found: warn
           retention-days: 30
+
+      # I-3: gate the job on slither high-severity findings even though the
+      # outer job is continue-on-error. This step exits non-zero when slither
+      # detects any high-severity issue, so a new high blocks the PR while
+      # transient slither tooling failures still allow merges.
+      - name: Fail on Slither high-severity findings
+        run: |
+          slither . \
+            --foundry-out-directory out \
+            --config-file slither.config.json \
+            --fail-high
 
   aderyn:
     name: Aderyn security report
