@@ -207,6 +207,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         (shieldedTokenDecimals, shieldedTokenScale) = _getTokenMetadata(_shieldedTokenInfo.token);
         (backingTokenDecimals, backingTokenScale) = _getTokenMetadata(_backingTokenInfo.token);
 
+        // H-5: snapshot the factory's strict-protected-backing-price policy at
+        // initialize so a future factory regression cannot silently downgrade
+        // strict-mode pricing for this pool.
+        {
+            (bool success, bytes memory data) = initialOwner.staticcall(
+                abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (_backingTokenInfo.token))
+            );
+            _strictProtectedBackingPriceAtInit = success && data.length >= 32 ? abi.decode(data, (bool)) : false;
+            _strictProtectedBackingPricePinned = true;
+        }
+
         poolConfig = PoolConfig({
             shieldedMinDepositAmount: _defaultMinDepositAmount(shieldedTokenScale),
             shieldedMaxDepositAmount: ConstantsLib.DEFAULT_MAX_DEPOSIT_TOKENS * shieldedTokenScale,
@@ -425,7 +436,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @inheritdoc ISplitRiskPool
+    /// @dev H-5: prefer the snapshot pinned at initialize over the runtime factory
+    ///      lookup, so a future factory regression cannot silently downgrade strict
+    ///      pricing. Legacy pools upgraded from a version before the snapshot existed
+    ///      fall back to the runtime lookup; governance can call
+    ///      refreshStrictProtectedBackingPriceFlag() to opt back into strict-mode.
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
+        if (_strictProtectedBackingPricePinned) {
+            return _strictProtectedBackingPriceAtInit;
+        }
+
         address factory = _poolFactoryController();
         if (factory == address(0) || factory.code.length == 0) {
             return false;
@@ -440,6 +460,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         return abi.decode(data, (bool));
+    }
+
+    /// @notice Re-snapshot the strict-protected-backing-price flag from the factory.
+    /// @dev Governance-only. Use when factory policy has intentionally changed and
+    ///      the pool should adopt the new value. Without this call, the pinned
+    ///      snapshot from initialize is used.
+    function refreshStrictProtectedBackingPriceFlag() external onlyGovernance {
+        address factory = _poolFactoryController();
+        bool newValue = false;
+        if (factory != address(0) && factory.code.length != 0) {
+            (bool success, bytes memory data) = factory.staticcall(
+                abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
+            );
+            if (success && data.length >= 32) {
+                newValue = abi.decode(data, (bool));
+            }
+        }
+        _strictProtectedBackingPriceAtInit = newValue;
+        _strictProtectedBackingPricePinned = true;
+        emit EventsLib.ParameterUpdated("strictProtectedBackingPrice", newValue ? 1 : 0);
     }
 
     /// @dev Resolves whether backing-token pricing must use the strict protected-price path.
@@ -2230,5 +2270,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice Factory pinned at initialization for shared policy lookups and shutdown hooks
     /// @dev Legacy pools upgraded from older versions read this as zero and fall back to owner().
     address public POOL_FACTORY;
-    uint256[33] private __gap;
+    /// @notice H-5: strict-protected-backing-price requirement, pinned at initialize.
+    /// @dev Snapshotted from the factory's tokenRequiresStrictProtectedPrice(BACKING_TOKEN)
+    ///      at deploy time. A future factory upgrade or storage-layout regression cannot
+    ///      silently downgrade strict pricing for live pools. Governance can refresh via
+    ///      `refreshStrictProtectedBackingPriceFlag()`.
+    bool internal _strictProtectedBackingPriceAtInit;
+    /// @notice One-bit tracker so legacy upgraded pools fall back to the runtime lookup
+    ///         until governance explicitly snapshots a value via the refresh function.
+    bool internal _strictProtectedBackingPricePinned;
+    uint256[31] private __gap;
 }
