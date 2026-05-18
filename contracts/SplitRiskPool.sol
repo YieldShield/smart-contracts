@@ -961,25 +961,30 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 _scaleFeesToAvailableAmount(commissionAmount, poolFeeAmount, protocolFeeAmount, pos.amount);
         }
 
-        // Prevent unbounded fee accumulation
+        // Prevent unbounded fee accumulation. If any fee bucket cannot fit the
+        // increment, revert rather than silently zeroing the amount: zeroing
+        // would let the position retain the yield AND advance the baseline
+        // past it, permanently forgiving that fee. Reverting forces the
+        // operator to drain the bucket via payPoolFee/payProtocolFee before
+        // yield accrual continues — matching the cross-asset path's
+        // RewardAccumulationIncomplete invariant. (H-6)
         uint256 maxSafeAccumulation = ConstantsLib.MAX_SAFE_ACCUMULATION;
 
-        // Accumulate pool fee in native shielded token units.
         if (accumulatedPoolFee + poolFeeAmount > maxSafeAccumulation) {
-            emit EventsLib.FeeDropped("poolFee", poolFeeAmount, accumulatedPoolFee);
-            poolFeeAmount = 0;
+            revert ErrorsLib.RewardAccumulationIncomplete(poolFeeAmount, accumulatedPoolFee, 0);
         }
         accumulatedPoolFee += poolFeeAmount;
 
-        // Accumulate protocol fee in native shielded token units.
         if (accumulatedProtocolFee + protocolFeeAmount > maxSafeAccumulation) {
-            emit EventsLib.FeeDropped("protocolFee", protocolFeeAmount, accumulatedProtocolFee);
-            protocolFeeAmount = 0;
+            revert ErrorsLib.RewardAccumulationIncomplete(protocolFeeAmount, accumulatedProtocolFee, 0);
         }
         accumulatedProtocolFee += protocolFeeAmount;
 
         // Accumulate commissions in native shielded token units via rewards-per-share.
         // If no effective protector capital exists, redirect commissions to protocol fee.
+        // _accumulateProtectorReward applies its own cap checks internally and returns
+        // the actual accumulated amount + redirected portion. (Internal caps still
+        // silently truncate today; tracked separately — see SplitRiskPool TODO.)
         uint256 redirectedCommission;
         (commissionAmount, redirectedCommission) = _accumulateProtectorReward(commissionAmount, maxSafeAccumulation);
         protocolFeeAmount += redirectedCommission;
