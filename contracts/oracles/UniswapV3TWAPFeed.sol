@@ -180,8 +180,12 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     }
 
     /// @notice Set the minimum harmonic-average liquidity required across the TWAP window
-    /// @dev Setting this to zero disables the liquidity floor, which should only be used for testing or emergencies.
+    /// @dev L-1: zero is rejected because it silently disables manipulation
+    ///      protection for every Uniswap-priced asset. Use a separate explicit
+    ///      `emergencyDisableLiquidityFloor` (not implemented here) if a real
+    ///      emergency requires it; otherwise pick a non-zero floor.
     function setMinimumAverageLiquidity(uint128 newMinimum) external onlyOwner {
+        if (newMinimum == 0) revert InvalidPool(address(0));
         uint128 oldMinimum = minimumAverageLiquidity;
         minimumAverageLiquidity = newMinimum;
         emit MinimumAverageLiquidityUpdated(oldMinimum, newMinimum);
