@@ -64,6 +64,9 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
 
+        // L-4: removal is timelocked. Schedule + wait + execute.
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(tokenA));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
         compositeOracle.removeTokenOracleFeed(address(tokenA));
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenA)));
@@ -1096,6 +1099,10 @@ contract CompositeOracleDualFeedTest is Test {
     function test_RemoveFeed_EmitsChallengeCancelledIfPending() public {
         _initiateChallenge();
 
+        // L-4: removal is timelocked. Schedule + wait.
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(token));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit ChallengeCancelled(address(token), "Token oracle feed removed");
 
@@ -1105,6 +1112,9 @@ contract CompositeOracleDualFeedTest is Test {
     function test_RemoveFeed_EmitsOracleSwitchedIfBackupActive() public {
         _challengeAndFinalize();
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
+
+        compositeOracle.scheduleRemoveTokenOracleFeed(address(token));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
 
         vm.expectEmit(true, false, false, true);
         emit OracleSwitched(address(token), false);

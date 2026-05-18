@@ -307,9 +307,42 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         emit StrictCircuitBreakerRequirementUpdated(token, previousRequirement, required);
     }
 
+    /// @notice L-4: removal of a token oracle feed is timelocked. Schedule
+    ///         the removal via scheduleRemoveTokenOracleFeed, wait
+    ///         FEED_REMOVAL_DELAY, then call removeTokenOracleFeed. Users
+    ///         and dependent pools have the window to migrate or unwind.
+    uint256 public constant FEED_REMOVAL_DELAY = 1 days;
+
+    mapping(address => uint256) public scheduledRemovalTime;
+
+    event TokenOracleFeedRemovalScheduled(address indexed token, uint256 executableAt);
+    event TokenOracleFeedRemovalCancelled(address indexed token);
+
+    error TokenOracleFeedRemovalNotScheduled(address token);
+    error TokenOracleFeedRemovalTooEarly(address token, uint256 executableAt);
+
+    function scheduleRemoveTokenOracleFeed(address token) external onlyAuthorized {
+        if (!_isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = block.timestamp + FEED_REMOVAL_DELAY;
+        scheduledRemovalTime[token] = executableAt;
+        emit TokenOracleFeedRemovalScheduled(token, executableAt);
+    }
+
+    function cancelScheduledRemoveTokenOracleFeed(address token) external onlyAuthorized {
+        if (scheduledRemovalTime[token] == 0) revert TokenOracleFeedRemovalNotScheduled(token);
+        delete scheduledRemovalTime[token];
+        emit TokenOracleFeedRemovalCancelled(token);
+    }
+
     /// @inheritdoc ICompositeOracle
+    /// @dev L-4: timelocked. Requires a prior scheduleRemoveTokenOracleFeed
+    ///      call at least FEED_REMOVAL_DELAY ago.
     function removeTokenOracleFeed(address token) external onlyAuthorized {
         if (!_isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = scheduledRemovalTime[token];
+        if (executableAt == 0) revert TokenOracleFeedRemovalNotScheduled(token);
+        if (block.timestamp < executableAt) revert TokenOracleFeedRemovalTooEarly(token, executableAt);
+        delete scheduledRemovalTime[token];
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
 
