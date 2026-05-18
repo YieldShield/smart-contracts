@@ -136,6 +136,18 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function testCreatePoolRevertsWhenCompositeShieldedFeedLacksCircuitBreaker() public {
+        MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
+        noCircuitBreakerFeed.setPrice(address(shieldedToken), 1e8);
+        _replaceShieldedTokenFeed(address(noCircuitBreakerFeed));
+
+        _approveCreationBond();
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.createPool(
+            address(shieldedToken), "SHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
+        );
+    }
+
     function testCreatePoolRevertsWhenShieldedFeedIsPythEmaOnly() public {
         MockPyth mockPyth = new MockPyth(60, 1e15);
         PythEMAOracleFeed emaFeed = new PythEMAOracleFeed(address(mockPyth), 60);

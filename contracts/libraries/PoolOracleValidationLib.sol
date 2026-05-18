@@ -31,6 +31,7 @@ library PoolOracleValidationLib {
 
         _validateProtectedPriceSelector(oracle, shieldedToken);
         _validateNonZeroOracleResponse(oracle, abi.encodeCall(IPriceOracle.getPrice, (shieldedToken)));
+        _validateCompositeFeedsAdvertiseProtectedSelector(oracle, shieldedToken);
         validateBackingTokenOracle(oracle, backingToken, requiresStrictProtectedPrice);
     }
 
