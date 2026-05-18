@@ -1543,8 +1543,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // requiredCollateralUsd, so under-counting would weaken the
         // collateral safety check.
         uint256 newCollateralAmount = Math.mulDiv(pos.collateralAmount, remaining, amountAfterFees);
-        uint256 newValueAtDeposit =
-            Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
+        uint256 newValueAtDeposit = Math.mulDiv(pos.valueAtDeposit, remaining, amountAfterFees, Math.Rounding.Ceil);
 
         // === CEI: state updates first ===
         // _safeMint via mintWithDepositTime calls onERC721Received on contract
