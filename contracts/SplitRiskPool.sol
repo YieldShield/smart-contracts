@@ -1079,9 +1079,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Reduce pool's shielded token balance by the fees paid out
         poolState.shieldedTokenBalance -= feeAmount;
 
-        // Transfer the fee
-        SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), recipient, feeAmount);
-        return feeAmount;
+        return _transferOutAndGetReceived(SHIELDED_TOKEN, recipient, feeAmount);
     }
 
     /**
@@ -1104,8 +1102,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // POOL_CREATOR sets one; fall back to POOL_CREATOR in that case so
         // behavior is unchanged for old proxies.
         address recipient = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
-        if (_payAccumulatedFee(amount, recipient) > 0) {
-            emit EventsLib.PoolFeePaid(recipient, amount);
+        uint256 paidAmount = _payAccumulatedFee(amount, recipient);
+        if (paidAmount > 0) {
+            emit EventsLib.PoolFeePaid(recipient, paidAmount);
         }
     }
 
@@ -1141,8 +1140,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 amount = accumulatedProtocolFee;
         accumulatedProtocolFee = 0;
 
-        if (_payAccumulatedFee(amount, poolConfig.protocolFeeRecipient) > 0) {
-            emit EventsLib.ProtocolFeePaid(poolConfig.protocolFeeRecipient, amount);
+        uint256 paidAmount = _payAccumulatedFee(amount, poolConfig.protocolFeeRecipient);
+        if (paidAmount > 0) {
+            emit EventsLib.ProtocolFeePaid(poolConfig.protocolFeeRecipient, paidAmount);
         }
     }
 
@@ -1226,12 +1226,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         poolState.shieldedTokenBalance -= claimable;
-        SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), recipient, claimable);
+        uint256 received = _transferOutAndGetReceived(SHIELDED_TOKEN, recipient, claimable);
         if (isExpiredEpoch && tracksExpiredEpoch) {
             _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
         }
 
-        emit EventsLib.CommissionClaimed(recipient, tokenId, claimable);
+        emit EventsLib.CommissionClaimed(recipient, tokenId, received);
     }
 
     /**

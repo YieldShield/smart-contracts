@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { EventsLib } from "../contracts/libraries/EventsLib.sol";
 import { SlippageLib } from "../contracts/libraries/SlippageLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -99,6 +100,14 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         pool.startUnlockProcess(tokenId);
         vm.stopPrank();
         vm.warp(block.timestamp + 28 days + 1);
+    }
+
+    function _accrueShieldedYieldFees() internal {
+        uint256 tokenId = _depositShielded(100e18);
+        oracle.setPrice(address(shieldedToken), 2e8);
+
+        vm.prank(shieldedUser);
+        pool.claimRewards(tokenId);
     }
 
     function test_shieldedWithdraw_UsesActualReceivedForSlippageWithTransferFee() public {
@@ -199,5 +208,58 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             expectedReceived,
             "protector withdrawal should enforce actual wallet receipt"
         );
+    }
+
+    function test_payPoolFee_EmitsAndPaysActualReceivedWithTransferFee() public {
+        address poolFeeRecipient = address(0xFEE);
+        pool.setPoolFeeRecipient(poolFeeRecipient);
+        _accrueShieldedYieldFees();
+
+        uint256 nominalFee = pool.accumulatedPoolFee();
+        uint256 expectedReceived = (nominalFee * 9500) / 10000;
+        shieldedToken.setTransferFee(500);
+
+        uint256 beforeBalance = shieldedToken.balanceOf(poolFeeRecipient);
+        vm.expectEmit(true, false, false, true);
+        emit EventsLib.PoolFeePaid(poolFeeRecipient, expectedReceived);
+        pool.payPoolFee();
+
+        assertEq(shieldedToken.balanceOf(poolFeeRecipient) - beforeBalance, expectedReceived);
+        assertEq(pool.accumulatedPoolFee(), 0);
+    }
+
+    function test_payProtocolFee_EmitsAndPaysActualReceivedWithTransferFee() public {
+        address protocolRecipient = address(0xdead);
+        _accrueShieldedYieldFees();
+
+        uint256 nominalFee = pool.accumulatedProtocolFee();
+        uint256 expectedReceived = (nominalFee * 9500) / 10000;
+        shieldedToken.setTransferFee(500);
+
+        uint256 beforeBalance = shieldedToken.balanceOf(protocolRecipient);
+        vm.prank(protocolRecipient);
+        vm.expectEmit(true, false, false, true);
+        emit EventsLib.ProtocolFeePaid(protocolRecipient, expectedReceived);
+        pool.payProtocolFee();
+
+        assertEq(shieldedToken.balanceOf(protocolRecipient) - beforeBalance, expectedReceived);
+        assertEq(pool.accumulatedProtocolFee(), 0);
+    }
+
+    function test_claimCommission_EmitsAndPaysActualReceivedWithTransferFee() public {
+        _accrueShieldedYieldFees();
+
+        uint256 nominalCommission = pool.accumulatedCommissions();
+        uint256 expectedReceived = (nominalCommission * 9500) / 10000;
+        shieldedToken.setTransferFee(500);
+
+        uint256 beforeBalance = shieldedToken.balanceOf(protector);
+        vm.prank(protector);
+        vm.expectEmit(true, true, false, true);
+        emit EventsLib.CommissionClaimed(protector, 0, expectedReceived);
+        pool.claimCommission(0);
+
+        assertEq(shieldedToken.balanceOf(protector) - beforeBalance, expectedReceived);
+        assertEq(pool.accumulatedCommissions(), 0);
     }
 }
