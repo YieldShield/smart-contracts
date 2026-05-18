@@ -16,6 +16,7 @@ import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract NonReceiverDepositor {
     function depositBacking(SplitRiskPool pool, MockERC4626 token, uint256 amount) external {
@@ -295,7 +296,12 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
             IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(newTokenId);
 
         assertEq(newPosition.amount, remaining);
-        assertEq(newPosition.valueAtDeposit, (1_000e8 * remaining) / amountAfterFees);
+        // valueAtDeposit is intentionally ceil-rounded in the contract so that
+        // totalValueAtDeposit (which sizes requiredCollateralUsd) cannot drift
+        // below the true sum of per-position obligations after many partial
+        // withdrawals. collateralAmount stays floor-rounded — undercounting
+        // there is safe.
+        assertEq(newPosition.valueAtDeposit, Math.mulDiv(1_000e8, remaining, amountAfterFees, Math.Rounding.Ceil));
         assertEq(newPosition.collateralAmount, (1_500e18 * remaining) / amountAfterFees);
     }
 
