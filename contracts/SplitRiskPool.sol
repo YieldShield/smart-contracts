@@ -2225,17 +2225,33 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _validateAccessControl(address newAccessControl) internal view {
+        // L-15: probe each hook with two distinct addresses (zero + a known
+        // non-zero) so a malicious ACL that returns true for address(0) but
+        // reverts for every real caller can't pass validation.
+        address probe = address(this);
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (address(0)))
+        );
+        _validateAccessControlHook(
+            newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositShielded, (probe))
         );
         _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (address(0)))
         );
         _validateAccessControlHook(
+            newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawShielded, (probe))
+        );
+        _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (address(0)))
         );
         _validateAccessControlHook(
+            newAccessControl, abi.encodeCall(IPoolAccessControl.canDepositProtector, (probe))
+        );
+        _validateAccessControlHook(
             newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (address(0)))
+        );
+        _validateAccessControlHook(
+            newAccessControl, abi.encodeCall(IPoolAccessControl.canWithdrawProtector, (probe))
         );
     }
 
