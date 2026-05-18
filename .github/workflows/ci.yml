@@ -48,6 +48,9 @@ jobs:
       - name: Build contracts
         run: forge build
 
+      - name: Check storage layout snapshots (I-2)
+        run: bash scripts-js/check-storage-layout.sh
+
       - name: Run tests
         run: forge test
 
