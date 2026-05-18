@@ -81,6 +81,14 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Emitted when quote token oracle is updated
     event QuoteTokenOracleUpdated(address indexed oldOracle, address indexed newOracle);
 
+    /// @notice Emitted with the old/new quote-token prices observed during an oracle swap (L-6)
+    event QuoteTokenOracleSwapPrices(uint256 oldPrice, uint256 newPrice, uint256 deviationBps);
+
+    /// @notice Maximum allowed deviation between old and new quote-token oracle prices at swap-time
+    uint256 public constant MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS = 1000; // 10%
+
+    error QuoteOracleSwapDeviationTooHigh(uint256 oldPrice, uint256 newPrice, uint256 deviationBps);
+
     /// @notice Emitted when minimum average liquidity is updated
     event MinimumAverageLiquidityUpdated(uint128 oldMinimum, uint128 newMinimum);
 
@@ -192,12 +200,36 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     }
 
     /// @notice Set the quote token oracle
+    /// @dev L-6: a swap to a quote oracle whose reported price diverges from
+    ///      the existing oracle's by more than MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS
+    ///      is rejected. The quote oracle multiplies every TWAP price; an
+    ///      unbounded swap with a wildly inflated quote price would
+    ///      mis-value every Uniswap-priced asset in a single tx. Emit
+    ///      old/new prices so monitoring can flag suspicious approved swaps.
     /// @param _quoteTokenOracle New quote token oracle address
     function setQuoteTokenOracle(address _quoteTokenOracle) external onlyOwner {
         if (_quoteTokenOracle == address(0)) revert("Invalid quote token oracle");
         address oldOracle = address(quoteTokenOracle);
+
+        if (oldOracle != address(0)) {
+            uint256 oldPrice = IOracleFeed(oldOracle).getPrice(quoteToken);
+            uint256 newPrice = IOracleFeed(_quoteTokenOracle).getPrice(quoteToken);
+            uint256 deviationBps = _absoluteDeviationBps(oldPrice, newPrice);
+            if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
+                revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, deviationBps);
+            }
+            emit QuoteTokenOracleSwapPrices(oldPrice, newPrice, deviationBps);
+        }
+
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
         emit QuoteTokenOracleUpdated(oldOracle, _quoteTokenOracle);
+    }
+
+    function _absoluteDeviationBps(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0 || b == 0) return type(uint256).max;
+        uint256 diff = a > b ? a - b : b - a;
+        uint256 anchor = a > b ? b : a; // smaller value as denominator → larger bps
+        return (diff * 10_000) / anchor;
     }
 
     /// @inheritdoc IOracleFeed
