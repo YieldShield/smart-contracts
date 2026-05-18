@@ -206,10 +206,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return _getValidatedPrice(vault, true);
     }
 
-    /// @notice Unprotected price getter that skips the upper-bound share-rate deviation cap
-    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Still applies
-    ///      the lower-bound share-rate floor and underlying staleness check; only the
-    ///      upper-bound deviation handling differs from `getPrice`.
+    /// @notice Unprotected price getter that skips underlying circuit-breaker gates
+    /// @dev Reserved for read-only callers (off-chain analytics, view helpers). Share-rate
+    ///      bounds still fail closed; only the underlying oracle path uses `getPriceUnsafe`.
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
     function getPriceUnsafe(address vault) external view returns (uint256) {
@@ -219,9 +218,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 
-        (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
-        if (isStale) {
-            revert StaleUnderlyingPrice(vault, config.underlying);
+        if (useCircuitBreaker) {
+            (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
+            if (isStale) {
+                revert StaleUnderlyingPrice(vault, config.underlying);
+            }
         }
 
         return _getPriceFromConfig(vault, config, useCircuitBreaker);
@@ -299,22 +300,53 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        // After the safe-default rename `getPrice` is the protected variant on every feed
-        // (including CompositeOracle, which honours the dual-feed challenge gate). The
-        // unprotected path is reserved for explicit read-only callers and is intentionally
-        // not used here even when `useCircuitBreaker == false`.
-        uint256 underlyingPrice = underlyingPriceOracle.getPrice(config.underlying);
-        uint8 priceDecimals = underlyingPriceOracle.decimals();
+        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
+        uint8 priceDecimals = _getUnderlyingPriceDecimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
+    }
+
+    function _getUnderlyingPrice(address underlying, bool useCircuitBreaker) internal view returns (uint256) {
+        if (useCircuitBreaker) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", underlying));
+
+        if (success) {
+            if (data.length >= 32) {
+                return abi.decode(data, (uint256));
+            }
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        if (data.length == 0) {
+            return underlyingPriceOracle.getPrice(underlying);
+        }
+
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
+
+    function _getUnderlyingPriceDecimals() internal view returns (uint8) {
+        (bool success, bytes memory data) =
+            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("decimals()"));
+
+        if (success && data.length >= 32) {
+            return abi.decode(data, (uint8));
+        }
+
+        return ConstantsLib.USD_DECIMALS;
     }
 
     function _boundedAssetsPerShare(
         address vault,
         uint256 assetsPerShare,
         VaultConfig memory config,
-        bool failClosedOnUpperDeviation
+        bool
     ) internal pure returns (uint256) {
         uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
         if (referenceAssetsPerShare == 0) {
