@@ -111,6 +111,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /* Rewards-per-share accumulator (MasterChef pattern) - fixes late-joiner exploit */
     uint256 public rewardPerShareAccumulated; // Accumulated rewards per share (scaled by REWARD_PRECISION)
     mapping(uint256 => uint256) public rewardDebt; // tokenId => reward debt (rewards accumulated before deposit)
+    // L-14: cooldown is keyed by tokenId, not owner. When a shield NFT is
+    // transferred, the new owner inherits the previous owner's cooldown
+    // window. This is intentional for accounting consistency (fee baselines
+    // travel with the NFT, so claim metadata should too) but means a
+    // secondary-market buyer cannot crystallise fees immediately on receipt.
+    // Resetting on transfer would require an NFT→pool callback into _update;
+    // tracked as an accepted limitation. Documented in SECURITY.md.
     mapping(uint256 => uint256) public lastClaimRewardsTime; // tokenId => last claim timestamp
 
     /* Per-position fee baselines (USD, 8 decimals) to prevent re-taxing already charged yield */

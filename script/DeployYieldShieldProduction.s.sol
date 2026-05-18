@@ -208,6 +208,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         return block.chainid == 31337 || block.chainid == 1337;
     }
 
+    /// @dev L-9: this check enforces Safe SHAPE (VERSION, nonce, domainSeparator,
+    ///      threshold ≥ 2, owners ≥ 2, no duplicates, no zero owners). It does
+    ///      NOT pin a per-chain Safe singleton codehash because Gnosis ships
+    ///      different singleton bytecode per chain version (1.3.0, 1.4.1, …)
+    ///      and per L2 variant; maintaining a baked-in table would create a
+    ///      deploy-blocking footgun on new chains. Operators who want stricter
+    ///      identity assurance should staticcall the Safe master copy
+    ///      explicitly and assert against a known-good per-chain codehash
+    ///      before invoking this deploy script.
     function _validateProductionBootstrapHolder(address holder) internal view {
         if (holder == address(0) || holder.code.length == 0) {
             revert InvalidProductionBootstrapHolder(holder);

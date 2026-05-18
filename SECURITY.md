@@ -96,6 +96,16 @@ bootstrap Safe's quorum is the trust boundary. After tokens are distributed
 broadly enough that the bootstrap holder no longer controls quorum, normal
 governance dynamics apply.
 
+### NFT secondary-market cooldown carryover
+
+The 24h `CLAIM_REWARDS_COOLDOWN` is keyed by tokenId, not owner — fee baselines
+travel with the NFT, so claim metadata follows the same rule for accounting
+consistency. A buyer who receives a position right after the seller called
+`claimRewards` cannot call it again for up to 24h. This is intentional but
+worth surfacing on any secondary-market UI: the displayed "claimable" amount
+will continue accruing, but the on-chain `lastClaimRewardsTime` for the
+tokenId persists across transfer.
+
 ### Permissionless Pyth update messages
 
 `PythOracle.updatePriceFeeds` is intentionally permissionless — Pyth itself
