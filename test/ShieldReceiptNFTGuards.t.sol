@@ -25,9 +25,7 @@ contract ShieldReceiptNFTGuardsTest is Test {
 
         uint64 future = uint64(block.timestamp + 1);
         vm.prank(pool);
-        vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.FutureTimestamp.selector, uint256(future), block.timestamp)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.FutureTimestamp.selector, uint256(future), block.timestamp));
         nft.updatePosition(tokenId, 100, 100, 100, future);
     }
 

@@ -220,7 +220,9 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         // 2. Deploy timelock (proposers & executors set after governor deploy)
         address[] memory emptyAddrs = new address[](0);
-        timelock = TimelockController(payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer))));
+        timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer)))
+        );
 
         // 3. Deploy governor
         governor = new YSGovernor(IVotes(address(ysToken)), timelock);
@@ -315,8 +317,9 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController replacementTimelock =
-            TimelockController(payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer))));
+        TimelockController replacementTimelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAddrs, emptyAddrs, deployer)))
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, deployer)
@@ -557,7 +560,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
         address[] memory emptyAddrs = new address[](0);
-        TimelockController shortDelayTimelock = TimelockController(payable(address(new YSTimelockController(12 hours, emptyAddrs, emptyAddrs, deployer))));
+        TimelockController shortDelayTimelock =
+            TimelockController(payable(address(new YSTimelockController(12 hours, emptyAddrs, emptyAddrs, deployer))));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPoolFactory.initialize.selector, deployer, address(shortDelayTimelock), address(poolImpl)
         );
@@ -578,7 +582,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory implementation = new SplitRiskPoolFactory();
         address[] memory emptyAddrs = new address[](0);
-        TimelockController unsafeTimelock = TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
+        TimelockController unsafeTimelock =
+            TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPoolFactory.initialize.selector, deployer, address(unsafeTimelock), address(poolImpl)
         );
@@ -599,7 +604,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController zeroDelayTimelock = TimelockController(payable(address(new YSTimelockController(0, emptyAddrs, emptyAddrs, deployer))));
+        TimelockController zeroDelayTimelock =
+            TimelockController(payable(address(new YSTimelockController(0, emptyAddrs, emptyAddrs, deployer))));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -616,7 +622,8 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImpl = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
-        TimelockController unsafeTimelock = TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
+        TimelockController unsafeTimelock =
+            TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
         unsafeTimelock.grantRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), address(timelock));
         unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
 

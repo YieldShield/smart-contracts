@@ -107,8 +107,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
 
     /// @notice Test that the unsafe equivalent-amount getter agrees with the safe one for healthy feeds
     function test_getEquivalentAmountUnsafe_ValidPrices_Succeeds() public view {
-        uint256 equivalentAmount =
-            compositeOracle.getEquivalentAmountUnsafe(address(tokenA), 10e18, address(tokenB));
+        uint256 equivalentAmount = compositeOracle.getEquivalentAmountUnsafe(address(tokenA), 10e18, address(tokenB));
         assertEq(equivalentAmount, 5e18, "Should return correct equivalent amount");
     }
 

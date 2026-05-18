@@ -381,9 +381,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
-        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {
@@ -425,9 +423,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
         }
 
-        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (
-            uint256 protectedPrice
-        ) {
+        try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (uint256 protectedPrice) {
             if (protectedPrice == 0) return (false, 0);
             return (true, protectedPrice);
         } catch {

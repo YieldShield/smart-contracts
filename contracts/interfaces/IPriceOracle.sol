@@ -65,8 +65,5 @@ interface IPriceOracle {
      * @param tokenB The second token address
      * @return amountB The amount of tokenB in tokenB's native ERC20 units
      */
-    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB)
-        external
-        view
-        returns (uint256);
+    function getEquivalentAmountUnsafe(address tokenA, uint256 amountA, address tokenB) external view returns (uint256);
 }

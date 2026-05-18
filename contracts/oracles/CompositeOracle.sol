@@ -741,17 +741,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     ///      Returns (false, 0) when the feed does not implement it. Reverts that the
     ///      feed surfaces from a present selector are bubbled so callers do not silently
     ///      receive a stale or zero value.
-    function _tryGetUnsafePrice(address feed, address token)
-        internal
-        view
-        returns (bool supported, uint256 price)
-    {
+    function _tryGetUnsafePrice(address feed, address token) internal view returns (bool supported, uint256 price) {
         if (feed.code.length == 0) {
             return (false, 0);
         }
 
-        (bool success, bytes memory data) =
-            feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
+        (bool success, bytes memory data) = feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
         if (success) {
             if (data.length < 32) {
@@ -995,8 +990,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // Probe the protected getter (the safe-default `getPrice`) to ensure it is currently
         // usable. A feed whose protected path reverts is rejected just like before the
         // safe-default rename, when this helper probed `getPriceWithCircuitBreaker` directly.
-        (bool safeSuccess, bytes memory safeData) =
-            feed.staticcall(abi.encodeWithSignature("getPrice(address)", token));
+        (bool safeSuccess, bytes memory safeData) = feed.staticcall(abi.encodeWithSignature("getPrice(address)", token));
 
         if (!safeSuccess || safeData.length < 32) {
             return false;

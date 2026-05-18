@@ -52,7 +52,7 @@ contract ChainlinkVenusBoundsTest is Test {
     ChainlinkOracleFeed internal feed;
     address internal token = address(0xABCD);
 
-    int192 internal constant MIN_BOUND = 0.10e8; // $0.10 floor
+    int192 internal constant MIN_BOUND = 0.1e8; // $0.10 floor
     int192 internal constant MAX_BOUND = 100_000e8; // $100k ceiling
 
     function setUp() public {

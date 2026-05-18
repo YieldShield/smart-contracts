@@ -9,7 +9,12 @@ abstract contract TestTimelockHelper {
     ///      only DEFAULT_ADMIN_ROLE holder is the timelock itself. This means
     ///      tests cannot reach back to grant arbitrary roles via the admin
     ///      account; use schedule/execute through the timelock instead.
-    function _deployTestTimelock(address /* admin */) internal returns (TimelockController timelock) {
+    function _deployTestTimelock(
+        address /* admin */
+    )
+        internal
+        returns (TimelockController timelock)
+    {
         address[] memory emptyAccounts = new address[](0);
         // Deploy with `address(this)` (the caller test contract) as the
         // bootstrap admin, then immediately renounce so the helper returns

@@ -342,12 +342,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return ConstantsLib.USD_DECIMALS;
     }
 
-    function _boundedAssetsPerShare(
-        address vault,
-        uint256 assetsPerShare,
-        VaultConfig memory config,
-        bool
-    ) internal pure returns (uint256) {
+    function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config, bool)
+        internal
+        pure
+        returns (uint256)
+    {
         uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
         if (referenceAssetsPerShare == 0) {
             revert SharePriceDeviationTooHigh(

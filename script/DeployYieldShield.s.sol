@@ -91,12 +91,16 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
 
-        TimelockController timelock = TimelockController(payable(address(new YSTimelockController(
-            minDelay,
-            proposers,
-            executors,
-            deployer // Bootstrap admin until governance roles are assigned
-        ))));
+        TimelockController timelock = TimelockController(
+            payable(address(
+                    new YSTimelockController(
+                        minDelay,
+                        proposers,
+                        executors,
+                        deployer // Bootstrap admin until governance roles are assigned
+                    )
+                ))
+        );
         timelockAddr = address(timelock);
         console.log("Timelock Controller deployed at:", timelockAddr);
         console.log("Timelock delay set to:", minDelay, "seconds");
