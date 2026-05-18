@@ -36,6 +36,8 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @notice Cached vault config keyed by vault address
     mapping(address => VaultConfig) private vaultConfigs;
 
+    mapping(address => uint256) public scheduledVaultRemovalTime;
+
     /// @notice Minimum whole-share count required for price validity
     /// @dev The actual threshold is scaled per vault using its native share decimals.
     uint256 public constant MIN_VAULT_SHARE_COUNT = 1000;
@@ -46,11 +48,17 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @notice Hard cap for per-vault share-rate deviation settings
     uint256 public constant MAX_SHARE_PRICE_DEVIATION_BPS = 2000;
 
+    uint256 public constant VAULT_REMOVAL_DELAY = 1 days;
+    uint256 public constant VAULT_REMOVAL_EXPIRY = 7 days;
+
     /// @notice Emitted when a vault is registered
     event VaultRegistered(address indexed vault, address indexed underlying);
 
     /// @notice Emitted when a vault is removed
     event VaultRemoved(address indexed vault);
+
+    event VaultRemovalScheduled(address indexed vault, uint256 executableAt);
+    event VaultRemovalCancelled(address indexed vault);
 
     /// @notice Emitted when the share-price reference is refreshed
     event VaultSharePriceReferenceUpdated(
@@ -74,6 +82,10 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     /// @notice Custom error for unregistered vault
     error VaultNotRegistered(address vault);
+
+    error VaultRemovalNotScheduled(address vault);
+    error VaultRemovalTooEarly(address vault, uint256 executableAt);
+    error VaultRemovalExpired(address vault, uint256 expiredAt);
 
     /// @notice Custom error when token decimals cannot be queried
     error InvalidTokenDecimals(address token);
@@ -185,10 +197,36 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     /// @notice Remove a vault from the feed
     /// @param vault Address of the vault to remove
+    function scheduleRemoveVault(address vault) external onlyOwner {
+        _getVaultConfigStorage(vault);
+        uint256 executableAt = block.timestamp + VAULT_REMOVAL_DELAY;
+        scheduledVaultRemovalTime[vault] = executableAt;
+        emit VaultRemovalScheduled(vault, executableAt);
+    }
+
+    function cancelScheduledRemoveVault(address vault) external onlyOwner {
+        if (scheduledVaultRemovalTime[vault] == 0) revert VaultRemovalNotScheduled(vault);
+        delete scheduledVaultRemovalTime[vault];
+        emit VaultRemovalCancelled(vault);
+    }
+
     function removeVault(address vault) external onlyOwner {
+        _consumeScheduledVaultRemoval(vault);
         delete vaultToUnderlying[vault];
         delete vaultConfigs[vault];
         emit VaultRemoved(vault);
+    }
+
+    function _consumeScheduledVaultRemoval(address vault) internal {
+        uint256 executableAt = scheduledVaultRemovalTime[vault];
+        if (executableAt == 0) revert VaultRemovalNotScheduled(vault);
+        if (block.timestamp < executableAt) revert VaultRemovalTooEarly(vault, executableAt);
+        uint256 expiresAt = executableAt + VAULT_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledVaultRemovalTime[vault];
+            revert VaultRemovalExpired(vault, expiresAt);
+        }
+        delete scheduledVaultRemovalTime[vault];
     }
 
     /// @notice Returns the minimum total supply required for a registered vault

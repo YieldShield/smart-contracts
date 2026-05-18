@@ -110,6 +110,8 @@ interface ISplitRiskPoolFactory {
     function cancelCompositeOracleScheduledOverride(address token, bytes32 action) external;
     function setPythTokenPriceFeed(address token, bytes32 feedId) external;
     function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
+    function schedulePythTokenRemoval(address token) external;
+    function cancelScheduledPythTokenRemoval(address token) external;
     function removePythToken(address token) external;
     function setPythMaxPriceAge(uint256 maxPriceAge) external;
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;

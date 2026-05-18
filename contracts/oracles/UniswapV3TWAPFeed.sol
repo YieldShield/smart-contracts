@@ -59,6 +59,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
+    mapping(address => uint256) public scheduledTokenPoolRemovalTime;
+
     /// @notice Minimum harmonic-average pool liquidity required across the TWAP window
     uint128 public minimumAverageLiquidity;
 
@@ -74,6 +76,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted when a token pool is set
     event TokenPoolSet(address indexed token, address indexed pool, bool isToken0);
+
+    event TokenPoolRemovalScheduled(address indexed token, uint256 executableAt);
+    event TokenPoolRemovalCancelled(address indexed token);
 
     /// @notice Emitted when TWAP period is updated
     event TWAPPeriodUpdated(uint32 oldPeriod, uint32 newPeriod);
@@ -95,11 +100,18 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Minimum allowed TWAP period (5 minutes)
     uint32 public constant MIN_TWAP_PERIOD = 300;
 
+    uint256 public constant TOKEN_POOL_REMOVAL_DELAY = 1 days;
+    uint256 public constant TOKEN_POOL_REMOVAL_EXPIRY = 7 days;
+
     /// @notice Default minimum harmonic-average liquidity across the TWAP window
     uint128 public constant DEFAULT_MINIMUM_AVERAGE_LIQUIDITY = 1_000_000;
 
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
+
+    error TokenPoolRemovalNotScheduled(address token);
+    error TokenPoolRemovalTooEarly(address token, uint256 executableAt);
+    error TokenPoolRemovalExpired(address token, uint256 expiredAt);
 
     /// @notice Custom error for invalid pool
     error InvalidPool(address pool);
@@ -170,12 +182,38 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     /// @notice Remove a token pool
     /// @param token The token address
+    function scheduleRemoveTokenPool(address token) external onlyOwner {
+        if (!isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = block.timestamp + TOKEN_POOL_REMOVAL_DELAY;
+        scheduledTokenPoolRemovalTime[token] = executableAt;
+        emit TokenPoolRemovalScheduled(token, executableAt);
+    }
+
+    function cancelScheduledRemoveTokenPool(address token) external onlyOwner {
+        if (scheduledTokenPoolRemovalTime[token] == 0) revert TokenPoolRemovalNotScheduled(token);
+        delete scheduledTokenPoolRemovalTime[token];
+        emit TokenPoolRemovalCancelled(token);
+    }
+
     function removeTokenPool(address token) external onlyOwner {
+        _consumeScheduledTokenPoolRemoval(token);
         delete tokenPools[token];
         delete isToken0[token];
         delete tokenScales[token];
         isTokenSupported[token] = false;
         emit TokenPoolSet(token, address(0), false);
+    }
+
+    function _consumeScheduledTokenPoolRemoval(address token) internal {
+        uint256 executableAt = scheduledTokenPoolRemovalTime[token];
+        if (executableAt == 0) revert TokenPoolRemovalNotScheduled(token);
+        if (block.timestamp < executableAt) revert TokenPoolRemovalTooEarly(token, executableAt);
+        uint256 expiresAt = executableAt + TOKEN_POOL_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledTokenPoolRemovalTime[token];
+            revert TokenPoolRemovalExpired(token, expiresAt);
+        }
+        delete scheduledTokenPoolRemovalTime[token];
     }
 
     /// @notice Set the TWAP period

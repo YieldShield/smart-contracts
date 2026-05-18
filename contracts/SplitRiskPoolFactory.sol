@@ -39,6 +39,8 @@ interface ICompositeOracleAdmin {
 interface IPythOracleAdmin {
     function setTokenPriceFeed(address token, bytes32 feedId) external;
     function setTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId) external;
+    function scheduleRemoveToken(address token) external;
+    function cancelScheduledRemoveToken(address token) external;
     function removeToken(address token) external;
     function setMaxPriceAge(uint256 maxPriceAge) external;
     function setMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;
@@ -336,6 +338,14 @@ contract SplitRiskPoolFactory is
         onlyGovernance
     {
         _pythOracleAdmin().setTokenCompositePriceFeed(token, baseFeedId, quoteUsdFeedId);
+    }
+
+    function schedulePythTokenRemoval(address token) external onlyGovernance {
+        _pythOracleAdmin().scheduleRemoveToken(token);
+    }
+
+    function cancelScheduledPythTokenRemoval(address token) external onlyGovernance {
+        _pythOracleAdmin().cancelScheduledRemoveToken(token);
     }
 
     function removePythToken(address token) external onlyGovernance {

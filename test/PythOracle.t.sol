@@ -294,12 +294,45 @@ contract PythOracleTest is Test {
     }
 
     function testRemoveToken() public {
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.TokenRemovalNotScheduled.selector, address(token1)));
+        vm.prank(owner);
+        oracle.removeToken(address(token1));
+
+        vm.prank(owner);
+        oracle.scheduleRemoveToken(address(token1));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.TokenRemovalTooEarly.selector,
+                address(token1),
+                block.timestamp + oracle.TOKEN_REMOVAL_DELAY()
+            )
+        );
+        vm.prank(owner);
+        oracle.removeToken(address(token1));
+
+        vm.warp(block.timestamp + oracle.TOKEN_REMOVAL_DELAY());
+
         vm.prank(owner);
         oracle.removeToken(address(token1));
 
         assertFalse(oracle.isTokenSupported(address(token1)), "Token should not be supported");
         vm.expectRevert();
         oracle.getPrice(address(token1));
+    }
+
+    function testCancelScheduledRemoveToken() public {
+        vm.prank(owner);
+        oracle.scheduleRemoveToken(address(token1));
+
+        vm.prank(owner);
+        oracle.cancelScheduledRemoveToken(address(token1));
+
+        vm.warp(block.timestamp + oracle.TOKEN_REMOVAL_DELAY());
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.TokenRemovalNotScheduled.selector, address(token1)));
+        vm.prank(owner);
+        oracle.removeToken(address(token1));
     }
 
     function testSetTokenPriceFeedOnlyOwner() public {

@@ -104,6 +104,29 @@ contract PythEMAOracleFeedTest is Test {
         feed.setMaxPriceAgeForToken(address(token), 120);
     }
 
+    function testRemoveTokenRequiresSchedule() public {
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.TokenRemovalNotScheduled.selector, address(token)));
+        feed.removeToken(address(token));
+
+        feed.scheduleRemoveToken(address(token));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythEMAOracleFeed.TokenRemovalTooEarly.selector,
+                address(token),
+                block.timestamp + feed.TOKEN_REMOVAL_DELAY()
+            )
+        );
+        feed.removeToken(address(token));
+
+        vm.warp(block.timestamp + feed.TOKEN_REMOVAL_DELAY());
+        feed.removeToken(address(token));
+
+        assertFalse(feed.isTokenSupported(address(token)));
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.TokenNotSupported.selector, address(token)));
+        feed.getPrice(address(token));
+    }
+
     function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(address(token), address(feed));

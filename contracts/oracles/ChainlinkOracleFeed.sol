@@ -123,8 +123,20 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Per-token max price age override. Zero means "use the global maxPriceAge".
     mapping(address => uint256) public maxPriceAgeForToken;
 
+    mapping(address => uint256) public scheduledTokenFeedRemovalTime;
+
     /// @notice Emitted when a per-token max price age is set
     event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
+
+    event TokenFeedRemovalScheduled(address indexed token, uint256 executableAt);
+    event TokenFeedRemovalCancelled(address indexed token);
+
+    uint256 public constant TOKEN_FEED_REMOVAL_DELAY = 1 days;
+    uint256 public constant TOKEN_FEED_REMOVAL_EXPIRY = 7 days;
+
+    error TokenFeedRemovalNotScheduled(address token);
+    error TokenFeedRemovalTooEarly(address token, uint256 executableAt);
+    error TokenFeedRemovalExpired(address token, uint256 expiredAt);
 
     /// @notice Constructor
     /// @param _maxPriceAge Maximum age of price data in seconds
@@ -196,12 +208,39 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Remove a token feed
     /// @param token The token address to remove
+    function scheduleRemoveTokenFeed(address token) external onlyOwner {
+        if (!isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = block.timestamp + TOKEN_FEED_REMOVAL_DELAY;
+        scheduledTokenFeedRemovalTime[token] = executableAt;
+        emit TokenFeedRemovalScheduled(token, executableAt);
+    }
+
+    function cancelScheduledRemoveTokenFeed(address token) external onlyOwner {
+        if (scheduledTokenFeedRemovalTime[token] == 0) revert TokenFeedRemovalNotScheduled(token);
+        delete scheduledTokenFeedRemovalTime[token];
+        emit TokenFeedRemovalCancelled(token);
+    }
+
     function removeTokenFeed(address token) external onlyOwner {
+        _consumeScheduledTokenFeedRemoval(token);
         delete tokenFeeds[token];
         delete tokenFeedMinAnswer[token];
         delete tokenFeedMaxAnswer[token];
+        delete maxPriceAgeForToken[token];
         isTokenSupported[token] = false;
         emit TokenFeedSet(token, address(0));
+    }
+
+    function _consumeScheduledTokenFeedRemoval(address token) internal {
+        uint256 executableAt = scheduledTokenFeedRemovalTime[token];
+        if (executableAt == 0) revert TokenFeedRemovalNotScheduled(token);
+        if (block.timestamp < executableAt) revert TokenFeedRemovalTooEarly(token, executableAt);
+        uint256 expiresAt = executableAt + TOKEN_FEED_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledTokenFeedRemovalTime[token];
+            revert TokenFeedRemovalExpired(token, expiresAt);
+        }
+        delete scheduledTokenFeedRemovalTime[token];
     }
 
     /// @notice Set the global maximum age for price data

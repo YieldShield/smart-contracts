@@ -66,6 +66,33 @@ contract ChainlinkVenusBoundsTest is Test {
         assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
     }
 
+    function test_removeTokenFeed_RequiresSchedule() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.TokenFeedRemovalNotScheduled.selector, token));
+        feed.removeTokenFeed(token);
+
+        feed.scheduleRemoveTokenFeed(token);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ChainlinkOracleFeed.TokenFeedRemovalTooEarly.selector,
+                token,
+                block.timestamp + feed.TOKEN_FEED_REMOVAL_DELAY()
+            )
+        );
+        feed.removeTokenFeed(token);
+
+        vm.warp(block.timestamp + feed.TOKEN_FEED_REMOVAL_DELAY());
+        feed.removeTokenFeed(token);
+
+        assertFalse(feed.isTokenSupported(token));
+        assertEq(address(feed.tokenFeeds(token)), address(0));
+        assertEq(feed.tokenFeedMinAnswer(token), 0);
+        assertEq(feed.tokenFeedMaxAnswer(token), 0);
+    }
+
     function test_getPrice_RevertsWhenPinnedAtFloor() public {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));

@@ -47,6 +47,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Optional per-token price age override. Zero means use maxPriceAge.
     mapping(address => uint256) public maxPriceAgeForToken;
 
+    mapping(address => uint256) public scheduledTokenRemovalTime;
+
     /// @notice Mapping to track if a token is supported
     mapping(address => bool) public isTokenSupported;
 
@@ -73,6 +75,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Emitted when price feeds are updated
     event PriceFeedsUpdated(bytes32[] feedIds);
+
+    event TokenRemovalScheduled(address indexed token, uint256 executableAt);
+    event TokenRemovalCancelled(address indexed token);
 
     /// @notice Emitted when a stale price is detected
     event StalePriceDetected(address indexed token, bytes32 indexed feedId, uint64 publishTime);
@@ -116,6 +121,13 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Maximum allowed maxPriceAge value (24 hours)
     uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
+
+    uint256 public constant TOKEN_REMOVAL_DELAY = 1 days;
+    uint256 public constant TOKEN_REMOVAL_EXPIRY = 7 days;
+
+    error TokenRemovalNotScheduled(address token);
+    error TokenRemovalTooEarly(address token, uint256 executableAt);
+    error TokenRemovalExpired(address token, uint256 expiredAt);
 
     /// @notice Custom error for invalid price deviation setting
     error InvalidDeviation(uint256 provided, uint256 min, uint256 max);
@@ -190,12 +202,39 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Remove support for a token
     /// @param token The token address to remove
+    function scheduleRemoveToken(address token) external onlyOwner {
+        if (!isTokenSupported[token]) revert TokenNotSupported(token);
+        uint256 executableAt = block.timestamp + TOKEN_REMOVAL_DELAY;
+        scheduledTokenRemovalTime[token] = executableAt;
+        emit TokenRemovalScheduled(token, executableAt);
+    }
+
+    function cancelScheduledRemoveToken(address token) external onlyOwner {
+        if (scheduledTokenRemovalTime[token] == 0) revert TokenRemovalNotScheduled(token);
+        delete scheduledTokenRemovalTime[token];
+        emit TokenRemovalCancelled(token);
+    }
+
     function removeToken(address token) external onlyOwner {
+        _consumeScheduledTokenRemoval(token);
         delete tokenToPriceFeedId[token];
         delete tokenToQuotePriceFeedId[token];
+        delete maxPriceAgeForToken[token];
         isTokenSupported[token] = false;
 
         emit TokenPriceFeedSet(token, bytes32(0));
+    }
+
+    function _consumeScheduledTokenRemoval(address token) internal {
+        uint256 executableAt = scheduledTokenRemovalTime[token];
+        if (executableAt == 0) revert TokenRemovalNotScheduled(token);
+        if (block.timestamp < executableAt) revert TokenRemovalTooEarly(token, executableAt);
+        uint256 expiresAt = executableAt + TOKEN_REMOVAL_EXPIRY;
+        if (block.timestamp >= expiresAt) {
+            delete scheduledTokenRemovalTime[token];
+            revert TokenRemovalExpired(token, expiresAt);
+        }
+        delete scheduledTokenRemovalTime[token];
     }
 
     /// @notice Set the maximum age for price data

@@ -101,6 +101,22 @@ contract ERC4626OracleFeedTest is Test {
 
     function test_RemoveVault_Succeeds() public {
         // LOW-11 FIX: Now emits VaultRemoved instead of misleading VaultRegistered
+        vm.expectRevert(abi.encodeWithSelector(ERC4626OracleFeed.VaultRemovalNotScheduled.selector, address(vault)));
+        erc4626Feed.removeVault(address(vault));
+
+        erc4626Feed.scheduleRemoveVault(address(vault));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultRemovalTooEarly.selector,
+                address(vault),
+                block.timestamp + erc4626Feed.VAULT_REMOVAL_DELAY()
+            )
+        );
+        erc4626Feed.removeVault(address(vault));
+
+        vm.warp(block.timestamp + erc4626Feed.VAULT_REMOVAL_DELAY());
+
         vm.expectEmit(true, false, false, true);
         emit VaultRemoved(address(vault));
 

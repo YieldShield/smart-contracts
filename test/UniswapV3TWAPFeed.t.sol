@@ -151,6 +151,33 @@ contract UniswapV3TWAPFeedTest is Test {
         harness.setTokenPool(address(token), address(pool));
     }
 
+    function test_removeTokenPool_RequiresSchedule() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.TokenPoolRemovalNotScheduled.selector, address(token)));
+        harness.removeTokenPool(address(token));
+
+        harness.scheduleRemoveTokenPool(address(token));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.TokenPoolRemovalTooEarly.selector,
+                address(token),
+                block.timestamp + harness.TOKEN_POOL_REMOVAL_DELAY()
+            )
+        );
+        harness.removeTokenPool(address(token));
+
+        vm.warp(block.timestamp + harness.TOKEN_POOL_REMOVAL_DELAY());
+        harness.removeTokenPool(address(token));
+
+        assertFalse(harness.isTokenSupported(address(token)));
+        assertEq(harness.tokenPools(address(token)), address(0));
+    }
+
     function test_getPrice_RevertsWhenRegisteredPoolLiquidityFallsBelowFloor() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         MockUniswapV3Pool pool =
