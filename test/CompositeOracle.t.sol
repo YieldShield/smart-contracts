@@ -1005,11 +1005,12 @@ contract CompositeOracleDualFeedTest is Test {
 
     function test_TransientBackupFailureDoesNotDoSProtectedPrimary() public {
         // A2 (2026-05-19): a transient backup failure must NOT mark the token
-        // as disputed and DoS every protected reader. The primary feed has its
-        // own circuit breaker, and `challengeForToken` independently requires
-        // a working backup before a real dispute can land — so the only
-        // consequence of a backup outage should be that no new challenge can
-        // be filed against this token, NOT that protected reads revert.
+        // as disputed and DoS every protected reader, PROVIDED the primary
+        // itself has its own circuit breaker. The primary's CB still applies,
+        // and `challengeForToken` independently requires a working backup
+        // before a real dispute can land — so the only consequence of a backup
+        // outage on a CB-supporting primary should be that no new challenge
+        // can be filed, NOT that protected reads revert.
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
 
@@ -1025,6 +1026,32 @@ contract CompositeOracleDualFeedTest is Test {
 
         uint256 strictPrice = compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
         assertEq(strictPrice, PRIMARY_PRICE, "strict-CB getter must still serve while backup is transiently down");
+    }
+
+    function test_BackupFailureFailsClosedWhenPrimaryLacksCircuitBreaker() public {
+        // A2 follow-up (Codex feedback on PR #21): if the primary lacks the
+        // safe/unsafe split, the dual-feed deviation check is the ONLY safety
+        // net. A transient backup outage must therefore still fail closed in
+        // that configuration — otherwise we silently serve an unverified
+        // primary while the dispute mechanism is offline.
+        MockFeedWithoutCircuitBreaker primaryNoCb = new MockFeedWithoutCircuitBreaker();
+        primaryNoCb.setPrice(address(token), PRIMARY_PRICE);
+
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryNoCb), address(backupOracle));
+
+        // Backup transiently fails.
+        backupOracle.setShouldRevertOnCircuitBreaker(true);
+
+        assertTrue(
+            compositeOracle.isTokenChallengeable(address(token)),
+            "backup failure must surface as disputed when primary lacks CB"
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getPrice(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
+        compositeOracle.getValue(address(token), 1e18);
     }
 
     // BUG-2 FIX: Test reconfiguration emits challenge cancelled event

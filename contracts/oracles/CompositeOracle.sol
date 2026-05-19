@@ -514,14 +514,23 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @dev Returns true when the primary active feed is already unsafe for protected
     ///      pricing even if no public challenge has been started yet.
     ///
-    ///      A transient failure of the backup feed must NOT mark the primary as
-    ///      disputed — the protected primary still has its own circuit breaker, and
-    ///      `challengeForToken` independently requires a working backup before any
-    ///      real dispute can land. Earlier revisions returned `true` whenever the
-    ///      backup reverted (including transient Pyth confidence widening on a healthy
-    ///      Chainlink primary), DoSing every protected `getPrice/getValue/getEquivalentAmount`
-    ///      call on the token. The current logic only escalates when BOTH feeds return a
-    ///      price AND their normalised deviation exceeds `deviationThresholdBps`.
+    ///      A transient failure of the backup feed must NOT, on its own, mark the
+    ///      primary as disputed — the protected primary often has its own circuit
+    ///      breaker, and `challengeForToken` independently requires a working backup
+    ///      before any real dispute can land. Earlier revisions returned `true`
+    ///      whenever the backup reverted (including transient Pyth confidence
+    ///      widening on a healthy Chainlink primary), DoSing every protected
+    ///      `getPrice/getValue/getEquivalentAmount` call on the token.
+    ///
+    ///      However, `setTokenOracleFeedDual` only requires the backup to support
+    ///      the circuit-breaker selector — non-strict tokens may pair a CB-backup
+    ///      with a primary that has NO safe/unsafe split of its own. In that
+    ///      configuration the dual-feed deviation check is the primary's only
+    ///      safety net, and quietly serving the primary while the backup is down
+    ///      would re-introduce the very gap dual-feed mode is meant to plug
+    ///      (raised by Codex on PR #21). We therefore only suppress the dispute on
+    ///      backup failure when the primary itself currently supports the circuit
+    ///      breaker; otherwise we fail closed and keep the token disputed.
     function _hasUnresolvedDualFeedDeviation(TokenOracleConfig storage config, address token)
         internal
         view
@@ -533,7 +542,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
         if (!backupSuccess) {
-            return false;
+            // Backup is the only safety net for primaries that lack a circuit
+            // breaker. If the primary has its own CB, defer to it; otherwise
+            // fail closed until the backup recovers.
+            return !_supportsCircuitBreaker(config.primaryFeed, token);
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
