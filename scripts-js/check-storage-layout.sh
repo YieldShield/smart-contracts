@@ -36,7 +36,14 @@ normalize() {
     | .types |= (
         with_entries(.key |= strip_struct_id)
         | map_values(
-            if has("members") then .members |= map(.type |= strip_struct_id) else . end
+            # Struct entries carry their members in `.members[].type`. Mapping
+            # entries carry their key/value types in `.key`/`.value`. Array
+            # entries carry their element type in `.base`. Each of these can
+            # reference a struct, so they all need the same astId scrub.
+            (if has("members") then .members |= map(.type |= strip_struct_id) else . end)
+            | (if has("value") then .value |= strip_struct_id else . end)
+            | (if has("base")  then .base  |= strip_struct_id else . end)
+            | (if has("key")   then .key   |= strip_struct_id else . end)
           )
       )
   '
