@@ -443,7 +443,12 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     function _getAverageLiquidity(uint160[] memory secondsPerLiquidityCumulativeX128s) internal view returns (uint128) {
         uint160 delta = secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
         if (delta == 0) {
-            return type(uint128).max;
+            // Fail closed: a zero delta means no liquidity-weighted activity was
+            // recorded across the TWAP window (drained pool, observation overflow,
+            // freshly re-initialised cardinality). Returning `type(uint128).max`
+            // would silently pass the minimum-liquidity floor on the very edge
+            // cases the floor is meant to catch.
+            return 0;
         }
 
         uint256 averageLiquidity = (uint256(twapPeriod) << 128) / uint256(delta);

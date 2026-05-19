@@ -83,6 +83,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Emitted when a feed proxy does not expose min/max answer bounds
     event FeedBoundsUnavailable(address indexed token, address indexed feed);
 
+    /// @notice Emitted when `refreshFeedBounds` is called on an already-registered token.
+    /// @dev Separate from `FeedBoundsCached`/`FeedBoundsUnavailable` so off-chain
+    ///      monitoring can distinguish operator-initiated cache refreshes from
+    ///      initial registration. The follow-up `FeedBoundsCached` or
+    ///      `FeedBoundsUnavailable` event still fires from `_cacheFeedBounds`,
+    ///      carrying the new bound values.
+    event FeedBoundsRefreshed(address indexed token, address indexed feed);
+
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
 
@@ -209,12 +217,16 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
     /// @dev Chainlink proxies can rotate the underlying aggregator over time; without
     ///      a refresh path the H-1 bounds cache silently goes stale and the Venus-style
-    ///      saturation check applies obsolete thresholds. Reusing `_cacheFeedBounds`
-    ///      keeps the event-emission behaviour identical to registration.
+    ///      saturation check applies obsolete thresholds. Emits `FeedBoundsRefreshed`
+    ///      first so subscribers can distinguish operator-initiated refreshes from
+    ///      registration; the follow-up `FeedBoundsCached`/`FeedBoundsUnavailable`
+    ///      event from `_cacheFeedBounds` still carries the new bound values.
     /// @param token The token address whose feed bounds should be refreshed.
     function refreshFeedBounds(address token) external onlyOwner {
         if (!isTokenSupported[token]) revert TokenNotSupported(token);
-        _cacheFeedBounds(token, address(tokenFeeds[token]));
+        address feed = address(tokenFeeds[token]);
+        emit FeedBoundsRefreshed(token, feed);
+        _cacheFeedBounds(token, feed);
     }
 
     /// @notice Remove a token feed

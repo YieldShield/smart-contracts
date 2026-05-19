@@ -1278,11 +1278,21 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @dev Uses MasterChef pattern to prevent late-joiner exploit. Only the current
      *      NFT owner can claim. Commission is paid in shielded tokens.
      *      Emits NoCommissionToClaim event if no commission is available.
+     * @dev Intentionally NOT gated by `whenNotPaused`. B4 (PR #21) made
+     *      commission-bucket overflow revert with `RewardAccumulationIncomplete`,
+     *      and `_tryCalculateAndAccumulateFees` does not catch that revert. Once
+     *      `accumulatedCommissions` saturates `MAX_SAFE_ACCUMULATION`, every
+     *      withdrawal path that accrues fees reverts until the bucket is
+     *      drained. `claimCommission` is the only drain path; keeping it
+     *      callable during pause prevents a saturated+paused state from
+     *      trapping all user exits. The companion `payPoolFee` / `payProtocolFee`
+     *      / `claimRewards` paths remain pause-gated since they are value-
+     *      extraction surfaces unrelated to the drain mechanic.
      * @param tokenId The protector NFT token ID
      * @custom:error NotOwner If caller is not the NFT owner
      * @custom:error InsufficientTokenBalance If pool has insufficient balance or no protectors
      */
-    function claimCommission(uint256 tokenId) external nonReentrant whenNotPaused {
+    function claimCommission(uint256 tokenId) external nonReentrant {
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.NotOwner();
         }

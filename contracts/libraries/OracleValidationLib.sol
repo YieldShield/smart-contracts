@@ -21,16 +21,6 @@ library OracleValidationLib {
     /// @param currentTime Current block timestamp
     error StalePrice(address token, uint256 updatedAt, uint256 maxAge, uint256 currentTime);
 
-    /// @notice Thrown when price deviation exceeds threshold
-    /// @param token The token address
-    /// @param price1 First price value
-    /// @param price2 Second price value
-    /// @param deviationBps Actual deviation in basis points
-    /// @param maxDeviationBps Maximum allowed deviation
-    error PriceDeviationExceeded(
-        address token, uint256 price1, uint256 price2, uint256 deviationBps, uint256 maxDeviationBps
-    );
-
     // ============ Validation Functions ============
 
     /// @notice Validate that a price is positive (for Chainlink int256 prices)
@@ -78,32 +68,5 @@ library OracleValidationLib {
         uint256 minPrice = price1 < price2 ? price1 : price2;
 
         return (diff * 10000) / minPrice;
-    }
-
-    /// @notice Validate that price deviation is within threshold
-    /// @param price1 First price
-    /// @param price2 Second price
-    /// @param maxDeviationBps Maximum allowed deviation in basis points
-    /// @param token The token address (for error reporting)
-    function validateDeviation(uint256 price1, uint256 price2, uint256 maxDeviationBps, address token) internal pure {
-        uint256 deviation = calculateDeviation(price1, price2);
-        if (deviation > maxDeviationBps) {
-            revert PriceDeviationExceeded(token, price1, price2, deviation, maxDeviationBps);
-        }
-    }
-
-    /// @notice Check if price deviation exceeds threshold (non-reverting)
-    /// @param price1 First price
-    /// @param price2 Second price
-    /// @param maxDeviationBps Maximum allowed deviation in basis points
-    /// @return exceeds True if deviation exceeds threshold
-    /// @return deviation The calculated deviation in basis points
-    function checkDeviation(uint256 price1, uint256 price2, uint256 maxDeviationBps)
-        internal
-        pure
-        returns (bool exceeds, uint256 deviation)
-    {
-        deviation = calculateDeviation(price1, price2);
-        exceeds = deviation > maxDeviationBps;
     }
 }

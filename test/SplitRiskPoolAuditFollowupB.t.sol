@@ -210,15 +210,23 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         pool.payProtocolFee();
     }
 
-    function test_B5_claimCommission_RevertsWhenPaused() public {
+    function test_claimCommission_StaysCallableWhenPaused() public {
+        // Pass-3 audit follow-up: B4 made commission-bucket overflow revert
+        // with `RewardAccumulationIncomplete`, and `_tryCalculateAndAccumulateFees`
+        // does not catch that revert. Once `accumulatedCommissions` saturates,
+        // every fee-accruing withdrawal reverts until the bucket is drained —
+        // and `claimCommission` is the ONLY drain path. Pause must therefore
+        // NOT block `claimCommission`, otherwise a saturated+paused pool
+        // traps every user exit. Companion `payPoolFee`, `payProtocolFee`,
+        // and `claimRewards` remain pause-gated since they are user/operator
+        // value-extraction surfaces unrelated to the drain mechanic.
         (uint256 protectorTokenId,) = _seedPositions();
 
         vm.prank(governance);
         pool.pause();
 
         vm.prank(protector);
-        vm.expectRevert(ENFORCED_PAUSE);
-        pool.claimCommission(protectorTokenId);
+        pool.claimCommission(protectorTokenId); // must not revert
     }
 
     function test_B5_claimRewards_RevertsWhenPaused() public {

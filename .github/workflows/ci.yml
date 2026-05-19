@@ -45,12 +45,20 @@ jobs:
       - name: Check JavaScript formatting
         run: npx prettier --check "scripts-js/**/*.{js,cjs}"
 
-      - name: Assert via_ir is enabled
+      - name: Assert via_ir is enabled in [profile.default]
         run: |
-          if ! grep -q '^via_ir = true' foundry.toml; then
-            echo "::error file=foundry.toml::via_ir must remain enabled (codegen regression risk)"
-            exit 1
-          fi
+          python3 - <<'PY'
+          import sys, tomllib
+          with open("foundry.toml", "rb") as fh:
+              cfg = tomllib.load(fh)
+          default = cfg.get("profile", {}).get("default", {})
+          if default.get("via_ir") is not True:
+              print(
+                  "::error file=foundry.toml::"
+                  "[profile.default].via_ir must be true (codegen regression risk)"
+              )
+              sys.exit(1)
+          PY
 
       - name: Build contracts
         run: forge build
