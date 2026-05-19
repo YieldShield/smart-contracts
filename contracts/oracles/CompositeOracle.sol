@@ -1040,8 +1040,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // Determine which feed is currently active
         address activeFeed = config.isBackupActive ? config.backupFeed : config.primaryFeed;
         address inactiveFeed = config.isBackupActive ? config.primaryFeed : config.backupFeed;
-        bool activeFeedDisputed = (config.challengeStartTime != 0 && !config.isBackupActive)
-            || _hasUnresolvedDualFeedDeviation(config, token);
+        // Cache the dual-feed deviation result — the helper is `view` and reads the
+        // same storage twice in this function, costing ~4 extra staticcalls per
+        // fallback price read when the primary supports the safe/unsafe split.
+        bool unresolvedDualFeedDeviation = _hasUnresolvedDualFeedDeviation(config, token);
+        bool activeFeedDisputed =
+            (config.challengeStartTime != 0 && !config.isBackupActive) || unresolvedDualFeedDeviation;
 
         if (activeFeedDisputed) {
             return (0, false);
@@ -1061,7 +1065,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // H-3 FIX: never silently re-promote a feed governance has already moved off of.
         // When the backup is active, the inactive feed is the disabled primary. When
         // an unresolved deviation exists, both feeds are mutually suspect — fail closed.
-        bool inactiveFeedDisputed = config.isBackupActive || _hasUnresolvedDualFeedDeviation(config, token);
+        bool inactiveFeedDisputed = config.isBackupActive || unresolvedDualFeedDeviation;
 
         if (inactiveFeed != address(0) && !inactiveFeedDisputed) {
             try IOracleFeed(inactiveFeed).getPrice(token) returns (uint256 price) {
