@@ -129,6 +129,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /* Pool Events */
     using EventsLib for *;
 
+    /// @notice B9 (H-5 follow-up): emitted at initialize when the factory
+    ///         staticcall used to pin the strict-protected-backing-price
+    ///         policy fails (call reverted or returned malformed data). The
+    ///         pinned snapshot defaults to `false` in this case; monitoring
+    ///         should treat that as a probe regression rather than a
+    ///         deliberate downgrade.
+    event StrictPricingProbeFailed(address indexed token, address indexed factory);
+
     /* Modifiers */
     modifier onlyShieldNFTOwner(uint256 tokenId) {
         if (IShieldReceiptNFT(shieldReceiptNFT).ownerOf(tokenId) != msg.sender) {
@@ -224,7 +232,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             (bool success, bytes memory data) = initialOwner.staticcall(
                 abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (_backingTokenInfo.token))
             );
-            _strictProtectedBackingPriceAtInit = success && data.length >= 32 ? abi.decode(data, (bool)) : false;
+            // B9 (H-5 follow-up): if the probe call reverts or returns
+            // malformed data, the pinned snapshot defaults to `false`. Emit a
+            // dedicated event BEFORE pinning so off-chain monitoring can flag
+            // the regression — silent downgrade was the original H-5 concern.
+            if (!success || data.length < 32) {
+                _strictProtectedBackingPriceAtInit = false;
+                emit StrictPricingProbeFailed(_backingTokenInfo.token, initialOwner);
+            } else {
+                _strictProtectedBackingPriceAtInit = abi.decode(data, (bool));
+            }
             _strictProtectedBackingPricePinned = true;
         }
 
@@ -384,7 +401,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      active-feed value because the safe `getPrice` would otherwise revert during a
     ///      dual-feed challenge window or fully halt view callers when the protected path
     ///      is temporarily unavailable.
+    ///
+    ///      B7: explicitly fail closed if the shielded leg has a pending or currently
+    ///      challengeable dual-feed dispute. This removes the implicit invariant that
+    ///      every caller already calls `_requireNoOraclePendingChallenge(SHIELDED_TOKEN)`
+    ///      beforehand. Current callers (`_validateDeposit` via
+    ///      `_getTotalPoolValueUsd(allowShieldedSpotFallback=true)`) already make that
+    ///      check, so this guard is idempotent for them and prevents future call sites
+    ///      from relying on a footgun precondition.
     function _getShieldedSpotPrice() internal view returns (uint256 price) {
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
         price = IPriceOracle(poolConfig.priceOracle).getPriceUnsafe(SHIELDED_TOKEN);
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
@@ -831,9 +857,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (0, redirectedProtocolAmount);
         }
 
+        // B4: revert on commission-bucket overflow rather than silently emit
+        // FeeDropped and return zero. Returning zero let the caller subtract 0
+        // from totalFees while the position's feeValueBaselineUsd advanced past
+        // the un-extracted yield, permanently forgiving that commission.
+        // Matches the pool/protocol fee buckets in
+        // `_calculateAndAccumulateFeesAtPrice` which also revert with
+        // RewardAccumulationIncomplete on overflow.
         if (accumulatedCommissions + rewardAmount > maxSafeAccumulation) {
-            emit EventsLib.FeeDropped("commission", rewardAmount, accumulatedCommissions);
-            return (0, 0);
+            revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedCommissions, 0);
         }
 
         rewardPerShareAccumulated += (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
@@ -1032,9 +1064,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Accumulate commissions in native shielded token units via rewards-per-share.
         // If no effective protector capital exists, redirect commissions to protocol fee.
-        // _accumulateProtectorReward applies its own cap checks internally and returns
-        // the actual accumulated amount + redirected portion. (Internal caps still
-        // silently truncate today; tracked separately — see SplitRiskPool TODO.)
+        // _accumulateProtectorReward applies its own cap checks internally and now
+        // reverts with RewardAccumulationIncomplete on commission-bucket overflow
+        // (B4), matching the pool/protocol fee buckets above.
         uint256 redirectedCommission;
         (commissionAmount, redirectedCommission) = _accumulateProtectorReward(commissionAmount, maxSafeAccumulation);
         protocolFeeAmount += redirectedCommission;
@@ -1090,7 +1122,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error AccessControlDenied If caller is not pool creator or governance
      * @custom:error InsufficientTokenBalance If pool has insufficient balance
      */
-    function payPoolFee() external nonReentrant {
+    function payPoolFee() external nonReentrant whenNotPaused {
         if (msg.sender != POOL_CREATOR && msg.sender != _governanceTimelock) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "payPoolFee");
         }
@@ -1109,11 +1141,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @notice Rotate the recipient of accumulated pool fees (M-14)
-    /// @dev Only POOL_CREATOR can rotate. Useful if the original recipient is
+    /// @dev POOL_CREATOR can rotate. Useful if the original recipient is
     ///      blacklisted by the SHIELDED_TOKEN issuer, preventing fees from
     ///      becoming permanently unreachable.
+    /// @dev B8: governance timelock is also accepted as a backstop. If the
+    ///      POOL_CREATOR key is lost or the creator itself is blacklisted /
+    ///      otherwise compromised, accumulated pool fees would be permanently
+    ///      stuck without a second authorised rotator. Mirrors the
+    ///      POOL_CREATOR-or-governance pattern used by `payPoolFee`.
     function setPoolFeeRecipient(address newRecipient) external {
-        if (msg.sender != POOL_CREATOR) revert ErrorsLib.AccessControlDenied(msg.sender, "setPoolFeeRecipient");
+        if (msg.sender != POOL_CREATOR && msg.sender != _governanceTimelock) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "setPoolFeeRecipient");
+        }
         if (newRecipient == address(0)) revert ErrorsLib.InvalidProtocolFeeRecipient();
         address previous = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
         poolFeeRecipient = newRecipient;
@@ -1132,7 +1171,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error AccessControlDenied If caller is not protocol fee recipient or governance
      * @custom:error InsufficientTokenBalance If pool has insufficient balance
      */
-    function payProtocolFee() external nonReentrant {
+    function payProtocolFee() external nonReentrant whenNotPaused {
         if (msg.sender != poolConfig.protocolFeeRecipient && msg.sender != _governanceTimelock) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "payProtocolFee");
         }
@@ -1243,7 +1282,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error NotOwner If caller is not the NFT owner
      * @custom:error InsufficientTokenBalance If pool has insufficient balance or no protectors
      */
-    function claimCommission(uint256 tokenId) external nonReentrant {
+    function claimCommission(uint256 tokenId) external nonReentrant whenNotPaused {
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.NotOwner();
         }
@@ -1487,6 +1526,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // challenge to exit without paying yield fees. Generic oracle
             // outages (price unavailable but no formal challenge) still
             // permit a no-fee exit so users aren't trapped by a broken feed.
+            //
+            // B6: Same-asset exits also release the full
+            // `pos.collateralAmount` from `totalShieldCollateralAmount` below,
+            // loosening the protector clamp computed from backing-token pricing.
+            // Backing-token oracle state therefore matters here too — gate both
+            // legs, mirroring the cross-asset / deposit paths.
+            _requireNoOraclePendingChallenge(BACKING_TOKEN);
             _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
@@ -1733,7 +1779,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error ClaimRewardsCooldownNotMet If called too soon after previous claim
      * @custom:error InvalidTokenId If position is already withdrawn
      */
-    function claimRewards(uint256 tokenId) external nonReentrant {
+    function claimRewards(uint256 tokenId) external nonReentrant whenNotPaused {
         address owner = _requireShieldNFTOwner(tokenId);
 
         // Rate limiting: minimum 24 hours between calls per tokenId

@@ -90,6 +90,13 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error when token decimals cannot be queried
     error InvalidTokenDecimals(address token);
 
+    /// @notice The underlying oracle does not honour the `getPriceUnsafe` contract.
+    /// @dev Raised on the unsafe pricing path when the underlying staticcall returns
+    ///      malformed data or the selector is absent. Failing closed prevents the
+    ///      unsafe getter from silently upgrading to the protected `getPrice`, which
+    ///      would defeat the safe/unsafe split.
+    error UnsafeUnderlyingPriceUnavailable(address underlying);
+
     /// @notice Custom error for token decimal configurations that overflow oracle scaling math
     error UnsupportedTokenDecimals(address token, uint8 decimals);
 
@@ -362,11 +369,16 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             if (data.length >= 32) {
                 return abi.decode(data, (uint256));
             }
-            return underlyingPriceOracle.getPrice(underlying);
+            // Malformed success return: the underlying oracle does not honour the
+            // unsafe selector contract. Fail closed instead of silently upgrading
+            // to the protected getter — that would defeat the safe/unsafe split.
+            revert UnsafeUnderlyingPriceUnavailable(underlying);
         }
 
         if (data.length == 0) {
-            return underlyingPriceOracle.getPrice(underlying);
+            // Selector absent: same reasoning — opting into the unsafe path must
+            // not transparently fall through to the protected getter.
+            revert UnsafeUnderlyingPriceUnavailable(underlying);
         }
 
         assembly ("memory-safe") {

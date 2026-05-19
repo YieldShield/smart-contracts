@@ -206,6 +206,17 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         emit FeedBoundsUnavailable(token, feed);
     }
 
+    /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
+    /// @dev Chainlink proxies can rotate the underlying aggregator over time; without
+    ///      a refresh path the H-1 bounds cache silently goes stale and the Venus-style
+    ///      saturation check applies obsolete thresholds. Reusing `_cacheFeedBounds`
+    ///      keeps the event-emission behaviour identical to registration.
+    /// @param token The token address whose feed bounds should be refreshed.
+    function refreshFeedBounds(address token) external onlyOwner {
+        if (!isTokenSupported[token]) revert TokenNotSupported(token);
+        _cacheFeedBounds(token, address(tokenFeeds[token]));
+    }
+
     /// @notice Remove a token feed
     /// @param token The token address to remove
     function scheduleRemoveTokenFeed(address token) external onlyOwner {

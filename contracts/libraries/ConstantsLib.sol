@@ -35,8 +35,6 @@ library ConstantsLib {
     uint256 public constant MAX_UNLOCK_DURATION = 365 days;
     /// @notice Maximum minimum pool time before shielded can withdraw to backing token (NEW-4 FIX)
     uint256 public constant MAX_MINIMUM_POOL_TIME = 90 days;
-    /// @notice Maximum interval for governance functions
-    uint256 public constant MAX_GOVERNANCE_INTERVAL = 7 days;
     /// @notice Cooldown period between reward claims
     uint256 public constant CLAIM_REWARDS_COOLDOWN = 1 days;
 
