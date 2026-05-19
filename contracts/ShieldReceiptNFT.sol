@@ -82,6 +82,16 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         uint256 collateralAmount,
         uint64 originalDepositTime
     ) external onlyPool returns (uint256 tokenId) {
+        // Defense in depth (mirrors the L-12 check on updatePosition): a
+        // future-dated depositTime would start the transfer-lock window in
+        // the future, effectively freezing the position until wall-clock
+        // catches up. Today the pool always passes `pos.depositTime` from
+        // an existing position so this branch is unreachable, but a future
+        // caller passing a user-influenced value must not be able to brick
+        // the NFT.
+        if (originalDepositTime > block.timestamp) {
+            revert ErrorsLib.FutureTimestamp(originalDepositTime, block.timestamp);
+        }
         tokenId = nextTokenId++;
         positions[tokenId] = ShieldPosition({
             amount: amount,

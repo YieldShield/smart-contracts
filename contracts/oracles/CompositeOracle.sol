@@ -513,6 +513,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @dev Returns true when the primary active feed is already unsafe for protected
     ///      pricing even if no public challenge has been started yet.
+    ///
+    ///      A transient failure of the backup feed must NOT mark the primary as
+    ///      disputed — the protected primary still has its own circuit breaker, and
+    ///      `challengeForToken` independently requires a working backup before any
+    ///      real dispute can land. Earlier revisions returned `true` whenever the
+    ///      backup reverted (including transient Pyth confidence widening on a healthy
+    ///      Chainlink primary), DoSing every protected `getPrice/getValue/getEquivalentAmount`
+    ///      call on the token. The current logic only escalates when BOTH feeds return a
+    ///      price AND their normalised deviation exceeds `deviationThresholdBps`.
     function _hasUnresolvedDualFeedDeviation(TokenOracleConfig storage config, address token)
         internal
         view
@@ -523,8 +532,8 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
-        if (!backupSuccess || !_supportsCircuitBreaker(config.backupFeed, token)) {
-            return true;
+        if (!backupSuccess) {
+            return false;
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);

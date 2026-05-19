@@ -45,6 +45,13 @@ jobs:
       - name: Check JavaScript formatting
         run: npx prettier --check "scripts-js/**/*.{js,cjs}"
 
+      - name: Assert via_ir is enabled
+        run: |
+          if ! grep -q '^via_ir = true' foundry.toml; then
+            echo "::error file=foundry.toml::via_ir must remain enabled (codegen regression risk)"
+            exit 1
+          fi
+
       - name: Build contracts
         run: forge build
 

@@ -1003,19 +1003,28 @@ contract CompositeOracleDualFeedTest is Test {
         assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
     }
 
-    function test_StrictCircuitBreaker_FailsClosedWhenInactiveBackupReverts() public {
+    function test_TransientBackupFailureDoesNotDoSProtectedPrimary() public {
+        // A2 (2026-05-19): a transient backup failure must NOT mark the token
+        // as disputed and DoS every protected reader. The primary feed has its
+        // own circuit breaker, and `challengeForToken` independently requires
+        // a working backup before a real dispute can land — so the only
+        // consequence of a backup outage should be that no new challenge can
+        // be filed against this token, NOT that protected reads revert.
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
 
         backupOracle.setShouldRevertOnCircuitBreaker(true);
 
-        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+        assertFalse(
+            compositeOracle.isTokenChallengeable(address(token)),
+            "transient backup failure must not surface as challengeable"
+        );
 
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPrice(address(token));
+        uint256 price = compositeOracle.getPrice(address(token));
+        assertEq(price, PRIMARY_PRICE, "protected primary must still serve while backup is transiently down");
 
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+        uint256 strictPrice = compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+        assertEq(strictPrice, PRIMARY_PRICE, "strict-CB getter must still serve while backup is transiently down");
     }
 
     // BUG-2 FIX: Test reconfiguration emits challenge cancelled event

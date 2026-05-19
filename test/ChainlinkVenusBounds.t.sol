@@ -35,6 +35,10 @@ contract MockChainlinkProxyWithBounds {
         _updatedAt = block.timestamp;
     }
 
+    function setAggregator(address newAgg) external {
+        aggregator = newAgg;
+    }
+
     function latestRoundData()
         external
         view
@@ -121,5 +125,45 @@ contract ChainlinkVenusBoundsTest is Test {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
         assertEq(feed.getPrice(token), 2_000e8);
+    }
+
+    // A1 (2026-05-19): Chainlink proxies can rotate the underlying aggregator
+    // over time. Without a refresh path the cached min/max-answer bounds go
+    // stale silently, weakening the H-1 saturation check. `refreshFeedBounds`
+    // re-runs the aggregator probe for an already-registered token.
+    function test_refreshFeedBounds_PicksUpRotatedAggregator() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+        assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
+        assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
+
+        // Chainlink swaps the proxy's underlying aggregator to one with wider bounds.
+        int192 newMin = 0.01e8;
+        int192 newMax = 1_000_000e8;
+        MockAggregatorBounds rotated = new MockAggregatorBounds(newMin, newMax);
+        proxy.setAggregator(address(rotated));
+
+        // Until the protocol calls refresh, the cache still reflects the OLD bounds.
+        assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND, "stale bound before refresh");
+        assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND, "stale bound before refresh");
+
+        feed.refreshFeedBounds(token);
+
+        assertEq(feed.tokenFeedMinAnswer(token), newMin, "refresh must pick up new aggregator's min");
+        assertEq(feed.tokenFeedMaxAnswer(token), newMax, "refresh must pick up new aggregator's max");
+    }
+
+    function test_refreshFeedBounds_RevertsForUnsupportedToken() public {
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.TokenNotSupported.selector, token));
+        feed.refreshFeedBounds(token);
+    }
+
+    function test_refreshFeedBounds_OnlyOwner() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        feed.refreshFeedBounds(token);
     }
 }

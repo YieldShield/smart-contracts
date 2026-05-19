@@ -56,4 +56,24 @@ contract ShieldReceiptNFTGuardsTest is Test {
         nft.setTransferLockPeriod(minLock);
         assertEq(nft.transferLockPeriod(), minLock);
     }
+
+    // C10 (2026-05-19): mintWithDepositTime must reject future-dated
+    // originalDepositTime. Mirrors test_updatePosition_RevertsForFutureFeeClaimTime
+    // (the L-12 fix). Today the pool only ever passes `pos.depositTime` from an
+    // existing position so the branch is unreachable, but a future caller passing
+    // a user-influenced value must not be able to brick the NFT.
+    function test_mintWithDepositTime_RevertsForFutureDepositTime() public {
+        uint64 future = uint64(block.timestamp + 1);
+        vm.prank(pool);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.FutureTimestamp.selector, uint256(future), block.timestamp));
+        nft.mintWithDepositTime(address(this), 100, 100, 100, future);
+    }
+
+    function test_mintWithDepositTime_AcceptsCurrentTimestamp() public {
+        uint64 now64 = uint64(block.timestamp);
+        vm.prank(pool);
+        uint256 tokenId = nft.mintWithDepositTime(address(this), 100, 100, 100, now64);
+        IShieldReceiptNFT.ShieldPosition memory pos = nft.getPosition(tokenId);
+        assertEq(pos.depositTime, now64);
+    }
 }

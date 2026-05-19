@@ -571,8 +571,14 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
 
         vm.warp(block.timestamp + 7 days + 1);
         vm.prank(shieldedUser);
+        // B4: _accumulateProtectorReward now reverts on commission-bucket
+        // overflow rather than silently returning (0, 0). The forfeiture
+        // reservation hits the cap first, so the revert reports the current
+        // saturated `accumulatedCommissions` (uint128 max) as `accumulated`.
         vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.RewardAccumulationIncomplete.selector, 100e18, uint256(0), uint256(0))
+            abi.encodeWithSelector(
+                ErrorsLib.RewardAccumulationIncomplete.selector, 100e18, uint256(type(uint128).max), uint256(0)
+            )
         );
         pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
 
