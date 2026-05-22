@@ -927,6 +927,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
 
+        if (!_supportsCircuitBreaker(activeFeed, token)) {
+            revert CircuitBreakerNotSupported(token, activeFeed);
+        }
+
         // After the safe-default rename, every CB-capable feed exposes its protected
         // computation under `getPrice` (the unprotected path lives behind `getPriceUnsafe`).
         // Calling `getPrice` here therefore inherits the feed-level circuit breaker.
@@ -1173,18 +1177,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed, strictCircuitBreakerRequired[token]);
     }
 
-    function _validateStrictCircuitBreakerConfig(
-        address token,
-        address primaryFeed,
-        address backupFeed,
-        bool requireStrictSupport
-    ) internal view {
+    function _validateStrictCircuitBreakerConfig(address token, address primaryFeed, address backupFeed, bool)
+        internal
+        view
+    {
+        _requireCircuitBreakerSupport(token, primaryFeed);
+
         if (backupFeed != address(0)) {
             _requireCircuitBreakerSupport(token, backupFeed);
-        }
-
-        if (requireStrictSupport) {
-            _requireCircuitBreakerSupport(token, primaryFeed);
         }
     }
 
@@ -1195,15 +1195,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @dev A feed "supports the circuit breaker" if it advertises the safe/unsafe split by
-    ///      exposing `getPriceUnsafe(address)` AND its protected `getPrice(address)` is
-    ///      currently usable. After the safe-default rename every feed with a real
+    ///      exposing `getPriceUnsafe(address)`. After the safe-default rename every feed with a real
     ///      circuit-breaker discipline (Pyth spot/EMA, ERC4626 share-rate cap, Chainlink
     ///      stale-round + sequencer checks, CompositeOracle dual-feed) publishes the
     ///      `getPriceUnsafe` selector; feeds that only have a single canonical price
     ///      (PythEMA, Uniswap V3 TWAP) deliberately do not, and are rejected by every
-    ///      strict pricing path. The additional protected-call probe preserves the prior
-    ///      behaviour of also rejecting feeds whose protected getter currently reverts or
-    ///      returns zero.
+    ///      strict pricing path. This helper intentionally treats a revert with data as
+    ///      evidence that the selector exists but the current unsafe read is unavailable
+    ///      (for example, below-liquidity ERC4626 state). The actual protected read still
+    ///      bubbles from the caller.
     function _supportsCircuitBreaker(address feed, address token) internal view returns (bool) {
         if (feed == address(0)) {
             return false;
@@ -1217,22 +1217,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         (bool unsafeSuccess, bytes memory unsafeData) =
             feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
-        if (!unsafeSuccess || unsafeData.length < 32) {
-            return false;
+        if (unsafeSuccess) {
+            return unsafeData.length >= 32;
         }
-        if (abi.decode(unsafeData, (uint256)) == 0) {
-            return false;
-        }
-
-        // Probe the protected getter (the safe-default `getPrice`) to ensure it is currently
-        // usable. A feed whose protected path reverts is rejected just like before the
-        // safe-default rename, when this helper probed `getPriceWithCircuitBreaker` directly.
-        (bool safeSuccess, bytes memory safeData) = feed.staticcall(abi.encodeWithSignature("getPrice(address)", token));
-
-        if (!safeSuccess || safeData.length < 32) {
-            return false;
-        }
-        return abi.decode(safeData, (uint256)) != 0;
+        return unsafeData.length != 0;
     }
 
     /// @notice Detect oracle type from feed description

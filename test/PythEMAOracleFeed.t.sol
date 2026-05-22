@@ -151,15 +151,13 @@ contract PythEMAOracleFeedTest is Test {
 
     function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
-        compositeOracle.setTokenOracleFeed(address(token), address(feed));
 
-        // After the safe-default rename, the strict variant continues to reject feeds that
-        // do not advertise the safe/unsafe split. The default `getPrice` succeeds because it
-        // simply forwards to the EMA feed (which is its canonical price).
+        // CompositeOracle rejects feeds that do not advertise the safe/unsafe split at
+        // configuration time, before a protected pool can route through them.
         vm.expectRevert(
             abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(feed))
         );
-        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+        compositeOracle.setTokenOracleFeed(address(token), address(feed));
     }
 
     function testGetPriceWithPositiveExpo() public {

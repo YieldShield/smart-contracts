@@ -193,26 +193,19 @@ contract CompositeOracleTest is Test {
         compositeOracle.getPrice(address(tokenA));
     }
 
-    function testStrictCircuitBreaker_RevertsForFeedWithoutSupport() public {
-        // After the safe-default rename, `getPrice` returns the feed's canonical price even
-        // when the feed has no distinct circuit-breaker discipline (the protection in that
-        // case is provided by the dual-feed challenge gate). Only the strict variant
-        // continues to reject feeds that do not advertise the safe/unsafe split.
+    function testSetTokenOracleFeed_RevertsForFeedWithoutCircuitBreakerSupport() public {
+        // CompositeOracle now rejects feeds that do not advertise the safe/unsafe split at
+        // configuration time, preventing a later governance/factory downgrade from quietly
+        // removing the protected price path used by pools.
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(tokenA), 2e8);
 
-        compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
-
-        // Default `getPrice` succeeds (it routes to the feed's only price path).
-        assertEq(compositeOracle.getPrice(address(tokenA)), 2e8);
-
-        // Strict variant still rejects feeds without the safe/unsafe split.
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.getPriceWithStrictCircuitBreaker(address(tokenA));
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
     }
 
     function testPriceWithStrictCircuitBreaker() public {
@@ -221,18 +214,16 @@ contract CompositeOracleTest is Test {
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(tokenA)), 1e8);
     }
 
-    function testPriceWithStrictCircuitBreaker_RevertsForFeedWithoutSupport() public {
+    function testSetTokenOracleFeedWithType_RevertsForFeedWithoutCircuitBreakerSupport() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(tokenA), 2e8);
-
-        compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.getPriceWithStrictCircuitBreaker(address(tokenA));
+        compositeOracle.setTokenOracleFeedWithType(address(tokenA), address(noCircuitBreakerFeed), "mock");
     }
 
     function testSetStrictCircuitBreakerRequired_AllowsSupportedSingleFeed() public {
@@ -244,17 +235,16 @@ contract CompositeOracleTest is Test {
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(tokenA)), 1e8);
     }
 
-    function testSetStrictCircuitBreakerRequired_RevertsForUnsupportedSingleFeed() public {
+    function testSetStrictCircuitBreakerRequired_RevertsBeforeUnsupportedSingleFeedCanBeConfigured() public {
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(tokenA), 2e8);
-        compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(noCircuitBreakerFeed)
             )
         );
-        compositeOracle.setStrictCircuitBreakerRequired(address(tokenA), true);
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
     }
 
     function testSetTokenOracleFeed_RevertsWhenStrictTokenUsesUnsupportedFeed() public {
@@ -347,6 +337,11 @@ contract MockStalenessOracleFeed is IOracleFeed {
         return price == 0 ? 1e8 : price;
     }
 
+    function getPriceUnsafe(address token) external view returns (uint256) {
+        uint256 price = prices[token];
+        return price == 0 ? 1e8 : price;
+    }
+
     function decimals() external pure returns (uint8) {
         return 8;
     }
@@ -367,6 +362,10 @@ contract MockStalenessOracleFeed is IOracleFeed {
 contract MockRevertingPriceFeed is IOracleFeed {
     function getPrice(address) external pure returns (uint256) {
         revert("price unavailable");
+    }
+
+    function getPriceUnsafe(address) external pure returns (uint256) {
+        return 1e8;
     }
 
     function decimals() external pure returns (uint8) {
@@ -928,16 +927,15 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
     }
 
-    function test_SetStrictCircuitBreakerRequired_RevertsWhenProtectedPriceReverts() public {
+    function test_SetStrictCircuitBreakerRequired_AllowsSupportedFeedWhenProtectedPriceReverts() public {
         primaryOracle.setShouldRevertOnCircuitBreaker(true);
         compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(primaryOracle)
-            )
-        );
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+
+        assertTrue(compositeOracle.strictCircuitBreakerRequired(address(token)));
+        vm.expectRevert(abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(token)));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
     function test_SetDualFeed_RevertsWhenStrictTokenUsesUnsupportedBackup() public {
@@ -1028,30 +1026,19 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(strictPrice, PRIMARY_PRICE, "strict-CB getter must still serve while backup is transiently down");
     }
 
-    function test_BackupFailureFailsClosedWhenPrimaryLacksCircuitBreaker() public {
-        // A2 follow-up (Codex feedback on PR #21): if the primary lacks the
-        // safe/unsafe split, the dual-feed deviation check is the ONLY safety
-        // net. A transient backup outage must therefore still fail closed in
-        // that configuration — otherwise we silently serve an unverified
-        // primary while the dispute mechanism is offline.
+    function test_SetDualFeed_RevertsWhenPrimaryLacksCircuitBreaker() public {
+        // Feeds without the safe/unsafe split are now rejected before they can become
+        // either side of a CompositeOracle pair, so a backup outage can no longer leave
+        // the system serving an unverified primary.
         MockFeedWithoutCircuitBreaker primaryNoCb = new MockFeedWithoutCircuitBreaker();
         primaryNoCb.setPrice(address(token), PRIMARY_PRICE);
 
-        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryNoCb), address(backupOracle));
-
-        // Backup transiently fails.
-        backupOracle.setShouldRevertOnCircuitBreaker(true);
-
-        assertTrue(
-            compositeOracle.isTokenChallengeable(address(token)),
-            "backup failure must surface as disputed when primary lacks CB"
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(primaryNoCb)
+            )
         );
-
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPrice(address(token));
-
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getValue(address(token), 1e18);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryNoCb), address(backupOracle));
     }
 
     // BUG-2 FIX: Test reconfiguration emits challenge cancelled event
