@@ -320,6 +320,7 @@ contract SplitRiskPoolFactory is
     function setCompositeOracleTokenFeed(address token, address oracleFeed) external onlyGovernance {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeed(token, oracleFeed);
+        _validateCompositeOracleTokenFeed(token);
         tokenInfo[token].primaryOracleFeed = oracleFeed;
         tokenInfo[token].backupOracleFeed = address(0);
     }
@@ -330,6 +331,7 @@ contract SplitRiskPoolFactory is
     {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeedDual(token, primaryFeed, backupFeed);
+        _validateCompositeOracleTokenFeed(token);
         tokenInfo[token].primaryOracleFeed = primaryFeed;
         tokenInfo[token].backupOracleFeed = backupFeed;
     }
@@ -920,6 +922,12 @@ contract SplitRiskPoolFactory is
         ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
+    }
+
+    function _validateCompositeOracleTokenFeed(address token) internal view {
+        PoolOracleValidationLib.validateBackingTokenOracle(
+            compositeOracle, token, tokenRequiresStrictProtectedPrice[token]
+        );
     }
 
     /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for

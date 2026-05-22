@@ -524,6 +524,19 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(backupFeed, address(backupOracle), "Backup feed should be replayed");
     }
 
+    function testSetCompositeOracleTokenFeedRejectsUnsafeRevertingFeed() public {
+        RevertingUnsafeFeed badFeed = new RevertingUnsafeFeed();
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.setCompositeOracleTokenFeed(address(tokenB), address(badFeed));
+
+        assertEq(compositeOracle.getTokenOracleFeed(address(tokenB)), address(oracle), "old feed should remain active");
+        (,,, address primaryOracleFeed, address backupOracleFeed,) = factory.tokenInfo(address(tokenB));
+        assertEq(primaryOracleFeed, address(oracle), "factory token info should not update on failed validation");
+        assertEq(backupOracleFeed, address(0), "factory backup feed should remain unchanged");
+    }
+
     function testSetCompositeOracleRevertsWhenFactoryNotAuthorized() public {
         CompositeOracle newOracle = new CompositeOracle();
 
