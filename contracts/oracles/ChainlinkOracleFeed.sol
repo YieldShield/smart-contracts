@@ -171,6 +171,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         tokenFeeds[token] = aggregator;
         isTokenSupported[token] = true;
+        _clearScheduledTokenFeedRemoval(token);
 
         // Best-effort cache of the underlying aggregator's min/max answer
         // bounds. Used at runtime to reject prices saturated at the floor or
@@ -242,6 +243,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (scheduledTokenFeedRemovalTime[token] == 0) revert TokenFeedRemovalNotScheduled(token);
         delete scheduledTokenFeedRemovalTime[token];
         emit TokenFeedRemovalCancelled(token);
+    }
+
+    function _clearScheduledTokenFeedRemoval(address token) internal {
+        if (scheduledTokenFeedRemovalTime[token] != 0) {
+            delete scheduledTokenFeedRemovalTime[token];
+            emit TokenFeedRemovalCancelled(token);
+        }
     }
 
     function removeTokenFeed(address token) external onlyOwner {

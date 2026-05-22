@@ -139,6 +139,16 @@ contract PythEMAOracleFeedTest is Test {
         feed.getPrice(address(token));
     }
 
+    function testSetTokenPriceFeedClearsScheduledRemoval() public {
+        feed.scheduleRemoveToken(address(token));
+        feed.setTokenPriceFeed(address(token), FEED_ID);
+
+        assertEq(feed.scheduledTokenRemovalTime(address(token)), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + feed.TOKEN_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.TokenRemovalNotScheduled.selector, address(token)));
+        feed.removeToken(address(token));
+    }
+
     function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracle.setTokenOracleFeed(address(token), address(feed));

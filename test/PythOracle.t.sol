@@ -389,6 +389,34 @@ contract PythOracleTest is Test {
         oracle.removeToken(address(token1));
     }
 
+    function testSetTokenPriceFeedClearsScheduledRemoval() public {
+        vm.prank(owner);
+        oracle.scheduleRemoveToken(address(token1));
+
+        vm.prank(owner);
+        oracle.setTokenPriceFeed(address(token1), FEED_ID_1);
+
+        assertEq(oracle.scheduledTokenRemovalTime(address(token1)), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + oracle.TOKEN_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.TokenRemovalNotScheduled.selector, address(token1)));
+        vm.prank(owner);
+        oracle.removeToken(address(token1));
+    }
+
+    function testSetTokenCompositePriceFeedClearsScheduledRemoval() public {
+        vm.prank(owner);
+        oracle.scheduleRemoveToken(address(token1));
+
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        assertEq(oracle.scheduledTokenRemovalTime(address(token1)), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + oracle.TOKEN_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.TokenRemovalNotScheduled.selector, address(token1)));
+        vm.prank(owner);
+        oracle.removeToken(address(token1));
+    }
+
     function testSetTokenPriceFeedOnlyOwner() public {
         vm.prank(user);
         vm.expectRevert();

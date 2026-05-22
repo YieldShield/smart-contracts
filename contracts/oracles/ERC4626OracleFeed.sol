@@ -175,6 +175,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             referenceAssetsPerShare: referenceAssetsPerShare,
             maxSharePriceDeviationBps: DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS
         });
+        _clearScheduledVaultRemoval(vault);
         emit VaultRegistered(vault, underlying);
     }
 
@@ -215,6 +216,13 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         if (scheduledVaultRemovalTime[vault] == 0) revert VaultRemovalNotScheduled(vault);
         delete scheduledVaultRemovalTime[vault];
         emit VaultRemovalCancelled(vault);
+    }
+
+    function _clearScheduledVaultRemoval(address vault) internal {
+        if (scheduledVaultRemovalTime[vault] != 0) {
+            delete scheduledVaultRemovalTime[vault];
+            emit VaultRemovalCancelled(vault);
+        }
     }
 
     function removeVault(address vault) external onlyOwner {

@@ -176,6 +176,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         isToken0[token] = _isToken0;
         tokenScales[token] = _getTokenScale(token);
         isTokenSupported[token] = true;
+        _clearScheduledTokenPoolRemoval(token);
 
         emit TokenPoolSet(token, pool, _isToken0);
     }
@@ -193,6 +194,13 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         if (scheduledTokenPoolRemovalTime[token] == 0) revert TokenPoolRemovalNotScheduled(token);
         delete scheduledTokenPoolRemovalTime[token];
         emit TokenPoolRemovalCancelled(token);
+    }
+
+    function _clearScheduledTokenPoolRemoval(address token) internal {
+        if (scheduledTokenPoolRemovalTime[token] != 0) {
+            delete scheduledTokenPoolRemovalTime[token];
+            emit TokenPoolRemovalCancelled(token);
+        }
     }
 
     function removeTokenPool(address token) external onlyOwner {

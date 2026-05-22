@@ -97,6 +97,19 @@ contract ChainlinkVenusBoundsTest is Test {
         assertEq(feed.tokenFeedMaxAnswer(token), 0);
     }
 
+    function test_setTokenFeed_ClearsScheduledRemoval() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+        feed.scheduleRemoveTokenFeed(token);
+
+        feed.setTokenFeed(token, address(proxy));
+
+        assertEq(feed.scheduledTokenFeedRemovalTime(token), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + feed.TOKEN_FEED_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.TokenFeedRemovalNotScheduled.selector, token));
+        feed.removeTokenFeed(token);
+    }
+
     function test_getPrice_RevertsWhenPinnedAtFloor() public {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));

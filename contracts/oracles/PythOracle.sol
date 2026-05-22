@@ -183,6 +183,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         tokenToPriceFeedId[token] = feedId;
         tokenToQuotePriceFeedId[token] = bytes32(0);
         isTokenSupported[token] = true;
+        _clearScheduledTokenRemoval(token);
 
         emit TokenPriceFeedSet(token, feedId);
     }
@@ -199,6 +200,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         tokenToPriceFeedId[token] = baseFeedId;
         tokenToQuotePriceFeedId[token] = quoteUsdFeedId;
         isTokenSupported[token] = true;
+        _clearScheduledTokenRemoval(token);
 
         emit TokenCompositePriceFeedSet(token, baseFeedId, quoteUsdFeedId);
     }
@@ -216,6 +218,13 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         if (scheduledTokenRemovalTime[token] == 0) revert TokenRemovalNotScheduled(token);
         delete scheduledTokenRemovalTime[token];
         emit TokenRemovalCancelled(token);
+    }
+
+    function _clearScheduledTokenRemoval(address token) internal {
+        if (scheduledTokenRemovalTime[token] != 0) {
+            delete scheduledTokenRemovalTime[token];
+            emit TokenRemovalCancelled(token);
+        }
     }
 
     function removeToken(address token) external onlyOwner {

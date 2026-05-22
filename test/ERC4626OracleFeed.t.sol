@@ -125,6 +125,16 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(erc4626Feed.vaultToUnderlying(address(vault)), address(0));
     }
 
+    function test_RegisterVault_ClearsScheduledRemoval() public {
+        erc4626Feed.scheduleRemoveVault(address(vault));
+        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
+
+        assertEq(erc4626Feed.scheduledVaultRemovalTime(address(vault)), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + erc4626Feed.VAULT_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(ERC4626OracleFeed.VaultRemovalNotScheduled.selector, address(vault)));
+        erc4626Feed.removeVault(address(vault));
+    }
+
     // ============ Price Calculation Tests ============
 
     function test_GetPrice_ReturnsCorrectNAV() public view {

@@ -112,6 +112,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
         tokenToPriceFeedId[token] = feedId;
         isTokenSupported[token] = true;
+        _clearScheduledTokenRemoval(token);
 
         emit TokenPriceFeedSet(token, feedId);
     }
@@ -129,6 +130,13 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (scheduledTokenRemovalTime[token] == 0) revert TokenRemovalNotScheduled(token);
         delete scheduledTokenRemovalTime[token];
         emit TokenRemovalCancelled(token);
+    }
+
+    function _clearScheduledTokenRemoval(address token) internal {
+        if (scheduledTokenRemovalTime[token] != 0) {
+            delete scheduledTokenRemovalTime[token];
+            emit TokenRemovalCancelled(token);
+        }
     }
 
     function removeToken(address token) external onlyOwner {

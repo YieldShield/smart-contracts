@@ -178,6 +178,21 @@ contract UniswapV3TWAPFeedTest is Test {
         assertEq(harness.tokenPools(address(token)), address(0));
     }
 
+    function test_setTokenPool_ClearsScheduledRemoval() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+        harness.scheduleRemoveTokenPool(address(token));
+
+        harness.setTokenPool(address(token), address(pool));
+
+        assertEq(harness.scheduledTokenPoolRemovalTime(address(token)), 0, "schedule should be cleared");
+        vm.warp(block.timestamp + harness.TOKEN_POOL_REMOVAL_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.TokenPoolRemovalNotScheduled.selector, address(token)));
+        harness.removeTokenPool(address(token));
+    }
+
     function test_getPrice_RevertsWhenRegisteredPoolLiquidityFallsBelowFloor() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         MockUniswapV3Pool pool =
