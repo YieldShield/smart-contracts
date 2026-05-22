@@ -7,14 +7,14 @@
   },
   "lib/openzeppelin-contracts": {
     "tag": {
-      "name": "v5.4.0",
-      "rev": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+      "name": "v5.6.1",
+      "rev": "cd05883078060e0cd8a7bd36636944570dbe1722"
     }
   },
   "lib/openzeppelin-contracts-upgradeable": {
     "tag": {
-      "name": "v5.0.2",
-      "rev": "723f8cab09cdae1aca9ec9cc1cfa040c2d4b06c1"
+      "name": "v5.6.1",
+      "rev": "d0400388f533a30b4e6f41a26b581028e94d363b"
     }
   },
   "lib/pyth-sdk-solidity": {
