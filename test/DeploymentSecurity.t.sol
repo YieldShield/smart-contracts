@@ -117,6 +117,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
         assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), bootstrapHolder));
         assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(timelock)));
+        _assertSoleSelfAdmin(timelock);
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
         assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(governor)));
@@ -130,6 +131,49 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         vm.warp(block.timestamp + 1);
 
         assertGe(ysToken.getVotes(bootstrapHolder), governor.proposalThreshold());
+    }
+
+    function test_TimelockRejectsExternalDefaultAdminGrant() public {
+        (, TimelockController timelock,) = _deployGovernance();
+        address attacker = address(0xBEEF);
+        bytes32 defaultAdminRole = timelock.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(address(timelock));
+        vm.expectRevert(abi.encodeWithSelector(YSTimelockController.DefaultAdminMustBeTimelock.selector, attacker));
+        timelock.grantRole(defaultAdminRole, attacker);
+    }
+
+    function test_TimelockRejectsSelfDefaultAdminRevocation() public {
+        (, TimelockController timelock,) = _deployGovernance();
+        bytes32 defaultAdminRole = timelock.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(address(timelock));
+        vm.expectRevert(YSTimelockController.TimelockDefaultAdminCannotBeRevoked.selector);
+        timelock.revokeRole(defaultAdminRole, address(timelock));
+
+        vm.prank(address(timelock));
+        vm.expectRevert(YSTimelockController.TimelockDefaultAdminCannotBeRevoked.selector);
+        timelock.renounceRole(defaultAdminRole, address(timelock));
+    }
+
+    function test_TimelockRejectsSelfManagingOperationalRoles() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        bytes32 proposerRole = timelock.PROPOSER_ROLE();
+        address attacker = address(0xBEEF);
+
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(YSTimelockController.TimelockOperationalRoleFrozen.selector, proposerRole, attacker)
+        );
+        timelock.grantRole(proposerRole, attacker);
+
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSTimelockController.TimelockOperationalRoleFrozen.selector, proposerRole, address(governor)
+            )
+        );
+        timelock.revokeRole(proposerRole, address(governor));
     }
 
     function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
@@ -385,5 +429,11 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(governor));
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
+    }
+
+    function _assertSoleSelfAdmin(TimelockController timelock) internal view {
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+        assertEq(ysTimelock.getRoleMemberCount(ysTimelock.DEFAULT_ADMIN_ROLE()), 1);
+        assertEq(ysTimelock.getRoleMember(ysTimelock.DEFAULT_ADMIN_ROLE(), 0), address(timelock));
     }
 }

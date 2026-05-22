@@ -343,6 +343,14 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), deployer));
     }
 
+    function test_TimelockHasSoleSelfAdmin() public view {
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+
+        assertTrue(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(timelock)));
+        assertEq(ysTimelock.getRoleMemberCount(ysTimelock.DEFAULT_ADMIN_ROLE()), 1);
+        assertEq(ysTimelock.getRoleMember(ysTimelock.DEFAULT_ADMIN_ROLE(), 0), address(timelock));
+    }
+
     function test_GovernorHasRequiredTimelockRoles() public view {
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
@@ -627,27 +635,18 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         factory.setGovernanceTimelock(address(zeroDelayTimelock));
     }
 
-    function test_SetGovernanceTimelock_RevertsForPublicTimelockRetainingPriorGovernanceAdmin() public {
+    function test_SetGovernanceTimelock_CannotGrantPriorGovernanceDefaultAdmin() public {
         vm.chainId(421614);
 
-        SplitRiskPool poolImpl = new SplitRiskPool();
-        SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImpl));
         address[] memory emptyAddrs = new address[](0);
         TimelockController unsafeTimelock =
             TimelockController(payable(address(new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer))));
-        unsafeTimelock.grantRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), address(timelock));
-        unsafeTimelock.renounceRole(unsafeTimelock.DEFAULT_ADMIN_ROLE(), deployer);
+        bytes32 defaultAdminRole = unsafeTimelock.DEFAULT_ADMIN_ROLE();
 
-        // H-8: count is 2 (self + prior timelock).
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockHasExtraAdmins.selector,
-                address(unsafeTimelock),
-                uint256(2)
-            )
+            abi.encodeWithSelector(YSTimelockController.DefaultAdminMustBeTimelock.selector, address(timelock))
         );
-        vm.prank(address(timelock));
-        factory.setGovernanceTimelock(address(unsafeTimelock));
+        unsafeTimelock.grantRole(defaultAdminRole, address(timelock));
     }
 
     function test_SetGovernanceTimelock_RevertsForExtraOperationalRoleMembers() public {
