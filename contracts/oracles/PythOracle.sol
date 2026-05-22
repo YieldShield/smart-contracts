@@ -52,8 +52,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     ///      base feed does not implicitly relax a fast quote/USD market feed.
     mapping(bytes32 => uint256) public maxPriceAgeForFeedId;
 
-    /// @notice Optional maximum publish-time distance between composite base and quote feeds.
-    /// @dev Zero disables the check. Applies to both spot and EMA composite reads.
+    /// @notice Maximum publish-time distance between composite base and quote feeds.
+    /// @dev Applies to both spot and EMA composite reads.
     uint256 public maxCompositePublishTimeSkew;
 
     mapping(address => uint256) public scheduledTokenRemovalTime;
@@ -137,8 +137,11 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Custom error for price age exceeding upper bound
     error PriceAgeTooHigh(uint256 provided, uint256 maximum);
 
+    error InvalidCompositePublishTimeSkew(uint256 provided, uint256 minimum);
+
     /// @notice Maximum allowed maxPriceAge value (24 hours)
     uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
+    uint256 public constant DEFAULT_COMPOSITE_PUBLISH_TIME_SKEW = 300;
 
     uint256 public constant TOKEN_REMOVAL_DELAY = 1 days;
     uint256 public constant TOKEN_REMOVAL_EXPIRY = 7 days;
@@ -178,6 +181,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         maxPriceDeviation = 500; // Default 5% deviation threshold
         maxConfidenceBps = 200; // Default 2% spot confidence threshold
         maxEmaConfidenceBps = 1000; // Default 10% EMA confidence threshold (M-6)
+        maxCompositePublishTimeSkew = DEFAULT_COMPOSITE_PUBLISH_TIME_SKEW;
     }
 
     /// @notice Update price feeds with given update data
@@ -221,6 +225,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         if (token == address(0)) revert("Invalid token address");
         if (baseFeedId == bytes32(0)) revert InvalidPriceFeedId(baseFeedId);
         if (quoteUsdFeedId == bytes32(0)) revert InvalidPriceFeedId(quoteUsdFeedId);
+        if (maxCompositePublishTimeSkew == 0) revert InvalidCompositePublishTimeSkew(0, 1);
 
         tokenToPriceFeedId[token] = baseFeedId;
         tokenToQuotePriceFeedId[token] = quoteUsdFeedId;
@@ -307,8 +312,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     }
 
     /// @notice Set max publish-time skew between composite base and quote feeds.
-    /// @dev Set to 0 to disable the skew check.
     function setMaxCompositePublishTimeSkew(uint256 maxSkew) external onlyOwner {
+        if (maxSkew == 0) revert InvalidCompositePublishTimeSkew(maxSkew, 1);
         if (maxSkew > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(maxSkew, MAX_PRICE_AGE_LIMIT);
         uint256 oldSkew = maxCompositePublishTimeSkew;
         maxCompositePublishTimeSkew = maxSkew;
@@ -566,9 +571,6 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         returns (bool)
     {
         uint256 maxSkew = maxCompositePublishTimeSkew;
-        if (maxSkew == 0) {
-            return false;
-        }
         uint256 skew = basePublishTime > quotePublishTime
             ? basePublishTime - quotePublishTime
             : quotePublishTime - basePublishTime;

@@ -36,6 +36,11 @@ contract PythOracleTest is Test {
         // Deploy PythOracle
         vm.prank(owner);
         oracle = new PythOracle(address(mockPyth), MAX_PRICE_AGE);
+        assertEq(
+            oracle.maxCompositePublishTimeSkew(),
+            oracle.DEFAULT_COMPOSITE_PUBLISH_TIME_SKEW(),
+            "composite skew should default on"
+        );
 
         // Deploy test tokens
         token1 = new MockERC20("Token 1", "T1");
@@ -510,6 +515,12 @@ contract PythOracleTest is Test {
         assertEq(oracle.getEmaPrice(address(token1)), 104_500_000);
     }
 
+    function testSetMaxCompositePublishTimeSkewRejectsZero() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidCompositePublishTimeSkew.selector, 0, 1));
+        oracle.setMaxCompositePublishTimeSkew(0);
+    }
+
     function testCompositePriceFeed_UsesSeparateQuoteFeedMaxAge() public {
         vm.startPrank(owner);
         oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
@@ -541,8 +552,8 @@ contract PythOracleTest is Test {
 
     function testCompositePriceFeed_RevertsWhenPublishTimeSkewTooHigh() public {
         vm.startPrank(owner);
-        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
         oracle.setMaxCompositePublishTimeSkew(10);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 30);
