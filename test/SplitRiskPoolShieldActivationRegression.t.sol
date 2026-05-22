@@ -641,6 +641,23 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(pool.totalProtectorTokens(), 100e18, "failed fee pricing should leave backing accounting intact");
     }
 
+    function test_sameAssetShieldedWithdrawRequiresCurrentShieldedPriceForFees() public {
+        vm.prank(protector1);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setShieldedCircuitBreakerReverts(true);
+
+        vm.prank(shieldedUser);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken)));
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
+
+        assertEq(pool.totalShieldedTokens(), 100e18, "failed fee pricing should leave shielded accounting intact");
+        assertEq(pool.totalProtectorTokens(), 100e18, "failed fee pricing should leave backing accounting intact");
+    }
+
     function test_crossAssetShieldActivationRevertsIfForfeitureCannotBeReserved() public {
         vm.prank(protector1);
         pool.depositBackingAsset(address(backingToken), 100e18, 0);

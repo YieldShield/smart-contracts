@@ -1669,8 +1669,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // pending dual-feed challenge. Previously fees silently rounded to
             // zero in that window, so a user could intentionally trigger a
             // challenge to exit without paying yield fees. Generic oracle
-            // outages (price unavailable but no formal challenge) still
-            // permit a no-fee exit so users aren't trapped by a broken feed.
+            // outages also fail closed here so yield fees cannot be bypassed by
+            // waiting for a protected-price outage.
             //
             // B6: Same-asset exits also release the full
             // `pos.collateralAmount` from `totalShieldCollateralAmount` below,
@@ -1681,7 +1681,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-                _tryCalculateAndAccumulateFees(tokenId);
+                _calculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         } else {
             // Shield activation also consumes the shielded position, so it must

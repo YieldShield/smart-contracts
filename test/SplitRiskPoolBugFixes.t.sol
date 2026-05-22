@@ -258,10 +258,9 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         vm.stopPrank();
     }
 
-    /// @notice Same-asset withdrawal should remain available even when protected
-    ///         shielded pricing is unavailable; the position exits without newly
-    ///         priced fees instead of trapping the user.
-    function test_shieldedWithdraw_OracleUnavailable_SucceedsWithoutNewFees() public {
+    /// @notice Same-asset withdrawal should not bypass yield fees when protected
+    ///         shielded pricing is unavailable.
+    function test_shieldedWithdraw_OracleUnavailable_RevertsWithoutAccruingFees() public {
         vm.startPrank(shielded1);
         shieldedToken.approve(address(pool), 100e18);
         pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
@@ -272,17 +271,15 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         // ...then oracle failure / circuit-breaker trip mid-position.
         oracle.setPrice(address(shieldedToken), 0);
 
-        uint256 balanceBefore = shieldedToken.balanceOf(shielded1);
         uint256 reservedFeesBefore = pool.getReservedFees();
 
         vm.prank(shielded1);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(shieldedToken)));
         pool.shieldedWithdraw(0, address(shieldedToken), 0);
 
-        assertEq(shieldedToken.balanceOf(shielded1), balanceBefore + 100e18, "user should receive full same-asset exit");
         assertEq(pool.getReservedFees(), reservedFeesBefore, "unavailable pricing should not mint new fees");
-        assertEq(pool.totalShieldedTokens(), 0, "position should be fully removed");
-        vm.expectRevert();
-        shieldNFT.ownerOf(0);
+        assertEq(pool.totalShieldedTokens(), 100e18, "failed pricing should leave position accounting intact");
+        assertEq(shieldNFT.ownerOf(0), shielded1, "failed pricing should leave NFT intact");
     }
 
     /// @notice Test normal operation with valid prices
