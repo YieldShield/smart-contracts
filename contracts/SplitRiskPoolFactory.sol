@@ -26,6 +26,11 @@ interface IOwnableOracleAdmin {
 }
 
 interface ICompositeOracleAdmin {
+    function setTokenOracleFeed(address token, address oracleFeed) external;
+    function setTokenOracleFeedDual(address token, address primaryFeed, address backupFeed) external;
+    function scheduleRemoveTokenOracleFeed(address token) external;
+    function cancelScheduledRemoveTokenOracleFeed(address token) external;
+    function removeTokenOracleFeed(address token) external;
     function setAuthorizedCaller(address caller, bool authorized) external;
     function setDeviationThreshold(uint256 newThresholdBps) external;
     function setChallengeDuration(uint256 newDurationSec) external;
@@ -46,6 +51,7 @@ interface IPythOracleAdmin {
     function setMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;
     function setMaxPriceDeviation(uint256 maxPriceDeviation) external;
     function setMaxConfidenceBps(uint256 maxConfidenceBps) external;
+    function setMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external;
 }
 
 interface IERC4626OracleFeedAdmin {
@@ -53,6 +59,9 @@ interface IERC4626OracleFeedAdmin {
     function registerVault(address vault, address underlying) external;
     function refreshVaultSharePriceReference(address vault) external;
     function setVaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
+    function scheduleRemoveVault(address vault) external;
+    function cancelScheduledRemoveVault(address vault) external;
+    function removeVault(address vault) external;
 }
 
 /// @title SplitRiskPoolFactory
@@ -304,6 +313,29 @@ contract SplitRiskPoolFactory is
         ICompositeOracleAdmin(compositeOracle).setChallengeDuration(newDurationSec);
     }
 
+    function setCompositeOracleTokenFeed(address token, address oracleFeed) external onlyGovernance {
+        _compositeOracleAdmin().setTokenOracleFeed(token, oracleFeed);
+    }
+
+    function setCompositeOracleTokenFeedDual(address token, address primaryFeed, address backupFeed)
+        external
+        onlyGovernance
+    {
+        _compositeOracleAdmin().setTokenOracleFeedDual(token, primaryFeed, backupFeed);
+    }
+
+    function scheduleCompositeOracleTokenFeedRemoval(address token) external onlyGovernance {
+        _compositeOracleAdmin().scheduleRemoveTokenOracleFeed(token);
+    }
+
+    function cancelScheduledCompositeOracleTokenFeedRemoval(address token) external onlyGovernance {
+        _compositeOracleAdmin().cancelScheduledRemoveTokenOracleFeed(token);
+    }
+
+    function removeCompositeOracleTokenFeed(address token) external onlyGovernance {
+        _compositeOracleAdmin().removeTokenOracleFeed(token);
+    }
+
     function scheduleCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
         _requireManagedOracleConfigured(compositeOracle);
         ICompositeOracleAdmin(compositeOracle).scheduleForceResetToPrimary(token);
@@ -368,6 +400,10 @@ contract SplitRiskPoolFactory is
         _pythOracleAdmin().setMaxConfidenceBps(maxConfidenceBps);
     }
 
+    function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external onlyGovernance {
+        _pythOracleAdmin().setMaxEmaConfidenceBps(maxEmaConfidenceBps);
+    }
+
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external onlyGovernance {
         _erc4626OracleFeedAdmin().setUnderlyingPriceOracle(underlyingPriceOracle);
     }
@@ -382,6 +418,18 @@ contract SplitRiskPoolFactory is
 
     function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external onlyGovernance {
         _erc4626OracleFeedAdmin().setVaultSharePriceDeviation(vault, maxDeviationBps);
+    }
+
+    function scheduleERC4626VaultRemoval(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().scheduleRemoveVault(vault);
+    }
+
+    function cancelScheduledERC4626VaultRemoval(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().cancelScheduledRemoveVault(vault);
+    }
+
+    function removeERC4626Vault(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().removeVault(vault);
     }
 
     /**
@@ -920,6 +968,11 @@ contract SplitRiskPoolFactory is
         } catch {
             revert ErrorsLib.InvalidAssetAddress();
         }
+    }
+
+    function _compositeOracleAdmin() internal view returns (ICompositeOracleAdmin) {
+        _requireManagedOracleConfigured(compositeOracle);
+        return ICompositeOracleAdmin(compositeOracle);
     }
 
     function _pythOracleAdmin() internal view returns (IPythOracleAdmin) {

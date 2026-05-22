@@ -14,6 +14,8 @@ import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
+import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -446,6 +448,94 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             abi.encodeWithSelector(CompositeOracle.EmergencyOverrideNotScheduled.selector, address(tokenB), action)
         );
         factory.executeCompositeOracleEmergencyCancelChallenge(address(tokenB));
+    }
+
+    function testFactoryCanManageCompositeOracleFeedsWhenAuthorized() public {
+        MockOracle backupOracle = new MockOracle();
+        backupOracle.setPrice(address(tokenB), 1e8);
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeedDual(address(tokenB), address(oracle), address(backupOracle));
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            compositeOracle.getTokenDualFeedStatus(address(tokenB));
+        assertTrue(isDualFeed, "factory should configure dual feed");
+        assertEq(primaryFeed, address(oracle), "primary feed should match");
+        assertEq(backupFeed, address(backupOracle), "backup feed should match");
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeed(address(tokenB), address(oracle));
+
+        (isDualFeed, primaryFeed, backupFeed,,,) = compositeOracle.getTokenDualFeedStatus(address(tokenB));
+        assertFalse(isDualFeed, "factory should restore single-feed mode");
+        assertEq(primaryFeed, address(oracle), "primary feed should remain configured");
+        assertEq(backupFeed, address(0), "backup feed should be cleared");
+    }
+
+    function testFactoryCanRemoveCompositeOracleFeedWhenAuthorized() public {
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleTokenFeedRemoval(address(tokenB));
+        assertEq(
+            compositeOracle.scheduledRemovalTime(address(tokenB)),
+            block.timestamp + compositeOracle.FEED_REMOVAL_DELAY(),
+            "removal should be scheduled"
+        );
+
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+        vm.prank(governanceTimelock);
+        factory.removeCompositeOracleTokenFeed(address(tokenB));
+
+        assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removed");
+    }
+
+    function testFactoryCanCancelCompositeOracleFeedRemovalWhenAuthorized() public {
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleTokenFeedRemoval(address(tokenB));
+
+        vm.prank(governanceTimelock);
+        factory.cancelScheduledCompositeOracleTokenFeedRemoval(address(tokenB));
+
+        assertEq(compositeOracle.scheduledRemovalTime(address(tokenB)), 0, "schedule should be cleared");
+    }
+
+    function testFactoryCanSetManagedPythEmaConfidence() public {
+        PythOracle pythOracle = new PythOracle(address(0x1234), 60);
+        pythOracle.transferOwnership(address(factory));
+        factory.setManagedPythOracle(address(pythOracle));
+
+        vm.prank(governanceTimelock);
+        factory.setPythMaxEmaConfidenceBps(1200);
+
+        assertEq(pythOracle.maxEmaConfidenceBps(), 1200, "EMA confidence should update");
+    }
+
+    function testFactoryCanRemoveManagedERC4626Vault() public {
+        ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(oracle));
+        erc4626Feed.transferOwnership(address(factory));
+        factory.setManagedERC4626OracleFeed(address(erc4626Feed));
+
+        vm.prank(governanceTimelock);
+        factory.registerERC4626Vault(address(tokenA), address(tokenB));
+
+        vm.prank(governanceTimelock);
+        factory.scheduleERC4626VaultRemoval(address(tokenA));
+        assertEq(
+            erc4626Feed.scheduledVaultRemovalTime(address(tokenA)),
+            block.timestamp + erc4626Feed.VAULT_REMOVAL_DELAY(),
+            "vault removal should be scheduled"
+        );
+
+        vm.prank(governanceTimelock);
+        factory.cancelScheduledERC4626VaultRemoval(address(tokenA));
+        assertEq(erc4626Feed.scheduledVaultRemovalTime(address(tokenA)), 0, "vault removal should cancel");
+
+        vm.prank(governanceTimelock);
+        factory.scheduleERC4626VaultRemoval(address(tokenA));
+        vm.warp(block.timestamp + erc4626Feed.VAULT_REMOVAL_DELAY());
+        vm.prank(governanceTimelock);
+        factory.removeERC4626Vault(address(tokenA));
+
+        assertEq(erc4626Feed.vaultToUnderlying(address(tokenA)), address(0), "vault should be removed");
     }
 
     function testFactoryInterfaceExposesAdminSurface() public {

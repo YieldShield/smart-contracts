@@ -103,6 +103,11 @@ interface ISplitRiskPoolFactory {
     function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external;
     function setCompositeOracleDeviationThreshold(uint256 newThresholdBps) external;
     function setCompositeOracleChallengeDuration(uint256 newDurationSec) external;
+    function setCompositeOracleTokenFeed(address token, address oracleFeed) external;
+    function setCompositeOracleTokenFeedDual(address token, address primaryFeed, address backupFeed) external;
+    function scheduleCompositeOracleTokenFeedRemoval(address token) external;
+    function cancelScheduledCompositeOracleTokenFeedRemoval(address token) external;
+    function removeCompositeOracleTokenFeed(address token) external;
     function scheduleCompositeOracleForceResetToPrimary(address token) external;
     function executeCompositeOracleForceResetToPrimary(address token) external;
     function scheduleCompositeOracleEmergencyCancelChallenge(address token) external;
@@ -117,10 +122,14 @@ interface ISplitRiskPoolFactory {
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external;
     function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external;
+    function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external;
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external;
     function registerERC4626Vault(address vault, address underlying) external;
     function refreshERC4626VaultSharePriceReference(address vault) external;
     function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
+    function scheduleERC4626VaultRemoval(address vault) external;
+    function cancelScheduledERC4626VaultRemoval(address vault) external;
+    function removeERC4626Vault(address vault) external;
 
     // Owner Functions (initial deployment only)
     function addTokenInitial(
