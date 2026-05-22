@@ -33,10 +33,13 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes4 private constant VERSION_SELECTOR = bytes4(keccak256("VERSION()"));
     bytes4 private constant NONCE_SELECTOR = bytes4(keccak256("nonce()"));
     bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
+    bytes4 private constant MASTER_COPY_SELECTOR = bytes4(keccak256("masterCopy()"));
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
     error InvalidProductionBootstrapHolder(address holder);
+    error InvalidProductionBootstrapHolderCodehash(address holder, bytes32 actualCodehash, bytes32 expectedCodehash);
+    error InvalidProductionBootstrapHolderSingleton(address holder, address actualSingleton, address expectedSingleton);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
@@ -68,7 +71,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             revert ProductionTimelockTooShort(timelockDelay, MIN_PRODUCTION_TIMELOCK_DELAY);
         }
         bootstrapHolder = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER");
-        _validateProductionBootstrapHolder(bootstrapHolder);
+        bytes32 expectedBootstrapHolderCodehash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH");
+        address expectedBootstrapHolderSingleton = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON");
+        _validateProductionBootstrapHolder(
+            bootstrapHolder, expectedBootstrapHolderCodehash, expectedBootstrapHolderSingleton
+        );
 
         address[] memory emptyAccounts = new address[](0);
         TimelockController timelock = TimelockController(
@@ -209,21 +216,36 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         return block.chainid == 31337 || block.chainid == 1337;
     }
 
-    /// @dev L-9: this check enforces Safe SHAPE (VERSION, nonce, domainSeparator,
-    ///      threshold ≥ 2, owners ≥ 2, no duplicates, no zero owners). It does
-    ///      NOT pin a per-chain Safe singleton codehash because Gnosis ships
-    ///      different singleton bytecode per chain version (1.3.0, 1.4.1, …)
-    ///      and per L2 variant; maintaining a baked-in table would create a
-    ///      deploy-blocking footgun on new chains. Operators who want stricter
-    ///      identity assurance should staticcall the Safe master copy
-    ///      explicitly and assert against a known-good per-chain codehash
-    ///      before invoking this deploy script.
-    function _validateProductionBootstrapHolder(address holder) internal view {
+    /// @dev Enforces Safe shape and pins the bootstrap holder to an
+    ///      operator-reviewed Safe proxy runtime codehash plus singleton/master
+    ///      copy. Gnosis Safe bytecode differs across chains and versions, so
+    ///      expected values are supplied per deployment via
+    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH and
+    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON.
+    function _validateProductionBootstrapHolder(address holder, bytes32 expectedCodehash, address expectedSingleton)
+        internal
+        view
+    {
         if (holder == address(0) || holder.code.length == 0) {
             revert InvalidProductionBootstrapHolder(holder);
         }
+        if (expectedCodehash == bytes32(0) || holder.codehash != expectedCodehash) {
+            revert InvalidProductionBootstrapHolderCodehash(holder, holder.codehash, expectedCodehash);
+        }
+        if (expectedSingleton == address(0)) {
+            revert InvalidProductionBootstrapHolderSingleton(holder, address(0), expectedSingleton);
+        }
 
-        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSelector(VERSION_SELECTOR));
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSelector(MASTER_COPY_SELECTOR));
+        if (!success || data.length < 32) {
+            revert InvalidProductionBootstrapHolderSingleton(holder, address(0), expectedSingleton);
+        }
+        address actualSingleton = abi.decode(data, (address));
+        if (actualSingleton != expectedSingleton) {
+            revert InvalidProductionBootstrapHolderSingleton(holder, actualSingleton, expectedSingleton);
+        }
+
+        (success, data) = holder.staticcall(abi.encodeWithSelector(VERSION_SELECTOR));
         if (!success || data.length < 96 || bytes(abi.decode(data, (string))).length == 0) {
             revert InvalidProductionBootstrapHolder(holder);
         }

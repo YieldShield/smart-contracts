@@ -17,7 +17,22 @@ import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 
 contract ProductionDeployHarness is DeployYieldShieldProduction {
     function validateProductionBootstrapHolder(address holder) external view {
-        _validateProductionBootstrapHolder(holder);
+        _validateProductionBootstrapHolder(holder, holder.codehash, _readMasterCopy(holder));
+    }
+
+    function validateProductionBootstrapHolderPinned(
+        address holder,
+        bytes32 expectedCodehash,
+        address expectedSingleton
+    ) external view {
+        _validateProductionBootstrapHolder(holder, expectedCodehash, expectedSingleton);
+    }
+
+    function _readMasterCopy(address holder) internal view returns (address singleton) {
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("masterCopy()"));
+        if (success && data.length >= 32) {
+            singleton = abi.decode(data, (address));
+        }
     }
 }
 
@@ -42,6 +57,7 @@ contract SelectorsOnlyBootstrapHolder {
 }
 
 contract SafeLikeBootstrapHolder {
+    address internal constant SAFE_SINGLETON = address(0x5AFE);
     address[] internal owners;
     uint256 internal threshold;
     uint256 internal safeNonce;
@@ -71,6 +87,10 @@ contract SafeLikeBootstrapHolder {
 
     function domainSeparator() external view returns (bytes32) {
         return safeDomainSeparator;
+    }
+
+    function masterCopy() external pure returns (address) {
+        return SAFE_SINGLETON;
     }
 }
 
@@ -120,7 +140,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderSingleton.selector,
+                address(contractHolder),
+                address(0),
+                address(0)
             )
         );
         harness.validateProductionBootstrapHolder(address(contractHolder));
@@ -134,6 +157,46 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
 
         harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsWrongBootstrapHolderCodehash() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        bytes32 wrongCodehash = keccak256("wrong bootstrap holder codehash");
+        address expectedSingleton = contractHolder.masterCopy();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderCodehash.selector,
+                address(contractHolder),
+                address(contractHolder).codehash,
+                wrongCodehash
+            )
+        );
+        harness.validateProductionBootstrapHolderPinned(address(contractHolder), wrongCodehash, expectedSingleton);
+    }
+
+    function test_ProductionBootstrap_RejectsWrongBootstrapHolderSingleton() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderSingleton.selector,
+                address(contractHolder),
+                contractHolder.masterCopy(),
+                address(0xBAD)
+            )
+        );
+        harness.validateProductionBootstrapHolderPinned(
+            address(contractHolder), address(contractHolder).codehash, address(0xBAD)
+        );
     }
 
     function test_ProductionBootstrap_RejectsSafeLikeHolderWithInvalidThreshold() public {
@@ -159,7 +222,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                DeployYieldShieldProduction.InvalidProductionBootstrapHolder.selector, address(contractHolder)
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderSingleton.selector,
+                address(contractHolder),
+                address(0),
+                address(0)
             )
         );
         harness.validateProductionBootstrapHolder(address(contractHolder));
