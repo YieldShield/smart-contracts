@@ -259,11 +259,11 @@ contract SplitRiskPoolFactory is
      *      This recipient will receive protocol
      *      fees from all pools created after this update. Existing pools are not affected.
      * @param newRecipient Address of the new default protocol fee recipient
-     * @custom:error InvalidAssetAddress If newRecipient is zero address
+     * @custom:error InvalidAssetAddress If newRecipient is zero address or this factory
      */
     function setDefaultProtocolFeeRecipient(address newRecipient) external {
         _requireGovernanceOrBootstrapOwner(defaultProtocolFeeRecipient == address(0) && _bootstrapOwnerActionsAllowed());
-        if (newRecipient == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        if (newRecipient == address(0) || newRecipient == address(this)) revert ErrorsLib.InvalidAssetAddress();
         address previousRecipient = defaultProtocolFeeRecipient;
         defaultProtocolFeeRecipient = newRecipient;
         emit EventsLib.ProtocolFeeRecipientUpdated(previousRecipient, newRecipient);

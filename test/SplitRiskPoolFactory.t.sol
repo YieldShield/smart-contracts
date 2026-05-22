@@ -642,6 +642,12 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracle(address(0));
     }
 
+    function testRevertSetDefaultProtocolFeeRecipientToFactory() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.setDefaultProtocolFeeRecipient(address(factory));
+    }
+
     function testGovernanceCanUpgradeFactoryAndPreserveState() public {
         address createdPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
         ISplitRiskPoolFactory.PoolInfo memory poolInfoBefore = factory.getPoolInfo(createdPool);

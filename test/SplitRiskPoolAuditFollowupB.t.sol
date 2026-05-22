@@ -144,6 +144,22 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1_000e18, 0);
     }
 
+    function _updateConfig(uint256 protocolFee, address recipient) internal {
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            1e18,
+            1_000_000e18,
+            1e18,
+            1_000_000e18,
+            1_000_000e8,
+            1 days,
+            28 days,
+            protocolFee,
+            recipient,
+            address(compositeOracle)
+        );
+    }
+
     // ----------------------------------------------------------------------
     // B4: commission overflow → revert, not silent zero
     // ----------------------------------------------------------------------
@@ -210,6 +226,29 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         assertEq(pool.rewardPerShareAccumulated(), rewardPerShareBefore, "reward accumulator must not change");
         assertEq(pool.accumulatedCommissions(), commissionsBefore, "commissions must not be reserved");
         assertEq(pool.currentEpochCommissionReserve(), reserveBefore, "current reserve must not change");
+    }
+
+    function test_B4_claimRewards_RevertsWhenNoProtectorRedirectCannotFitProtocolBucket() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+        _updateConfig(0, protocolFeeRecipient);
+
+        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(uint256(0));
+        stdstore.target(address(pool)).sig("totalProtectorTokens()").checked_write(uint256(0));
+        stdstore.target(address(pool)).sig("accumulatedProtocolFee()").checked_write(ConstantsLib.MAX_SAFE_ACCUMULATION);
+
+        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
+        backupOracle.setPrice(address(shieldedToken), 1.1e8);
+        vm.warp(block.timestamp + 1 days + 1);
+
+        uint256 baselineBefore = pool.feeValueBaselineUsd(shieldTokenId);
+        uint256 protocolFeeBefore = pool.accumulatedProtocolFee();
+
+        vm.prank(shielded);
+        vm.expectRevert();
+        pool.claimRewards(shieldTokenId);
+
+        assertEq(pool.feeValueBaselineUsd(shieldTokenId), baselineBefore, "baseline must not advance");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore, "protocol bucket must not change");
     }
 
     // ----------------------------------------------------------------------
@@ -338,6 +377,17 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, attacker, "setPoolFeeRecipient"));
         pool.setPoolFeeRecipient(address(0xCAFE));
+    }
+
+    function test_B8_setPoolFeeRecipient_RevertsForPoolItself() public {
+        vm.prank(poolCreator);
+        vm.expectRevert(ErrorsLib.InvalidProtocolFeeRecipient.selector);
+        pool.setPoolFeeRecipient(address(pool));
+    }
+
+    function test_B8_updatePoolConfig_RevertsWhenProtocolFeeRecipientIsPoolItself() public {
+        vm.expectRevert(ErrorsLib.InvalidProtocolFeeRecipient.selector);
+        _updateConfig(100, address(pool));
     }
 
     // ----------------------------------------------------------------------

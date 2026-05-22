@@ -121,6 +121,19 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         pool.claimRewards(tokenId);
     }
 
+    function _seedClaimableCommission() internal returns (uint256 protectorTokenId) {
+        vm.prank(protector);
+        protectorTokenId = pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+
+        vm.prank(shielded);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 1.1e8);
+        _claimRewardsAsOwner(shieldTokenId);
+
+        assertGt(pool.getClaimableCommission(protectorTokenId), 0, "test requires claimable commission");
+    }
+
     function testPayPoolFee_OnlyCreatorCanCall() public {
         // Deposit protector tokens first (required for shielded deposits)
         vm.prank(protector);
@@ -316,6 +329,40 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         vm.prank(shielded);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, shielded, "withdrawShielded"));
         pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+    }
+
+    function testGovernanceInstalledAcl_CanBlockProtectorCommissionClaim() public {
+        uint256 tokenId = _seedClaimableCommission();
+
+        AccessControlExample accessControl = new AccessControlExample(governance);
+        vm.prank(governance);
+        pool.setAccessControl(address(accessControl));
+
+        vm.prank(protector);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, protector, "claimCommission"));
+        pool.claimCommission(tokenId);
+    }
+
+    function testCreatorInstalledAcl_CannotBlockProtectorCommissionClaim() public {
+        AccessControlExample accessControl = new AccessControlExample(governance);
+        vm.startPrank(governance);
+        accessControl.setWhitelisted(protector, true);
+        accessControl.setWhitelisted(shielded, true);
+        vm.stopPrank();
+
+        vm.prank(poolCreator);
+        pool.setAccessControl(address(accessControl));
+
+        uint256 tokenId = _seedClaimableCommission();
+
+        vm.prank(governance);
+        accessControl.setWhitelisted(protector, false);
+
+        uint256 balanceBefore = shieldedToken.balanceOf(protector);
+        vm.prank(protector);
+        pool.claimCommission(tokenId);
+
+        assertGt(shieldedToken.balanceOf(protector), balanceBefore, "creator ACL must not trap commissions");
     }
 
     function testCreatorInstalledAcl_CannotBlockProtectorWithdrawals() public {

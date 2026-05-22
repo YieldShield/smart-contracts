@@ -201,6 +201,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (_shieldReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_protectorReceiptNFT == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (initialOwner == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        if (_protocolFeeRecipient == address(this)) revert ErrorsLib.InvalidProtocolFeeRecipient();
         if (_backingTokenInfo.token == _shieldedTokenInfo.token) revert ErrorsLib.InvalidAssetAddress();
         if (_commissionRate > ConstantsLib.MAX_COMMISSION_RATE) revert ErrorsLib.InvalidCommissionRate();
         if (_poolFee > ConstantsLib.MAX_POOL_FEE) revert ErrorsLib.InvalidPoolFee();
@@ -848,11 +849,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 currentTotalShares = totalProtectorShares;
         if (currentTotalShares == 0 || totalProtectorTokens == 0) {
-            redirectedProtocolAmount = rewardAmount;
-            if (accumulatedProtocolFee + redirectedProtocolAmount > maxSafeAccumulation) {
-                redirectedProtocolAmount =
-                    accumulatedProtocolFee < maxSafeAccumulation ? maxSafeAccumulation - accumulatedProtocolFee : 0;
+            uint256 availableProtocolCapacity =
+                accumulatedProtocolFee < maxSafeAccumulation ? maxSafeAccumulation - accumulatedProtocolFee : 0;
+            if (rewardAmount > availableProtocolCapacity) {
+                revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedProtocolFee, 0);
             }
+            redirectedProtocolAmount = rewardAmount;
             accumulatedProtocolFee += redirectedProtocolAmount;
             return (0, redirectedProtocolAmount);
         }
@@ -1106,6 +1108,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function _payAccumulatedFee(uint256 feeAmount, address recipient) internal returns (uint256 paidAmount) {
         // slither-disable-next-line incorrect-equality — early-return guard, nothing to pay
         if (feeAmount == 0) return 0;
+        _validateFeeRecipient(recipient);
 
         // Check actual balance (source of truth)
         uint256 actualBalance = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
@@ -1158,7 +1161,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (msg.sender != POOL_CREATOR && msg.sender != _governanceTimelock) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "setPoolFeeRecipient");
         }
-        if (newRecipient == address(0)) revert ErrorsLib.InvalidProtocolFeeRecipient();
+        _validateFeeRecipient(newRecipient);
         address previous = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
         poolFeeRecipient = newRecipient;
         emit EventsLib.ParameterUpdated("poolFeeRecipient", uint256(uint160(newRecipient)));
@@ -1301,6 +1304,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.NotOwner();
         }
+        _requireProtectorWithdrawalAllowed(msg.sender, "claimCommission");
 
         uint256 positionShares_ = _getProtectorPositionShares(tokenId);
 
@@ -1321,6 +1325,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
+        _requireProtectorWithdrawalAllowed(positionOwner, "settleExpiredProtectorPosition");
         uint256 positionShares_ = _getProtectorPositionShares(tokenId);
 
         if (_claimCommissionTo(positionOwner, tokenId, positionShares_) == 0) {
@@ -1845,12 +1850,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
-        if (
-            accessControlCanGateWithdrawals && accessControl != address(0)
-                && !IPoolAccessControl(accessControl).canWithdrawProtector(msg.sender)
-        ) {
-            revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawProtector");
-        }
+        _requireProtectorWithdrawalAllowed(msg.sender, "withdrawProtector");
 
         IProtectorReceiptNFT.ProtectorPosition memory pos =
             IProtectorReceiptNFT(protectorReceiptNFT).getPosition(tokenId);
@@ -2129,9 +2129,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidProtocolFee();
         }
 
-        if (newProtocolFeeRecipient == address(0)) {
-            revert ErrorsLib.InvalidProtocolFeeRecipient();
-        }
+        _validateFeeRecipient(newProtocolFeeRecipient);
 
         if (
             newUnlockDuration < ConstantsLib.MIN_UNLOCK_DURATION || newUnlockDuration > ConstantsLib.MAX_UNLOCK_DURATION
@@ -2323,6 +2321,21 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Decode the response to ensure the hook returns a bool.
         abi.decode(returndata, (bool));
+    }
+
+    function _validateFeeRecipient(address recipient) internal view {
+        if (recipient == address(0) || recipient == address(this)) {
+            revert ErrorsLib.InvalidProtocolFeeRecipient();
+        }
+    }
+
+    function _requireProtectorWithdrawalAllowed(address account, string memory operation) internal view {
+        if (
+            accessControlCanGateWithdrawals && accessControl != address(0)
+                && !IPoolAccessControl(accessControl).canWithdrawProtector(account)
+        ) {
+            revert ErrorsLib.AccessControlDenied(account, operation);
+        }
     }
 
     function _markPoolLaunched() internal {

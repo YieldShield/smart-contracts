@@ -15,6 +15,7 @@ import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptN
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
+import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
 
 contract ShieldActivationLossOracle is IPriceOracle {
     using Math for uint256;
@@ -521,6 +522,53 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         (uint256 shieldedPoolBalance, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(shieldedPoolBalance, 0, "settlement should clear tracked shielded balance");
         assertEq(backingPoolBalance, 0, "activation should have drained backing");
+    }
+
+    function test_governanceAclBlocksExpiredProtectorSettlementPayout() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        AccessControlExample accessControl = new AccessControlExample(governance);
+        vm.prank(governance);
+        pool.setAccessControl(address(accessControl));
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, protector1, "settleExpiredProtectorPosition")
+        );
+        pool.settleExpiredProtectorPosition(protectorTokenId);
+
+        assertEq(pool.getReservedFees(), 100e18, "blocked settlement must leave reserve intact");
+    }
+
+    function test_permissionlessExpiredProtectorSettlementWorksWhenOwnerWhitelisted() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        AccessControlExample accessControl = new AccessControlExample(governance);
+        vm.startPrank(governance);
+        accessControl.setWhitelisted(protector1, true);
+        pool.setAccessControl(address(accessControl));
+        vm.stopPrank();
+
+        uint256 ownerBalanceBefore = shieldedToken.balanceOf(protector1);
+        vm.prank(address(0xBEEF));
+        pool.settleExpiredProtectorPosition(protectorTokenId);
+
+        assertEq(shieldedToken.balanceOf(protector1) - ownerBalanceBefore, 100e18, "settlement pays owner");
+        assertEq(pool.getReservedFees(), 0, "settlement should clear reserve");
     }
 
     function test_crossAssetShieldActivationAccruesYieldFeesWhenProtectedPriceAvailable() public {
