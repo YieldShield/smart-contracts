@@ -520,6 +520,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(isDualFeed, "factory should configure dual feed");
         assertEq(primaryFeed, address(oracle), "primary feed should match");
         assertEq(backupFeed, address(backupOracle), "backup feed should match");
+        (,,, address storedPrimaryFeed, address storedBackupFeed,) = factory.tokenInfo(address(tokenB));
+        assertEq(storedPrimaryFeed, address(oracle), "factory tokenInfo primary should sync");
+        assertEq(storedBackupFeed, address(backupOracle), "factory tokenInfo backup should sync");
 
         vm.prank(governanceTimelock);
         factory.setCompositeOracleTokenFeed(address(tokenB), address(oracle));
@@ -528,6 +531,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertFalse(isDualFeed, "factory should restore single-feed mode");
         assertEq(primaryFeed, address(oracle), "primary feed should remain configured");
         assertEq(backupFeed, address(0), "backup feed should be cleared");
+        (,,, storedPrimaryFeed, storedBackupFeed,) = factory.tokenInfo(address(tokenB));
+        assertEq(storedPrimaryFeed, address(oracle), "factory tokenInfo primary should stay synced");
+        assertEq(storedBackupFeed, address(0), "factory tokenInfo backup should clear");
     }
 
     function testFactoryCanRemoveCompositeOracleFeedWhenAuthorized() public {
@@ -544,6 +550,12 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.removeCompositeOracleTokenFeed(address(tokenB));
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removed");
+        assertFalse(factory.isWhitelisted(address(tokenB)), "token should be delisted with removed feed");
+        (,, address removedToken, address primaryOracleFeed, address backupOracleFeed,) =
+            factory.tokenInfo(address(tokenB));
+        assertEq(removedToken, address(0), "tokenInfo should be deleted");
+        assertEq(primaryOracleFeed, address(0), "primary feed should be cleared");
+        assertEq(backupOracleFeed, address(0), "backup feed should be cleared");
     }
 
     function testFactoryCanCancelCompositeOracleFeedRemovalWhenAuthorized() public {

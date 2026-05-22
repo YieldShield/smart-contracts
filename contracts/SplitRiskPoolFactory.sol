@@ -316,14 +316,20 @@ contract SplitRiskPoolFactory is
     }
 
     function setCompositeOracleTokenFeed(address token, address oracleFeed) external onlyGovernance {
+        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeed(token, oracleFeed);
+        tokenInfo[token].primaryOracleFeed = oracleFeed;
+        tokenInfo[token].backupOracleFeed = address(0);
     }
 
     function setCompositeOracleTokenFeedDual(address token, address primaryFeed, address backupFeed)
         external
         onlyGovernance
     {
+        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeedDual(token, primaryFeed, backupFeed);
+        tokenInfo[token].primaryOracleFeed = primaryFeed;
+        tokenInfo[token].backupOracleFeed = backupFeed;
     }
 
     function scheduleCompositeOracleTokenFeedRemoval(address token) external onlyGovernance {
@@ -335,7 +341,12 @@ contract SplitRiskPoolFactory is
     }
 
     function removeCompositeOracleTokenFeed(address token) external onlyGovernance {
+        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().removeTokenOracleFeed(token);
+        TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
+        delete tokenInfo[token];
+        delete tokenRequiresStrictProtectedPrice[token];
+        emit EventsLib.TokenRemoved(token);
     }
 
     function scheduleCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
