@@ -72,6 +72,38 @@ jobs:
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high
 
+  fork-tests:
+    name: Required fork tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Require fork RPC secrets
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+        run: |
+          test -n "$MAINNET_RPC_URL" || { echo "::error::MAINNET_RPC_URL secret is required for fork tests"; exit 1; }
+          test -n "$SEPOLIA_RPC_URL" || { echo "::error::SEPOLIA_RPC_URL secret is required for fork tests"; exit 1; }
+
+      - name: Run fork tests
+        env:
+          FORK_TESTS_REQUIRED: "true"
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+        run: forge test --match-path "test/*Fork.t.sol"
+
   contract-size:
     name: Contract size report
     runs-on: ubuntu-latest

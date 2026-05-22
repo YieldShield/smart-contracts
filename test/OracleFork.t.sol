@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test, console } from "forge-std/Test.sol";
+import { console } from "forge-std/Test.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
+import { ForkTestHelper } from "./helpers/ForkTestHelper.sol";
 
 /// @title OracleForkTest
 /// @notice Comprehensive fork tests for oracle integrations
 /// @dev Run with: forge test --match-contract OracleForkTest --fork-url $MAINNET_RPC_URL -vvv
-contract OracleForkTest is Test {
+contract OracleForkTest is ForkTestHelper {
     // Mainnet addresses
     address constant PYTH_MAINNET = 0x4305FB66699C3B2702D4d05CF36551390A4c69C6;
     address constant CHAINLINK_ETH_USD = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
@@ -29,9 +30,8 @@ contract OracleForkTest is Test {
     // ============ Fork Test Helpers ============
 
     modifier onlyMainnet() {
-        string memory forkUrl = vm.envOr("MAINNET_RPC_URL", string(""));
+        string memory forkUrl = _forkUrlOrSkip("MAINNET_RPC_URL", "mainnet");
         if (bytes(forkUrl).length == 0) {
-            emit log("Skipping mainnet fork test: MAINNET_RPC_URL not configured");
             return;
         }
         vm.createSelectFork(forkUrl);
@@ -39,9 +39,8 @@ contract OracleForkTest is Test {
     }
 
     modifier onlySepolia() {
-        string memory forkUrl = vm.envOr("SEPOLIA_RPC_URL", string(""));
+        string memory forkUrl = _forkUrlOrSkip("SEPOLIA_RPC_URL", "Sepolia");
         if (bytes(forkUrl).length == 0) {
-            emit log("Skipping Sepolia fork test: SEPOLIA_RPC_URL not configured");
             return;
         }
         vm.createSelectFork(forkUrl);

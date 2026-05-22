@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { ForkTestHelper } from "./helpers/ForkTestHelper.sol";
 
-contract SplitRiskPoolForkTest is Test {
+contract SplitRiskPoolForkTest is ForkTestHelper {
     function testSepoliaForkInitializes() public {
-        string memory forkUrl = vm.envOr("SEPOLIA_RPC_URL", string(""));
+        string memory forkUrl = _forkUrlOrSkip("SEPOLIA_RPC_URL", "Sepolia");
         if (bytes(forkUrl).length == 0) {
-            emit log("Skipping fork test: SEPOLIA_RPC_URL not configured");
             return;
         }
 
