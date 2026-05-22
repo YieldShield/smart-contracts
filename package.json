@@ -24,6 +24,7 @@
     "build": "forge build --offline",
     "clean": "forge clean",
     "compile": "make compile",
+    "check:foundry-lock": "node scripts-js/check-foundry-lock.cjs",
     "deploy": "node scripts-js/parseArgs.js",
     "flatten": "make flatten",
     "fork": "make fork FORK_URL=${1:-mainnet}",

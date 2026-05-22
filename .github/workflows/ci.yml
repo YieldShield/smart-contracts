@@ -48,6 +48,9 @@ jobs:
       - name: Run JavaScript unit tests
         run: npm run test:scripts
 
+      - name: Check Foundry dependency lock
+        run: npm run check:foundry-lock
+
       - name: Assert via_ir is enabled in [profile.default]
         run: |
           python3 - <<'PY'

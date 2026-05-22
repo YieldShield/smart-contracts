@@ -1,8 +1,8 @@
 {
   "lib/forge-std": {
     "tag": {
-      "name": "v1.15.0",
-      "rev": "0844d7e1fc5e60d77b68e469bff60265f236c398"
+      "name": "v1.16.1",
+      "rev": "620536fa5277db4e3fd46772d5cbc1ea0696fb43"
     }
   },
   "lib/openzeppelin-contracts": {
@@ -25,8 +25,8 @@
   },
   "lib/solidity-bytes-utils": {
     "tag": {
-      "name": "v0.8.4",
-      "rev": "f4413cd6137b78403e3a1156bee6aceab46b46fa"
+      "name": "v0.8.2",
+      "rev": "e0115c4d231910df47ce3b60625ce562fe4af985"
     }
   }
 }
