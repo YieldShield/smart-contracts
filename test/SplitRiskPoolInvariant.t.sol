@@ -3,19 +3,18 @@ pragma solidity ^0.8.30;
 
 import { Test, console2 } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
-import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
-import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
+import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
-import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
-import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 
 /// @title Handler Contract for SplitRiskPool Invariant Tests
 /// @notice Performs random valid operations on the pool for invariant testing
@@ -52,6 +51,7 @@ contract SplitRiskPoolHandler is Test {
     uint256 public calls_claimRewards;
     uint256 public calls_withdrawShieldedCrossAsset;
     uint256 public calls_dropPrice;
+    uint256 public calls_generateYield;
 
     // Pool config
     uint256 public shieldedMinDepositAmount;
@@ -323,9 +323,7 @@ contract SplitRiskPoolHandler is Test {
         uint256 newPrice = currentPrice - (currentPrice * dropBps) / 1e4;
         if (newPrice == 0) newPrice = 1; // prevent zero price
 
-        (bool success,) =
-            address(oracle).call(abi.encodeWithSignature("setPrice(address,uint256)", address(shieldedToken), newPrice));
-        success; // suppress unused warning
+        oracle.setPrice(address(shieldedToken), newPrice);
         calls_dropPrice++;
     }
 
@@ -338,12 +336,8 @@ contract SplitRiskPoolHandler is Test {
         uint256 currentPrice = oracle.getPrice(address(shieldedToken));
         uint256 newPrice = currentPrice + (currentPrice * yieldBps) / 1e4;
 
-        // Call via low-level call since oracle is owned by test contract
-        // The test contract will delegate this via a special function
-        (bool success,) =
-            address(oracle).call(abi.encodeWithSignature("setPrice(address,uint256)", address(shieldedToken), newPrice));
-        // Silently fail if not owner - invariant tests will still work without yield generation
-        success; // suppress unused warning
+        oracle.setPrice(address(shieldedToken), newPrice);
+        calls_generateYield++;
     }
 
     /// @notice Warp time forward
@@ -373,14 +367,16 @@ contract SplitRiskPoolHandler is Test {
 
 /// @title Invariant Tests for SplitRiskPool
 /// @notice Tests critical protocol invariants under random operations
-contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
+contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
     SplitRiskPool public pool;
+    SplitRiskPoolFactory public factory;
     SplitRiskPoolHandler public handler;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
     MockERC20 public shieldedBaseToken;
     MockERC20 public backingBaseToken;
     MockOracle public oracle;
+    CompositeOracle public compositeOracle;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
 
@@ -403,56 +399,33 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
         oracle.setPrice(address(shieldedToken), 1e8); // $1 per token
         oracle.setPrice(address(backingToken), 1e8); // $1 per token
 
-        // Create TokenInfo structs
-        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
-            name: "SHIELD",
-            symbol: "SHIELD",
-            token: address(shieldedToken),
-            primaryOracleFeed: address(oracle),
-            backupOracleFeed: address(0),
-            minCollateralRatioBp: 10000
-        });
-        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
-            name: "BACK",
-            symbol: "BACK",
-            token: address(backingToken),
-            primaryOracleFeed: address(oracle),
-            backupOracleFeed: address(0),
-            minCollateralRatioBp: 10000
-        });
-
-        // Deploy pool
+        compositeOracle = new CompositeOracle();
         SplitRiskPool implementation = new SplitRiskPool();
-        shieldNFT = new ShieldReceiptNFT("sSHIELD", "sSHIELD");
-        protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        factory = _deployFactory(address(this), governance, address(implementation));
+        factory.setCompositeOracle(address(compositeOracle));
+        factory.setDefaultProtocolFeeRecipient(protocolFeeRecipient);
+        compositeOracle.setAuthorizedCaller(address(factory), true);
+        vm.prank(governance);
+        factory.setMinimumCreationBondUsd(0);
 
-        bytes memory initData = abi.encodeWithSelector(
-            SplitRiskPool.initialize.selector,
-            shieldedTokenInfo,
-            backingTokenInfo,
-            1000, // 10% commission rate
-            500, // 5% pool fee
-            address(this), // pool creator
-            15000, // 150% collateral ratio
-            governance,
-            address(oracle),
-            protocolFeeRecipient,
-            address(shieldNFT),
-            address(protectorNFT),
-            address(this) // owner
-        );
-        pool = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
+        factory.addTokenInitial(address(shieldedToken), "SHIELD", "SHIELD", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(backingToken), "BACK", "BACK", address(oracle), address(0), 10000);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
-        // Set pool address on NFTs
-        shieldNFT.setPool(address(pool));
-        protectorNFT.setPool(address(pool));
-        shieldNFT.transferOwnership(address(pool));
-        protectorNFT.transferOwnership(address(pool));
+        address poolAddress =
+            factory.createPool(address(shieldedToken), "SHIELD", address(backingToken), "BACK", 1000, 500, 15000, 0);
+        pool = SplitRiskPool(payable(poolAddress));
+        shieldNFT = ShieldReceiptNFT(pool.shieldReceiptNFT());
+        protectorNFT = ProtectorReceiptNFT(pool.protectorReceiptNFT());
+
+        assertEq(pool.POOL_FACTORY(), address(factory), "invariant pool should be factory-created");
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "factory strict-price flag should be pinned");
 
         // Deploy handler (needs to be done carefully to handle token ownership)
         handler = new SplitRiskPoolHandler(
             pool, shieldedToken, backingToken, shieldedBaseToken, backingBaseToken, oracle, shieldNFT, protectorNFT
         );
+        oracle.transferOwnership(address(handler));
 
         // Fund the handler's actors from the test contract
         _fundHandlerActors();
@@ -500,6 +473,20 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
             shieldedToken.approve(address(pool), type(uint256).max);
             vm.stopPrank();
         }
+    }
+
+    function test_handlerPriceMutationsUpdateOracle() public {
+        uint256 initialPrice = oracle.getPrice(address(shieldedToken));
+
+        handler.generateYield(1000);
+        uint256 higherPrice = oracle.getPrice(address(shieldedToken));
+        assertGt(higherPrice, initialPrice, "generateYield should increase the mock price");
+        assertEq(handler.calls_generateYield(), 1, "generateYield counter should track successful mutation");
+
+        handler.dropPrice(1000);
+        uint256 lowerPrice = oracle.getPrice(address(shieldedToken));
+        assertLt(lowerPrice, higherPrice, "dropPrice should decrease the mock price");
+        assertEq(handler.calls_dropPrice(), 1, "dropPrice counter should track successful mutation");
     }
 
     // ============ Invariant 1: Pool Balance Solvency ============
@@ -567,20 +554,30 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
 
     // ============ Invariant 4: Collateralization Ratio ============
 
-    /// @notice When utilization > 100%, withdrawals should be blocked
-    /// @dev Utilization can temporarily exceed 100% during protector withdrawals,
-    ///      but getAvailableForWithdrawal should return 0 in such cases
+    /// @notice When the USD collateral lock consumes all protector assets, withdrawals should be blocked
     function invariant_collateralizationMaintained() public view {
-        uint256 utilizationRatio = pool.getUtilizationRatio();
+        uint256 totalProtectorTokens = pool.totalProtectorTokens();
+        uint256 totalValueAtDeposit = pool.totalValueAtDeposit();
 
-        // If utilization exceeds 100%, all protector positions should have 0 available for withdrawal
-        if (utilizationRatio > 10000) {
+        if (totalProtectorTokens != 0 && totalValueAtDeposit != 0) {
+            uint256 backingPrice = oracle.getPrice(address(backingToken));
+            uint256 requiredProtectorTokens = (totalValueAtDeposit * pool.COLLATERAL_RATIO() * pool.backingTokenScale())
+                / (ConstantsLib.BASIS_POINT_SCALE * backingPrice);
+            uint256 collateralCap = pool.totalShieldCollateralAmount();
+            if (requiredProtectorTokens > collateralCap) {
+                requiredProtectorTokens = collateralCap;
+            }
+
+            if (requiredProtectorTokens < totalProtectorTokens) {
+                return;
+            }
+
             uint256 nextTokenId = protectorNFT.nextTokenId();
             for (uint256 tokenId = 0; tokenId < nextTokenId; tokenId++) {
                 try protectorNFT.ownerOf(tokenId) returns (address owner) {
                     if (owner != address(0)) {
                         uint256 available = pool.getAvailableForWithdrawal(tokenId);
-                        assertEq(available, 0, "Available should be 0 when utilization > 100%");
+                        assertEq(available, 0, "Available should be 0 when collateral lock consumes the pool");
                     }
                 } catch {
                     // Token doesn't exist or was burned
@@ -784,6 +781,7 @@ contract SplitRiskPoolInvariantTest is Test, TestTimelockHelper {
         console2.log("claimRewards:", handler.calls_claimRewards());
         console2.log("withdrawShieldedCrossAsset:", handler.calls_withdrawShieldedCrossAsset());
         console2.log("dropPrice:", handler.calls_dropPrice());
+        console2.log("generateYield:", handler.calls_generateYield());
         console2.log("");
         console2.log("Ghost Variables:");
         console2.log("totalProtectorDeposits:", handler.ghost_totalProtectorDeposits());
