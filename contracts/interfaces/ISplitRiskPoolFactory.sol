@@ -131,6 +131,8 @@ interface ISplitRiskPoolFactory {
     function removePythToken(address token) external;
     function setPythMaxPriceAge(uint256 maxPriceAge) external;
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external;
+    function setPythMaxPriceAgeForFeedId(bytes32 feedId, uint256 maxPriceAge) external;
+    function setPythMaxCompositePublishTimeSkew(uint256 maxSkew) external;
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external;
     function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external;
     function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external;

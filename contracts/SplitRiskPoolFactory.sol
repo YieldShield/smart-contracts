@@ -54,6 +54,8 @@ interface IPythOracleAdmin {
     function setMaxPriceDeviation(uint256 maxPriceDeviation) external;
     function setMaxConfidenceBps(uint256 maxConfidenceBps) external;
     function setMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external;
+    function setMaxPriceAgeForFeedId(bytes32 feedId, uint256 maxPriceAge) external;
+    function setMaxCompositePublishTimeSkew(uint256 maxSkew) external;
 }
 
 interface IERC4626OracleFeedAdmin {
@@ -403,6 +405,14 @@ contract SplitRiskPoolFactory is
 
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAgeForToken(token, maxPriceAge);
+    }
+
+    function setPythMaxPriceAgeForFeedId(bytes32 feedId, uint256 maxPriceAge) external onlyGovernance {
+        _pythOracleAdmin().setMaxPriceAgeForFeedId(feedId, maxPriceAge);
+    }
+
+    function setPythMaxCompositePublishTimeSkew(uint256 maxSkew) external onlyGovernance {
+        _pythOracleAdmin().setMaxCompositePublishTimeSkew(maxSkew);
     }
 
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external onlyGovernance {

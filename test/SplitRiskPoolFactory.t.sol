@@ -579,6 +579,22 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(pythOracle.maxEmaConfidenceBps(), 1200, "EMA confidence should update");
     }
 
+    function testFactoryCanSetManagedPythFeedAgeAndCompositeSkew() public {
+        bytes32 feedId = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+        PythOracle pythOracle = new PythOracle(address(0x1234), 60);
+        pythOracle.transferOwnership(address(factory));
+        factory.setManagedPythOracle(address(pythOracle));
+
+        vm.prank(governanceTimelock);
+        factory.setPythMaxPriceAgeForFeedId(feedId, 120);
+
+        vm.prank(governanceTimelock);
+        factory.setPythMaxCompositePublishTimeSkew(15);
+
+        assertEq(pythOracle.maxPriceAgeForFeedId(feedId), 120, "feed-specific age should update");
+        assertEq(pythOracle.maxCompositePublishTimeSkew(), 15, "composite skew should update");
+    }
+
     function testFactoryCanRemoveManagedERC4626Vault() public {
         ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(oracle));
         erc4626Feed.transferOwnership(address(factory));
