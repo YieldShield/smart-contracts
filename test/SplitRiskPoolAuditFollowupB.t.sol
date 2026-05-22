@@ -184,6 +184,34 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         assertEq(pool.accumulatedCommissions(), commissionsBefore, "commissions must not have changed");
     }
 
+    function test_B4_claimRewards_RevertsWhenRewardPerShareIncrementWouldRoundToZero() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+
+        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(type(uint128).max);
+        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
+        backupOracle.setPrice(address(shieldedToken), 1.1e8);
+
+        IShieldReceiptNFT.ShieldPosition memory positionBefore =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        uint256 baselineBefore = pool.feeValueBaselineUsd(shieldTokenId);
+        uint256 rewardPerShareBefore = pool.rewardPerShareAccumulated();
+        uint256 commissionsBefore = pool.accumulatedCommissions();
+        uint256 reserveBefore = pool.currentEpochCommissionReserve();
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shielded);
+        vm.expectRevert();
+        pool.claimRewards(shieldTokenId);
+
+        IShieldReceiptNFT.ShieldPosition memory positionAfter =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        assertEq(positionAfter.amount, positionBefore.amount, "shield amount must not change");
+        assertEq(pool.feeValueBaselineUsd(shieldTokenId), baselineBefore, "baseline must not advance");
+        assertEq(pool.rewardPerShareAccumulated(), rewardPerShareBefore, "reward accumulator must not change");
+        assertEq(pool.accumulatedCommissions(), commissionsBefore, "commissions must not be reserved");
+        assertEq(pool.currentEpochCommissionReserve(), reserveBefore, "current reserve must not change");
+    }
+
     // ----------------------------------------------------------------------
     // B5: whenNotPaused on fee-extraction paths
     // ----------------------------------------------------------------------

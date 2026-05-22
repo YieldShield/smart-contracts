@@ -868,7 +868,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedCommissions, 0);
         }
 
-        rewardPerShareAccumulated += (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
+        uint256 rewardPerShareIncrement = (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
+        if (rewardPerShareIncrement == 0) {
+            revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, 0, 0);
+        }
+
+        rewardPerShareAccumulated += rewardPerShareIncrement;
         accumulatedCommissions += rewardAmount;
         currentEpochCommissionReserve += rewardAmount;
         totalCommissionsEverAccumulated += rewardAmount;
