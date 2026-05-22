@@ -16,6 +16,7 @@ import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
+import { AccessControlExample } from "../contracts/examples/AccessControlExample.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -185,6 +186,63 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(info.creator, user1, "Creator should match caller");
         assertEq(_historicalPoolCount(), 1, "Pool count should be 1");
         assertEq(factory.getActivePools().length, 1, "Active pool count should be 1");
+    }
+
+    function testCreatePoolWithAccessControlInstallsGateAtomically() public {
+        AccessControlExample accessControl = new AccessControlExample(address(this));
+        accessControl.setWhitelisted(user1, true);
+
+        uint256 creationBondAmount = _defaultCreationBondAmount(address(tokenB));
+        _prepareCreationBond(user1, address(tokenB), creationBondAmount);
+
+        vm.prank(user1);
+        address poolAddress = factory.createPoolWithAccessControl(
+            address(tokenA),
+            "TKNA",
+            address(tokenB),
+            "TKNB",
+            500,
+            200,
+            15000,
+            creationBondAmount,
+            address(accessControl)
+        );
+
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        assertEq(pool.accessControl(), address(accessControl), "access control should be set during initialization");
+        assertFalse(pool.accessControlCanGateWithdrawals(), "creator-set gate should not restrict withdrawals");
+
+        uint256 depositAmount = 100e18;
+        tokenB.mint(user2, depositAmount);
+        vm.startPrank(user2);
+        tokenB.approve(poolAddress, depositAmount);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, user2, "depositProtector"));
+        pool.depositBackingAsset(address(tokenB), depositAmount, 0);
+        vm.stopPrank();
+
+        tokenB.mint(user1, depositAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, depositAmount);
+        pool.depositBackingAsset(address(tokenB), depositAmount, 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), depositAmount, "whitelisted creator should be able to deposit");
+    }
+
+    function testCreatePoolWithAccessControlRevertsWithoutRecordingPoolOnInvalidGate() public {
+        uint256 poolCountBefore = factory.poolCount();
+        uint256 activePoolCountBefore = factory.getActivePools().length;
+        uint256 creationBondAmount = _defaultCreationBondAmount(address(tokenB));
+        _prepareCreationBond(user1, address(tokenB), creationBondAmount);
+
+        vm.prank(user1);
+        vm.expectRevert(ErrorsLib.InvalidAccessControlAddress.selector);
+        factory.createPoolWithAccessControl(
+            address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, creationBondAmount, address(tokenB)
+        );
+
+        assertEq(factory.poolCount(), poolCountBefore, "historical pool count should stay unchanged");
+        assertEq(factory.getActivePools().length, activePoolCountBefore, "active pool count should stay unchanged");
     }
 
     function testCreatePoolEmitsEvent() public {

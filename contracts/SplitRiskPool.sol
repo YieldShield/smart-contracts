@@ -194,6 +194,70 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         address _protectorReceiptNFT,
         address initialOwner
     ) external initializer {
+        _initializePool(
+            _shieldedTokenInfo,
+            _backingTokenInfo,
+            _commissionRate,
+            _poolFee,
+            _poolCreator,
+            _collateralRatio,
+            _governanceTimelock,
+            _priceOracle,
+            _protocolFeeRecipient,
+            _shieldReceiptNFT,
+            _protectorReceiptNFT,
+            initialOwner,
+            address(0)
+        );
+    }
+
+    function initializeWithAccessControl(
+        TokenWhitelistLib.TokenInfo memory _shieldedTokenInfo,
+        TokenWhitelistLib.TokenInfo memory _backingTokenInfo,
+        uint256 _commissionRate,
+        uint256 _poolFee,
+        address _poolCreator,
+        uint256 _collateralRatio,
+        address _governanceTimelock,
+        address _priceOracle,
+        address _protocolFeeRecipient,
+        address _shieldReceiptNFT,
+        address _protectorReceiptNFT,
+        address initialOwner,
+        address initialAccessControl
+    ) external initializer {
+        _initializePool(
+            _shieldedTokenInfo,
+            _backingTokenInfo,
+            _commissionRate,
+            _poolFee,
+            _poolCreator,
+            _collateralRatio,
+            _governanceTimelock,
+            _priceOracle,
+            _protocolFeeRecipient,
+            _shieldReceiptNFT,
+            _protectorReceiptNFT,
+            initialOwner,
+            initialAccessControl
+        );
+    }
+
+    function _initializePool(
+        TokenWhitelistLib.TokenInfo memory _shieldedTokenInfo,
+        TokenWhitelistLib.TokenInfo memory _backingTokenInfo,
+        uint256 _commissionRate,
+        uint256 _poolFee,
+        address _poolCreator,
+        uint256 _collateralRatio,
+        address _governanceTimelock,
+        address _priceOracle,
+        address _protocolFeeRecipient,
+        address _shieldReceiptNFT,
+        address _protectorReceiptNFT,
+        address initialOwner,
+        address initialAccessControl
+    ) internal {
         if (_shieldedTokenInfo.token == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_backingTokenInfo.token == address(0)) revert ErrorsLib.InvalidAssetAddress();
         if (_poolCreator == address(0)) revert ErrorsLib.InvalidAssetAddress();
@@ -268,6 +332,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // 3. Transferred ownership to this contract
         shieldReceiptNFT = _shieldReceiptNFT;
         protectorReceiptNFT = _protectorReceiptNFT;
+
+        if (initialAccessControl != address(0)) {
+            _validateAccessControl(initialAccessControl);
+            accessControl = initialAccessControl;
+            emit EventsLib.AccessControlUpdated(address(0), initialAccessControl);
+        }
     }
 
     /**

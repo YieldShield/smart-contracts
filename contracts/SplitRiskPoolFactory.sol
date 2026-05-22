@@ -478,6 +478,54 @@ contract SplitRiskPoolFactory is
         uint256 _colleteralRatio,
         uint256 _creationBondAmount
     ) external nonReentrant whenNotPaused returns (address poolAddress) {
+        return _createPool(
+            _shieldedToken,
+            _shieldedTokenSymbol,
+            _backingToken,
+            _backingTokenSymbol,
+            _commissionRate,
+            _poolFee,
+            _colleteralRatio,
+            _creationBondAmount,
+            address(0)
+        );
+    }
+
+    function createPoolWithAccessControl(
+        address _shieldedToken,
+        string memory _shieldedTokenSymbol,
+        address _backingToken,
+        string memory _backingTokenSymbol,
+        uint256 _commissionRate,
+        uint256 _poolFee,
+        uint256 _colleteralRatio,
+        uint256 _creationBondAmount,
+        address initialAccessControl
+    ) external nonReentrant whenNotPaused returns (address poolAddress) {
+        return _createPool(
+            _shieldedToken,
+            _shieldedTokenSymbol,
+            _backingToken,
+            _backingTokenSymbol,
+            _commissionRate,
+            _poolFee,
+            _colleteralRatio,
+            _creationBondAmount,
+            initialAccessControl
+        );
+    }
+
+    function _createPool(
+        address _shieldedToken,
+        string memory _shieldedTokenSymbol,
+        address _backingToken,
+        string memory _backingTokenSymbol,
+        uint256 _commissionRate,
+        uint256 _poolFee,
+        uint256 _colleteralRatio,
+        uint256 _creationBondAmount,
+        address initialAccessControl
+    ) internal returns (address poolAddress) {
         if (activePools.length >= MAX_POOLS) {
             revert ErrorsLib.MaxPoolsExceeded(activePools.length, MAX_POOLS);
         }
@@ -539,7 +587,8 @@ contract SplitRiskPoolFactory is
             msg.sender,
             governanceTimelock(),
             compositeOracle,
-            defaultProtocolFeeRecipient
+            defaultProtocolFeeRecipient,
+            initialAccessControl
         );
 
         // Store pool data

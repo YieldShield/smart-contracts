@@ -23,6 +23,22 @@ interface ISplitRiskPool {
         address initialOwner
     ) external;
 
+    function initializeWithAccessControl(
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo,
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo,
+        uint256 commissionRate,
+        uint256 poolFee,
+        address poolCreator,
+        uint256 collateralRatio,
+        address governanceTimelock,
+        address priceOracle,
+        address protocolFeeRecipient,
+        address shieldReceiptNFT,
+        address protectorReceiptNFT,
+        address initialOwner,
+        address initialAccessControl
+    ) external;
+
     // Core Pool Parameters are accessible via immutable variables in the contract
 
     // Pool Configuration and State (struct-based access)

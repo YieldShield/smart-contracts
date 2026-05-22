@@ -38,7 +38,8 @@ library PoolCreationLib {
         address _poolCreator,
         address governanceTimelock,
         address compositeOracle,
-        address defaultProtocolFeeRecipient
+        address defaultProtocolFeeRecipient,
+        address initialAccessControl
     ) external returns (address poolAddress, ISplitRiskPoolFactory.PoolInfo memory info) {
         string memory shieldReceiptSymbol = string.concat("s", shieldedTokenInfo.symbol);
         string memory shieldReceiptName = shieldReceiptSymbol;
@@ -49,7 +50,7 @@ library PoolCreationLib {
         ProtectorReceiptNFT protectorReceiptNFT = new ProtectorReceiptNFT(protectorReceiptName, protectorReceiptSymbol);
 
         bytes memory initCalldata = abi.encodeWithSelector(
-            ISplitRiskPool.initialize.selector,
+            ISplitRiskPool.initializeWithAccessControl.selector,
             shieldedTokenInfo,
             backingTokenInfo,
             _commissionRate,
@@ -61,7 +62,8 @@ library PoolCreationLib {
             defaultProtocolFeeRecipient,
             address(shieldReceiptNFT),
             address(protectorReceiptNFT),
-            address(this)
+            address(this),
+            initialAccessControl
         );
 
         ERC1967Proxy proxy = new ERC1967Proxy(implementation, initCalldata);

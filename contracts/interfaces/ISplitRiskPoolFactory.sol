@@ -67,6 +67,17 @@ interface ISplitRiskPoolFactory {
         uint256 _colleteralRatio,
         uint256 _creationBondAmount
     ) external returns (address poolAddress);
+    function createPoolWithAccessControl(
+        address _shieldedToken,
+        string memory _shieldedTokenSymbol,
+        address _backingToken,
+        string memory _backingTokenSymbol,
+        uint256 _commissionRate,
+        uint256 _poolFee,
+        uint256 _colleteralRatio,
+        uint256 _creationBondAmount,
+        address initialAccessControl
+    ) external returns (address poolAddress);
 
     // View Functions
     function getPools(uint256 offset, uint256 limit) external view returns (address[] memory);
