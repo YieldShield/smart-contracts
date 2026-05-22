@@ -47,6 +47,14 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
 contract ContractBootstrapHolder { }
 
+contract CodeButNotPyth { }
+
+contract ZeroValidTimePeriodPyth {
+    function getValidTimePeriod() external pure returns (uint256) {
+        return 0;
+    }
+}
+
 contract SelectorsOnlyBootstrapHolder {
     address[] internal owners;
     uint256 internal threshold;
@@ -328,6 +336,30 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             abi.encodeWithSelector(DeployYieldShieldProduction.InvalidProductionPythContract.selector, missingPyth)
         );
         harness.validateProductionPythConfig(missingPyth, PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, true);
+    }
+
+    function test_ProductionPythConfig_RejectsContractWithoutPythInterface() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        CodeButNotPyth notPyth = new CodeButNotPyth();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployYieldShieldProduction.InvalidProductionPythContract.selector, address(notPyth))
+        );
+        harness.validateProductionPythConfig(address(notPyth), PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, true);
+    }
+
+    function test_ProductionPythConfig_RejectsZeroValidTimePeriod() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        ZeroValidTimePeriodPyth notUsablePyth = new ZeroValidTimePeriodPyth();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionPythContract.selector, address(notUsablePyth)
+            )
+        );
+        harness.validateProductionPythConfig(
+            address(notUsablePyth), PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, true
+        );
     }
 
     function test_ProductionPythConfig_RequiresMainnetUpdaterConfirmation() public {

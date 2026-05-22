@@ -34,6 +34,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes4 private constant NONCE_SELECTOR = bytes4(keccak256("nonce()"));
     bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
     bytes4 private constant MASTER_COPY_SELECTOR = bytes4(keccak256("masterCopy()"));
+    bytes4 private constant PYTH_VALID_TIME_PERIOD_SELECTOR = bytes4(keccak256("getValidTimePeriod()"));
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -300,6 +301,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         view
     {
         if (pythAddress.code.length == 0) {
+            revert InvalidProductionPythContract(pythAddress);
+        }
+        (bool success, bytes memory data) =
+            pythAddress.staticcall(abi.encodeWithSelector(PYTH_VALID_TIME_PERIOD_SELECTOR));
+        if (!success || data.length < 32 || abi.decode(data, (uint256)) == 0) {
             revert InvalidProductionPythContract(pythAddress);
         }
         if (block.chainid == PythConfig.ARBITRUM_MAINNET_CHAIN_ID && !updaterConfirmed) {
