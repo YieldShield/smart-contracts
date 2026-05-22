@@ -85,6 +85,68 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
         assertEq(pool.totalProtectorTokens(), 100e6, "protector liquidity should decrease by backing payout");
     }
 
+    function test_DepositShieldedAsset_RevertsWhenBackingCollateralRoundsToZero() public {
+        MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
+        MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "Shielded Token", "SHIELD");
+        MockUSDC backingToken = new MockUSDC();
+
+        (SplitRiskPool pool,, MockOracle oracle) =
+            _deployPool(address(shieldedToken), "SHIELD", address(backingToken), "USDC");
+
+        oracle.setPrice(address(shieldedToken), 1e8);
+        oracle.setPrice(address(backingToken), 1e8);
+        _setShieldedMinDepositAmount(pool, 1);
+
+        backingToken.mint(PROTECTOR, 1e6);
+        shieldedBaseToken.mint(SHIELDED_USER, 1e18);
+
+        vm.startPrank(PROTECTOR);
+        backingToken.approve(address(pool), type(uint256).max);
+        pool.depositBackingAsset(address(backingToken), 1e6, 0);
+        vm.stopPrank();
+
+        vm.startPrank(SHIELDED_USER);
+        shieldedBaseToken.approve(address(shieldedToken), type(uint256).max);
+        shieldedToken.deposit(1e10, SHIELDED_USER);
+        shieldedToken.approve(address(pool), type(uint256).max);
+        vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
+        pool.depositShieldedAsset(address(shieldedToken), 1e10, 0);
+        vm.stopPrank();
+    }
+
+    function test_ShieldedWithdraw_CrossAssetFloorsBackingPayoutDust() public {
+        MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
+        MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "Shielded Token", "SHIELD");
+        MockUSDC backingToken = new MockUSDC();
+
+        (SplitRiskPool pool,, MockOracle oracle) =
+            _deployPool(address(shieldedToken), "SHIELD", address(backingToken), "USDC");
+
+        oracle.setPrice(address(shieldedToken), 1e8);
+        oracle.setPrice(address(backingToken), 1e8);
+        _setShieldedMinDepositAmount(pool, 1);
+
+        backingToken.mint(PROTECTOR, 1e6);
+        shieldedBaseToken.mint(SHIELDED_USER, 1e18);
+
+        vm.startPrank(PROTECTOR);
+        backingToken.approve(address(pool), type(uint256).max);
+        pool.depositBackingAsset(address(backingToken), 1e6, 0);
+        vm.stopPrank();
+
+        vm.startPrank(SHIELDED_USER);
+        shieldedBaseToken.approve(address(shieldedToken), type(uint256).max);
+        shieldedToken.deposit(101e10, SHIELDED_USER);
+        shieldedToken.approve(address(pool), type(uint256).max);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 101e10, 0);
+        vm.warp(block.timestamp + 1 days + 1);
+        uint256 balanceBefore = backingToken.balanceOf(SHIELDED_USER);
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(backingToken.balanceOf(SHIELDED_USER) - balanceBefore, 1, "payout should not round up to 2 units");
+    }
+
     function test_ClaimRewards_UsesShieldedTokenScaleForSixDecimalVault() public {
         MockUSDC shieldedBaseToken = new MockUSDC();
         MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "USDC Vault", "vUSDC");
@@ -383,5 +445,34 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
         protectorNFT.setPool(address(pool));
         shieldNFT.transferOwnership(address(pool));
         protectorNFT.transferOwnership(address(pool));
+    }
+
+    function _setShieldedMinDepositAmount(SplitRiskPool pool, uint256 newMin) internal {
+        (
+            ,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address protocolFeeRecipient,
+            uint96 protocolFee,
+            address priceOracle
+        ) = pool.poolConfig();
+
+        vm.prank(lastGovernanceTimelock);
+        pool.updatePoolConfig(
+            newMin,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            maxTotalValueLockedUsd,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            protocolFeeRecipient,
+            priceOracle
+        );
     }
 }

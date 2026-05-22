@@ -420,6 +420,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return Math.mulDiv(shieldedValueUsd, COLLATERAL_RATIO, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
     }
 
+    function _getBackingAmountFromUsdFloor(uint256 valueUsd, uint256 backingPrice) internal view returns (uint256 amount) {
+        if (valueUsd == 0) return 0;
+        amount = Math.mulDiv(valueUsd, backingTokenScale, backingPrice);
+        if (amount == 0) revert ErrorsLib.InvalidOraclePrice();
+    }
+
+    function _getShieldCollateralAmount(uint256 shieldedValueUsd) internal view returns (uint256) {
+        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(shieldedValueUsd);
+        return _getBackingAmountFromUsdFloor(requiredCollateralUsd, _getProtectedBackingPrice());
+    }
+
     /// @dev Returns backing-token price using the oracle's strongest available protection.
     function _getProtectedBackingPrice() internal view returns (uint256 price) {
         if (_requiresStrictProtectedBackingPrice()) {
@@ -806,17 +817,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      *      Ensures the pool maintains proper collateralization in USD terms based on original deposit values.
      *      Uses totalValueAtDeposit (original deposit values) plus new deposit's valueAtDeposit for checks.
      *      Reverts with InvalidOraclePrice if all oracle paths fail (no 1:1 fallback).
-     * @param shieldedAmount Amount of shielded tokens to deposit
+     * @param newDepositValueAtDeposit USD value of the new shielded deposit
+     * @param newCollateralAmount Native backing-token collateral cap for the new deposit
      * @custom:error InsufficientProtectorTokenBalance If collateral requirement exceeds protector value
      * @custom:error InvalidOraclePrice If all oracle paths fail
      */
-    function _checkCapacity(uint256 shieldedAmount) internal view {
-        // Calculate new deposit's valueAtDeposit (USD)
-        uint256 newDepositValueAtDeposit = _getShieldedValue(shieldedAmount);
+    function _checkCapacity(uint256 newDepositValueAtDeposit, uint256 newCollateralAmount) internal view {
         uint256 newTotalValueAtDeposit = totalValueAtDeposit + newDepositValueAtDeposit;
 
         // Reject dust amounts where USD value truncates to 0
-        if (newDepositValueAtDeposit == 0 && shieldedAmount > 0) {
+        if (newDepositValueAtDeposit == 0) {
             revert ErrorsLib.InvalidOraclePrice();
         }
 
@@ -825,6 +835,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Calculate required collateral based on original deposit values
         uint256 requiredCollateralUsd = _getRequiredCollateralUsd(newTotalValueAtDeposit);
         if (requiredCollateralUsd > totalProtectorUsd) {
+            revert ErrorsLib.InsufficientProtectorTokenBalance();
+        }
+
+        if (totalShieldCollateralAmount + newCollateralAmount > totalProtectorTokens) {
             revert ErrorsLib.InsufficientProtectorTokenBalance();
         }
     }
@@ -1573,18 +1587,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         _validateDeposit(asset, received);
 
-        // Check capacity using USD-BASED accounting via price oracle
-        _checkCapacity(received);
-        _markPoolLaunched();
-
         // Calculate USD value for cross-asset withdrawal and fee calculation
         uint256 valueAtDeposit = _getShieldedValue(received);
-        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(valueAtDeposit);
-        uint256 collateralAmount =
-            Math.mulDiv(requiredCollateralUsd, backingTokenScale, _getProtectedBackingPrice(), Math.Rounding.Ceil);
-        if (valueAtDeposit != 0 && collateralAmount == 0) {
-            revert ErrorsLib.InvalidOraclePrice();
-        }
+        uint256 collateralAmount = _getShieldCollateralAmount(valueAtDeposit);
+
+        // Check capacity using both USD accounting and native-token collateral caps.
+        _checkCapacity(valueAtDeposit, collateralAmount);
+        _markPoolLaunched();
 
         // Update pool balances (TOKEN-BASED)
         poolState.shieldedTokenBalance += received;
@@ -1717,7 +1726,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
 
             uint256 uwPrice = _getProtectedBackingPrice();
-            payoutAmount = Math.mulDiv(pos.valueAtDeposit, backingTokenScale, uwPrice, Math.Rounding.Ceil);
+            payoutAmount = _getBackingAmountFromUsdFloor(pos.valueAtDeposit, uwPrice);
 
             // Cap to original collateral amount (in token terms, not recalculated)
             // This ensures users can't claim more tokens than were originally allocated
