@@ -20,6 +20,12 @@ import { AccessControlExample } from "../contracts/examples/AccessControlExample
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+interface ITransferFromHook {
+    function onTransferFromHook() external;
+}
 
 contract SplitRiskPoolFactoryV2Mock is SplitRiskPoolFactory {
     uint256 public futureConfigValue;
@@ -32,6 +38,91 @@ contract SplitRiskPoolFactoryV2Mock is SplitRiskPoolFactory {
 
     function version() external pure returns (uint256) {
         return 2;
+    }
+}
+
+contract CloseOnTransferToken is ERC20, Ownable {
+    bool public closeOnTransferFrom;
+
+    constructor() ERC20("Close On Transfer", "CLOSE") Ownable(msg.sender) {
+        _mint(msg.sender, 1_000_000e18);
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    function setCloseOnTransferFrom(bool enabled) external {
+        closeOnTransferFrom = enabled;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        bool ok = super.transferFrom(from, to, amount);
+        if (closeOnTransferFrom && from.code.length != 0) {
+            ITransferFromHook(from).onTransferFromHook();
+        }
+        return ok;
+    }
+}
+
+contract RevertingUnsafeFeed {
+    error UnsafeUnavailable();
+
+    function getPrice(address) external pure returns (uint256) {
+        return 1e8;
+    }
+
+    function getPriceUnsafe(address) external pure returns (uint256) {
+        revert UnsafeUnavailable();
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Reverting Unsafe Feed";
+    }
+}
+
+contract ReentrantPoolCreator is ITransferFromHook {
+    SplitRiskPoolFactory public immutable factory;
+    CloseOnTransferToken public immutable backingToken;
+    MockERC4626 public immutable shieldedToken;
+    address public pool;
+
+    constructor(SplitRiskPoolFactory factory_, CloseOnTransferToken backingToken_, MockERC4626 shieldedToken_) {
+        factory = factory_;
+        backingToken = backingToken_;
+        shieldedToken = shieldedToken_;
+    }
+
+    function createPool(uint256 creationBondAmount) external returns (address poolAddress) {
+        backingToken.approve(address(factory), creationBondAmount);
+        poolAddress = factory.createPool(
+            address(shieldedToken),
+            "HSH",
+            address(backingToken),
+            "HOOK",
+            500,
+            200,
+            15000,
+            creationBondAmount
+        );
+        pool = poolAddress;
+    }
+
+    function approvePool(uint256 amount) external {
+        backingToken.approve(pool, amount);
+    }
+
+    function depositBacking(uint256 amount) external {
+        SplitRiskPool(payable(pool)).depositBackingAsset(address(backingToken), amount, 0);
+    }
+
+    function onTransferFromHook() external override {
+        if (msg.sender != address(backingToken)) revert("not backing token");
+        factory.closePool(pool);
     }
 }
 
@@ -952,6 +1043,33 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
         factory.closePool(poolAddress);
+    }
+
+    function testDepositBackingAsset_RevertsIfTransferHookClosesPool() public {
+        CloseOnTransferToken hookToken = new CloseOnTransferToken();
+        MockERC4626 hookShielded = new MockERC4626(hookToken, "Hook Shielded", "HSH");
+        ReentrantPoolCreator creator = new ReentrantPoolCreator(factory, hookToken, hookShielded);
+        oracle.setPrice(address(hookToken), 1e8);
+        oracle.setPrice(address(hookShielded), 1e8);
+
+        compositeOracle.setTokenOracleFeedWithType(address(hookToken), address(oracle), "mock");
+        compositeOracle.setTokenOracleFeedWithType(address(hookShielded), address(oracle), "mock");
+        factory.addTokenInitial(address(hookToken), "Hook Token", "HOOK", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(hookShielded), "Hook Shielded", "HSH", address(oracle), address(0), 10000);
+
+        uint256 creationBondAmount = _defaultCreationBondAmount(address(hookToken));
+        hookToken.mint(address(creator), creationBondAmount + 100e18);
+        address poolAddress = creator.createPool(creationBondAmount);
+        creator.approvePool(100e18);
+
+        hookToken.setCloseOnTransferFrom(true);
+
+        vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
+        creator.depositBacking(100e18);
+
+        assertTrue(factory.isPoolActive(poolAddress), "reverted close should leave pool active");
+        assertFalse(SplitRiskPool(payable(poolAddress)).paused(), "reverted close should not leave pool paused");
+        assertEq(SplitRiskPool(payable(poolAddress)).totalProtectorTokens(), 0, "deposit should not mint position");
     }
 
     function testDeactivatePoolRecyclesActiveSlotsAndForfeitsBond() public {

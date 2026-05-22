@@ -889,6 +889,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function _transferAndGetReceived(address asset, uint256 depositAmount) internal returns (uint256 received) {
         uint256 beforeBal = IERC20(asset).balanceOf(address(this));
         SafeERC20.safeTransferFrom(IERC20(asset), msg.sender, address(this), depositAmount);
+        if (paused()) revert EnforcedPause();
         uint256 afterBal = IERC20(asset).balanceOf(address(this));
         received = afterBal - beforeBal;
         if (received == 0) revert ErrorsLib.TransferOperationFailed();
