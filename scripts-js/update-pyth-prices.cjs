@@ -294,6 +294,68 @@ async function fetchPriceUpdateData(priceIds, hermesUrl = PYTH_HERMES_URL) {
     }
 }
 
+async function fetchPriceUpdateDataBestEffort(
+    priceIds,
+    hermesUrl = PYTH_HERMES_URL,
+) {
+    console.log(`Connecting to Pyth Hermes: ${hermesUrl}`);
+    console.log(`Fetching price updates for ${priceIds.length} feed(s)...`);
+
+    const { HermesClient } = await import("@pythnetwork/hermes-client");
+    const client = new HermesClient(hermesUrl, {
+        priceFeedRequestConfig: {
+            binary: true,
+        },
+    });
+
+    const priceFeedIds = priceIds.map((id) => {
+        const hexId = id.startsWith("0x") ? id.slice(2) : id;
+        if (hexId.length !== 64) {
+            throw new Error(
+                `Invalid price feed ID length: ${id} (expected 64 hex chars, got ${hexId.length})`,
+            );
+        }
+        return hexId;
+    });
+
+    const settled = await Promise.allSettled(
+        priceFeedIds.map(async (feedId, index) => {
+            const response = await client.getLatestPriceUpdates([feedId]);
+            if (
+                !response ||
+                !response.binary ||
+                !response.binary.data ||
+                !Array.isArray(response.binary.data) ||
+                response.binary.data.length === 0
+            ) {
+                throw new Error(`No update data returned for feed ${index + 1}`);
+            }
+            const updateHex = response.binary.data[0];
+            return {
+                feedId: priceIds[index],
+                update: updateHex.startsWith("0x")
+                    ? updateHex
+                    : "0x" + updateHex,
+            };
+        }),
+    );
+
+    const updates = [];
+    const failures = [];
+    settled.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+            updates.push(result.value);
+        } else {
+            failures.push({
+                feedId: priceIds[index],
+                reason: result.reason?.message || String(result.reason),
+            });
+        }
+    });
+
+    return { updates, failures };
+}
+
 /**
  * Validate price update data format before sending to contract
  */
@@ -414,13 +476,28 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
 async function main() {
     const args = process.argv.slice(2);
     const config = {};
+    config.strict = args.includes("--strict");
 
     // Parse command line arguments
-    for (let i = 0; i < args.length; i += 2) {
-        const key = args[i]?.replace("--", "");
+    for (let i = 0; i < args.length;) {
+        const rawKey = args[i];
+        if (!rawKey?.startsWith("--")) {
+            i++;
+            continue;
+        }
+        const key = rawKey.replace("--", "");
+        if (key === "strict") {
+            config.strict = true;
+            i++;
+            continue;
+        }
         const value = args[i + 1];
-        if (key && value) {
+        if (value && !value.startsWith("--")) {
             config[key] = value;
+            i += 2;
+        } else {
+            config[key] = true;
+            i++;
         }
     }
 
@@ -509,6 +586,9 @@ async function main() {
     });
 
     const missingConfigs = [];
+    const configuredTokens = [];
+    const zeroHash =
+        "0x0000000000000000000000000000000000000000000000000000000000000000";
     for (const token of tokensToCheck) {
         if (!token.address) {
             console.warn(
@@ -531,26 +611,36 @@ async function main() {
                 quoteFeedId = ethers.ZeroHash;
             }
 
-            const zeroHash =
-                "0x0000000000000000000000000000000000000000000000000000000000000000";
             const expectedFeedId = token.feedId.toLowerCase();
             const actualFeedId = feedId.toLowerCase();
             const expectedQuoteFeedId = (
                 token.quoteFeedId || zeroHash
             ).toLowerCase();
             const actualQuoteFeedId = (quoteFeedId || zeroHash).toLowerCase();
-            if (
-                !isSupported ||
-                actualFeedId === zeroHash ||
-                actualFeedId !== expectedFeedId ||
-                actualQuoteFeedId !== expectedQuoteFeedId
-            ) {
+            if (!isSupported || actualFeedId === zeroHash) {
                 console.warn(
                     `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`,
                 );
                 missingConfigs.push(token);
             } else {
+                if (actualFeedId !== expectedFeedId) {
+                    console.warn(
+                        `  ⚠ ${token.name}: using on-chain feed ${feedId}, registry expected ${token.feedId}`,
+                    );
+                }
+                if (actualQuoteFeedId !== expectedQuoteFeedId) {
+                    console.warn(
+                        `  ⚠ ${token.name}: using on-chain quote ${quoteFeedId}, registry expected ${
+                            token.quoteFeedId || zeroHash
+                        }`,
+                    );
+                }
                 console.log(`  ✓ ${token.name} (${token.address}): configured`);
+                configuredTokens.push({
+                    ...token,
+                    actualFeedId: feedId,
+                    actualQuoteFeedId: actualQuoteFeedId === zeroHash ? null : quoteFeedId,
+                });
             }
         } catch (e) {
             console.warn(
@@ -589,22 +679,40 @@ async function main() {
 
     const priceIds = [
         ...new Set(
-            tokensToCheck.flatMap((token) =>
-                token.quoteFeedId
-                    ? [token.feedId, token.quoteFeedId]
-                    : [token.feedId],
+            configuredTokens.flatMap((token) =>
+                token.actualQuoteFeedId
+                    ? [token.actualFeedId, token.actualQuoteFeedId]
+                    : [token.actualFeedId],
             ),
         ),
     ];
+    if (priceIds.length === 0) {
+        console.error("\n❌ No on-chain configured Pyth feeds found to update");
+        process.exit(1);
+    }
     console.log("\nFetching price update data from Pyth Hermes...");
     console.log("Feed IDs:", priceIds);
 
     try {
-        const priceUpdateData = await fetchPriceUpdateData(
+        const { updates, failures } = await fetchPriceUpdateDataBestEffort(
             priceIds,
             PYTH_HERMES_URL,
         );
+        failures.forEach((failure) => {
+            console.warn(
+                `  ⚠ Skipping feed ${failure.feedId}: ${failure.reason}`,
+            );
+        });
+        if (failures.length > 0 && config.strict) {
+            throw new Error(
+                `${failures.length} feed update(s) failed in strict mode`,
+            );
+        }
+        const priceUpdateData = updates.map((entry) => entry.update);
         console.log(`Received ${priceUpdateData.length} price update(s)`);
+        if (priceUpdateData.length === 0) {
+            throw new Error("No price updates fetched successfully");
+        }
 
         // Update prices on-chain
         console.log("\nUpdating prices on-chain...");
@@ -612,10 +720,10 @@ async function main() {
 
         console.log("\n✅ Price feeds updated successfully!");
         console.log("\nRefreshed Pyth feeds for:");
-        tokensToCheck.forEach((token) => {
-            console.log(`  - ${token.name}: ${token.feedId}`);
-            if (token.quoteFeedId) {
-                console.log(`    quote: ${token.quoteFeedId}`);
+        configuredTokens.forEach((token) => {
+            console.log(`  - ${token.name}: ${token.actualFeedId}`);
+            if (token.actualQuoteFeedId) {
+                console.log(`    quote: ${token.actualQuoteFeedId}`);
             }
         });
     } catch (error) {
@@ -631,4 +739,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = { fetchPriceUpdateData, updatePriceFeeds };
+module.exports = {
+    fetchPriceUpdateData,
+    fetchPriceUpdateDataBestEffort,
+    updatePriceFeeds,
+};

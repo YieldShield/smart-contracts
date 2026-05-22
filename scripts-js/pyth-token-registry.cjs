@@ -394,14 +394,15 @@ function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
             broadcast,
             config.contractName,
         )[config.broadcastIndex];
+        const envAddress = env[config.env] || null;
         return {
             ...config,
             chainId: resolvedChainId,
             address:
+                envAddress ||
                 (preferDeployment
                     ? deploymentAddress || broadcastAddress
                     : broadcastAddress || deploymentAddress) ||
-                env[config.env] ||
                 null,
         };
     });

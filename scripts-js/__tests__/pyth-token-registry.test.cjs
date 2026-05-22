@@ -168,7 +168,7 @@ test("resolveContractAddress prefers a newer broadcast over an older deployment 
     );
 });
 
-test("resolvePythTokenConfigs prefers current broadcast addresses over stale env overrides", () => {
+test("resolvePythTokenConfigs prefers explicit env overrides over local broadcast addresses", () => {
     const rootDir = makeTempRoot();
 
     writeJson(
@@ -200,5 +200,5 @@ test("resolvePythTokenConfigs prefers current broadcast addresses over stale env
     });
 
     const susde = configs.find((config) => config.name === "SUSDE");
-    assert.equal(susde.address, "0x00000000000000000000000000000000000000c1");
+    assert.equal(susde.address, "0x00000000000000000000000000000000000000ff");
 });
