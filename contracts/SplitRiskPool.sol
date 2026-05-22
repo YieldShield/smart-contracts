@@ -1901,6 +1901,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Settle pending commissions before changing share ownership so exits cannot orphan rewards.
         _claimCommissionTo(msg.sender, tokenId, positionShares_);
+        if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
+            revert ErrorsLib.InvalidTokenId();
+        }
 
         if (newShares == 0) {
             // Full withdrawal - burn NFT and clean up mappings
