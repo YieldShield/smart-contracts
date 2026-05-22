@@ -20,7 +20,13 @@ library PythConfig {
 
     /// @notice Pyth contract address on Arbitrum mainnet
     /// @dev Get the latest address from: https://docs.pyth.network/price-feeds/contract-addresses/evm
-    address public constant PYTH_ARBITRUM_MAINNET = 0xff1A0f4744E8582DF1AE09D5615B5c36420C63ea;
+    address public constant PYTH_ARBITRUM_MAINNET = 0xff1a0f4744e8582DF1aE09D5611b887B6a12925C;
+
+    /// @notice Default max Pyth price age on Arbitrum Sepolia
+    uint256 public constant DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE = 3600;
+
+    /// @notice Default max Pyth price age on Arbitrum mainnet
+    uint256 public constant DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE = 60;
 
     /// @notice Price feed ID for sUSDe/USD
     /// @dev Get the feed ID from: https://pyth.network/developers/price-feed-ids
@@ -94,6 +100,19 @@ library PythConfig {
             return PYTH_ARBITRUM_SEPOLIA;
         } else if (chainId == ARBITRUM_MAINNET_CHAIN_ID) {
             return PYTH_ARBITRUM_MAINNET;
+        } else {
+            revert("Unsupported chain ID");
+        }
+    }
+
+    /// @notice Get default Pyth price freshness for a given chain ID
+    /// @param chainId The chain ID to get the max age for
+    /// @return maxPriceAge The default maximum accepted price age for the given chain ID
+    function getDefaultMaxPriceAge(uint256 chainId) internal pure returns (uint256 maxPriceAge) {
+        if (chainId == ARBITRUM_SEPOLIA_CHAIN_ID) {
+            return DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE;
+        } else if (chainId == ARBITRUM_MAINNET_CHAIN_ID) {
+            return DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE;
         } else {
             revert("Unsupported chain ID");
         }

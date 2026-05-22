@@ -8,12 +8,14 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
+import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { DeployYieldShieldProduction } from "../script/DeployYieldShieldProduction.s.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
+import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 
 contract ProductionDeployHarness is DeployYieldShieldProduction {
     function validateProductionBootstrapHolder(address holder) external view {
@@ -26,6 +28,13 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address expectedSingleton
     ) external view {
         _validateProductionBootstrapHolder(holder, expectedCodehash, expectedSingleton);
+    }
+
+    function validateProductionPythConfig(address pythAddress, uint256 maxPriceAge, bool updaterConfirmed)
+        external
+        view
+    {
+        _validateProductionPythConfig(pythAddress, maxPriceAge, updaterConfirmed);
     }
 
     function _readMasterCopy(address holder) internal view returns (address singleton) {
@@ -265,6 +274,51 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         // After M-15, the burn floor and propose threshold coincide — assertLe
         // captures the invariant that you can still propose at the floor.
         assertLe(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
+    }
+
+    function test_ProductionPythConfig_RejectsNoCodePythContract() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address missingPyth = address(0x1234);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployYieldShieldProduction.InvalidProductionPythContract.selector, missingPyth)
+        );
+        harness.validateProductionPythConfig(missingPyth, PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, true);
+    }
+
+    function test_ProductionPythConfig_RequiresMainnetUpdaterConfirmation() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        MockPyth mockPyth = new MockPyth(60, 1);
+        vm.chainId(PythConfig.ARBITRUM_MAINNET_CHAIN_ID);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionPythUpdaterNotConfirmed.selector,
+                PythConfig.ARBITRUM_MAINNET_CHAIN_ID,
+                PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE
+            )
+        );
+        harness.validateProductionPythConfig(
+            address(mockPyth), PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, false
+        );
+    }
+
+    function test_ProductionPythConfig_AllowsConfirmedMainnetUpdater() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        MockPyth mockPyth = new MockPyth(60, 1);
+        vm.chainId(PythConfig.ARBITRUM_MAINNET_CHAIN_ID);
+
+        harness.validateProductionPythConfig(address(mockPyth), PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE, true);
+    }
+
+    function test_ProductionPythConfig_AllowsSepoliaWithoutUpdaterConfirmation() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        MockPyth mockPyth = new MockPyth(3600, 1);
+        vm.chainId(PythConfig.ARBITRUM_SEPOLIA_CHAIN_ID);
+
+        harness.validateProductionPythConfig(
+            address(mockPyth), PythConfig.DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE, false
+        );
     }
 
     function test_ProductionProtocol_RoutesOracleOwnershipThroughFactoryGovernance() public {

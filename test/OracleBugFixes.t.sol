@@ -13,6 +13,14 @@ import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol"
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 
 contract PythConfigHarness {
+    function getPythAddress(uint256 chainId) external pure returns (address) {
+        return PythConfig.getPythAddress(chainId);
+    }
+
+    function getDefaultMaxPriceAge(uint256 chainId) external pure returns (uint256) {
+        return PythConfig.getDefaultMaxPriceAge(chainId);
+    }
+
     function getFeedIdBySymbol(string memory symbol) external pure returns (bytes32) {
         return PythConfig.getFeedIdBySymbol(symbol);
     }
@@ -129,6 +137,36 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertEq(harness.getFeedIdBySymbol("susds"), PythConfig.SUSDS_USDS_FEED_ID, "lowercase SUSDS should work");
         assertEq(harness.getQuoteFeedIdBySymbol("susds"), PythConfig.USDS_USD_FEED_ID, "lowercase quote should work");
         assertTrue(susdsFeedId != PythConfig.USDC_USD_FEED_ID, "SUSDS should not reuse USDC feed");
+    }
+
+    function test_PythConfig_ArbitrumAddressesMatchOfficialPythDeployments() public {
+        PythConfigHarness harness = new PythConfigHarness();
+
+        assertEq(
+            harness.getPythAddress(PythConfig.ARBITRUM_MAINNET_CHAIN_ID),
+            0xff1a0f4744e8582DF1aE09D5611b887B6a12925C,
+            "Arbitrum mainnet Pyth address should match official docs"
+        );
+        assertEq(
+            harness.getPythAddress(PythConfig.ARBITRUM_SEPOLIA_CHAIN_ID),
+            0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF,
+            "Arbitrum Sepolia Pyth address should match official docs"
+        );
+    }
+
+    function test_PythConfig_DefaultPriceAgeIsChainSpecific() public {
+        PythConfigHarness harness = new PythConfigHarness();
+
+        assertEq(
+            harness.getDefaultMaxPriceAge(PythConfig.ARBITRUM_MAINNET_CHAIN_ID),
+            PythConfig.DEFAULT_ARBITRUM_MAINNET_MAX_PRICE_AGE,
+            "mainnet should use production freshness"
+        );
+        assertEq(
+            harness.getDefaultMaxPriceAge(PythConfig.ARBITRUM_SEPOLIA_CHAIN_ID),
+            PythConfig.DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE,
+            "testnet should allow longer freshness window"
+        );
     }
 
     // ============ Bug 7: Factory removeToken Cleanup Tests ============

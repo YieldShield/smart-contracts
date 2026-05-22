@@ -40,6 +40,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolder(address holder);
     error InvalidProductionBootstrapHolderCodehash(address holder, bytes32 actualCodehash, bytes32 expectedCodehash);
     error InvalidProductionBootstrapHolderSingleton(address holder, address actualSingleton, address expectedSingleton);
+    error InvalidProductionPythContract(address pythAddress);
+    error ProductionPythUpdaterNotConfirmed(uint256 chainId, uint256 maxPriceAge);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
@@ -124,7 +126,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("\n=== Deploying Production Protocol ===");
 
         address pythAddress = PythConfig.getPythAddress(block.chainid);
-        uint256 maxPriceAge = block.chainid == 421614 ? 3600 : 60;
+        uint256 maxPriceAge = PythConfig.getDefaultMaxPriceAge(block.chainid);
+        bool pythUpdaterConfirmed = vm.envOr("YS_PRODUCTION_PYTH_UPDATER_CONFIRMED", false);
+        _validateProductionPythConfig(pythAddress, maxPriceAge, pythUpdaterConfirmed);
 
         PythOracle pythOracle = new PythOracle(pythAddress, maxPriceAge);
         pythOracleAddr = address(pythOracle);
@@ -288,6 +292,18 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                     revert InvalidProductionBootstrapHolder(holder);
                 }
             }
+        }
+    }
+
+    function _validateProductionPythConfig(address pythAddress, uint256 maxPriceAge, bool updaterConfirmed)
+        internal
+        view
+    {
+        if (pythAddress.code.length == 0) {
+            revert InvalidProductionPythContract(pythAddress);
+        }
+        if (block.chainid == PythConfig.ARBITRUM_MAINNET_CHAIN_ID && !updaterConfirmed) {
+            revert ProductionPythUpdaterNotConfirmed(block.chainid, maxPriceAge);
         }
     }
 }
