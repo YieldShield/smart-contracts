@@ -185,6 +185,60 @@ contract PythOracleTest is Test {
         assertEq(publishTime, uint64(block.timestamp + 1));
     }
 
+    function testGetPriceUnsafe_RevertsForFuturePublishTime() public {
+        uint256 futurePublishTime = block.timestamp + 1;
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.FuturePrice.selector, address(token1), FEED_ID_1, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getPriceUnsafe(address(token1));
+    }
+
+    function testGetPrice_RevertsForFuturePublishTime() public {
+        uint256 futurePublishTime = block.timestamp + 1;
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.FuturePrice.selector, address(token1), FEED_ID_1, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testGetEmaPrice_RevertsForFuturePublishTime() public {
+        uint256 futurePublishTime = block.timestamp + 1;
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.FuturePrice.selector, address(token1), FEED_ID_1, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getEmaPrice(address(token1));
+    }
+
+    function testGetPrice_RevertsForFutureCompositeQuotePublishTime() public {
+        bytes32 baseFeedId = FEED_ID_1;
+        bytes32 quoteFeedId = FEED_ID_2;
+        uint256 futurePublishTime = block.timestamp + 1;
+
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), baseFeedId, quoteFeedId);
+        _updatePriceFeed(baseFeedId, 1e8, 1e6, -8, uint64(block.timestamp));
+        _updatePriceFeed(quoteFeedId, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.FuturePrice.selector, address(token1), quoteFeedId, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getPriceUnsafe(address(token1));
+    }
+
     function testSetMaxPriceAgeForTokenExtendsFreshnessForOneToken() public {
         vm.prank(owner);
         oracle.setMaxPriceAgeForToken(address(token1), 120);

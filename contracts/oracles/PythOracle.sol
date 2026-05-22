@@ -88,6 +88,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Custom error for stale price
     error StalePrice(address token, bytes32 feedId, uint64 publishTime, uint256 maxAge);
 
+    /// @notice Custom error for prices published after the current block timestamp
+    error FuturePrice(address token, bytes32 feedId, uint256 publishTime, uint256 currentTime);
+
     /// @notice Custom error for invalid price feed ID
     error InvalidPriceFeedId(bytes32 feedId);
 
@@ -461,8 +464,16 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         } else {
             priceData = pyth.getPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
         }
+        _validatePublishTimeNotFuture(token, feedId, priceData.publishTime);
         _validateConfidence(token, priceData, useEma);
         return _convertPrice(token, priceData);
+    }
+
+    function _validatePublishTimeNotFuture(address token, bytes32 feedId, uint256 publishTime) internal view {
+        uint256 currentTime = block.timestamp;
+        if (publishTime > currentTime) {
+            revert FuturePrice(token, feedId, publishTime, currentTime);
+        }
     }
 
     function _isFeedStale(address token, bytes32 feedId) internal view returns (bool isStale, uint64 publishTime) {

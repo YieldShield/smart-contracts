@@ -61,6 +61,9 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for invalid/zero price
     error InvalidPrice(address token, int256 price);
 
+    /// @notice Custom error for prices published after the current block timestamp
+    error FuturePrice(address token, bytes32 feedId, uint256 publishTime, uint256 currentTime);
+
     /// @notice Custom error for invalid price age
     error InvalidPriceAge(uint256 provided, uint256 minimum);
 
@@ -199,8 +202,16 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
         // Get EMA price (time-weighted average, more stable)
         PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
+        _validatePublishTimeNotFuture(token, feedId, emaData.publishTime);
         _validateConfidence(token, emaData);
         return _convertPrice(token, emaData);
+    }
+
+    function _validatePublishTimeNotFuture(address token, bytes32 feedId, uint256 publishTime) internal view {
+        uint256 currentTime = block.timestamp;
+        if (publishTime > currentTime) {
+            revert FuturePrice(token, feedId, publishTime, currentTime);
+        }
     }
 
     /// @inheritdoc IOracleFeed

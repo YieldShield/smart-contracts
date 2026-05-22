@@ -104,6 +104,18 @@ contract PythEMAOracleFeedTest is Test {
         feed.setMaxPriceAgeForToken(address(token), 120);
     }
 
+    function testGetPrice_RevertsForFuturePublishTime() public {
+        uint256 futurePublishTime = block.timestamp + 1;
+        _updatePriceFeed(FEED_ID, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythEMAOracleFeed.FuturePrice.selector, address(token), FEED_ID, futurePublishTime, block.timestamp
+            )
+        );
+        feed.getPrice(address(token));
+    }
+
     function testRemoveTokenRequiresSchedule() public {
         vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.TokenRemovalNotScheduled.selector, address(token)));
         feed.removeToken(address(token));
