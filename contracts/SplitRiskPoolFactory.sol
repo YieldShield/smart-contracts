@@ -16,6 +16,8 @@ import { PoolOracleValidationLib } from "./libraries/PoolOracleValidationLib.sol
 import { ProtocolAccessControlUpgradeable } from "./base/ProtocolAccessControlUpgradeable.sol";
 import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { IERC1822Proxiable } from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
+import { ERC1967Utils } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -143,7 +145,7 @@ contract SplitRiskPoolFactory is
         initializer
     {
         if (governanceTimelock_ == address(0)) revert GovernanceZeroAddress();
-        if (poolImplementation_ == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _validatePoolImplementation(poolImplementation_);
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
         splitRiskPoolImplementation = poolImplementation_;
         minimumCreationBondUsd = DEFAULT_MINIMUM_CREATION_BOND_USD;
@@ -157,7 +159,7 @@ contract SplitRiskPoolFactory is
      * @custom:error InvalidAssetAddress If newImplementation is zero address
      */
     function setPoolImplementation(address newImplementation) external onlyGovernance {
-        if (newImplementation == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _validatePoolImplementation(newImplementation);
         emit PoolImplementationUpdated(splitRiskPoolImplementation, newImplementation);
         splitRiskPoolImplementation = newImplementation;
     }
@@ -1054,6 +1056,15 @@ contract SplitRiskPoolFactory is
         activePools.pop();
         delete _activePoolIndexPlusOne[pool];
         isPoolActive[pool] = false;
+    }
+
+    function _validatePoolImplementation(address implementation) internal view {
+        if (implementation == address(0) || implementation.code.length == 0) revert ErrorsLib.InvalidAssetAddress();
+        try IERC1822Proxiable(implementation).proxiableUUID() returns (bytes32 slot) {
+            if (slot != ERC1967Utils.IMPLEMENTATION_SLOT) revert ErrorsLib.InvalidAssetAddress();
+        } catch {
+            revert ErrorsLib.InvalidAssetAddress();
+        }
     }
 
     function _addToken(

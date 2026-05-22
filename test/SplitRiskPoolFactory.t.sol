@@ -614,6 +614,24 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), newRecipient);
     }
 
+    function testSetPoolImplementationValidatesUUPSImplementation() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.setPoolImplementation(user1);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.setPoolImplementation(address(tokenB));
+
+        SplitRiskPool newImplementation = new SplitRiskPool();
+        vm.prank(governanceTimelock);
+        factory.setPoolImplementation(address(newImplementation));
+
+        assertEq(
+            factory.splitRiskPoolImplementation(), address(newImplementation), "valid UUPS implementation accepted"
+        );
+    }
+
     function testFinalizeBootstrapDisablesOwnerBootstrapBypass() public {
         MockERC20 tokenC = new MockERC20("Token C", "TKNC");
         oracle.setPrice(address(tokenC), 1e8);
