@@ -510,7 +510,7 @@ contract PythOracleTest is Test {
         assertEq(oracle.getEmaPrice(address(token1)), 104_500_000);
     }
 
-    function testCompositePriceFeed_UsesTokenMaxAgeForBaseAndQuoteFeeds() public {
+    function testCompositePriceFeed_UsesSeparateQuoteFeedMaxAge() public {
         vm.startPrank(owner);
         oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
         oracle.setMaxPriceAgeForToken(address(token1), 120);
@@ -518,13 +518,55 @@ contract PythOracleTest is Test {
 
         vm.warp(block.timestamp + 90);
 
-        assertEq(oracle.getPrice(address(token1)), 1e8, "Override should apply to both composite legs");
+        vm.expectRevert();
+        oracle.getPrice(address(token1));
+
+        vm.prank(owner);
+        oracle.setMaxPriceAgeForFeedId(FEED_ID_2, 120);
+
+        assertEq(oracle.getPrice(address(token1)), 1e8, "Quote feed override should be independent");
 
         vm.prank(owner);
         oracle.setMaxPriceAgeForToken(address(token1), 0);
 
         vm.expectRevert();
         oracle.getPrice(address(token1));
+    }
+
+    function testSetMaxPriceAgeForFeedIdOnlyOwner() public {
+        vm.prank(user);
+        vm.expectRevert();
+        oracle.setMaxPriceAgeForFeedId(FEED_ID_2, 120);
+    }
+
+    function testCompositePriceFeed_RevertsWhenPublishTimeSkewTooHigh() public {
+        vm.startPrank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+        oracle.setMaxCompositePublishTimeSkew(10);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 30);
+        _updatePriceFeed(FEED_ID_1, 110e6, 1e4, -8, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID_2, 95e6, 1e4, -8, uint64(block.timestamp - 11));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.CompositePublishTimeSkewTooHigh.selector,
+                address(token1),
+                FEED_ID_1,
+                FEED_ID_2,
+                block.timestamp,
+                block.timestamp - 11,
+                10
+            )
+        );
+        oracle.getPrice(address(token1));
+
+        (bool isStale,) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "Skewed composite feed should report stale");
+
+        _updatePriceFeed(FEED_ID_2, 95e6, 1e4, -8, uint64(block.timestamp - 10));
+        assertEq(oracle.getPrice(address(token1)), 104_500_000, "Boundary skew should pass");
     }
 
     function testCompositePriceFeed_RevertsWhenQuoteConfidenceTooWide() public {

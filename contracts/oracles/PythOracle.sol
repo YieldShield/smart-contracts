@@ -47,6 +47,15 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Optional per-token price age override. Zero means use maxPriceAge.
     mapping(address => uint256) public maxPriceAgeForToken;
 
+    /// @notice Optional per-feed price age override. Zero means use maxPriceAge.
+    /// @dev Used for quote legs in composite feeds so a slow redemption-rate
+    ///      base feed does not implicitly relax a fast quote/USD market feed.
+    mapping(bytes32 => uint256) public maxPriceAgeForFeedId;
+
+    /// @notice Optional maximum publish-time distance between composite base and quote feeds.
+    /// @dev Zero disables the check. Applies to both spot and EMA composite reads.
+    uint256 public maxCompositePublishTimeSkew;
+
     mapping(address => uint256) public scheduledTokenRemovalTime;
 
     /// @notice Mapping to track if a token is supported
@@ -63,6 +72,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Emitted when a per-token max price age is updated
     event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when a per-feed max price age is updated
+    event MaxPriceAgeForFeedIdUpdated(bytes32 indexed feedId, uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when composite feed publish-time skew tolerance is updated
+    event MaxCompositePublishTimeSkewUpdated(uint256 oldSkew, uint256 newSkew);
 
     /// @notice Emitted when max price deviation is updated
     event MaxPriceDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
@@ -140,6 +155,16 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     /// @notice Custom error for Pyth price confidence exceeding threshold
     error PriceConfidenceTooWide(address token, uint256 confidence, uint256 price, uint256 maxConfidenceBps);
+
+    /// @notice Custom error when composite base and quote publish times diverge too far
+    error CompositePublishTimeSkewTooHigh(
+        address token,
+        bytes32 baseFeedId,
+        bytes32 quoteFeedId,
+        uint256 basePublishTime,
+        uint256 quotePublishTime,
+        uint256 maxSkew
+    );
 
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract on the current network
@@ -270,10 +295,36 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
     }
 
+    /// @notice Set a per-feed max price age used by composite quote legs.
+    /// @dev Set to 0 to clear the override and revert to maxPriceAge.
+    function setMaxPriceAgeForFeedId(bytes32 feedId, uint256 _maxPriceAge) external onlyOwner {
+        if (feedId == bytes32(0)) revert InvalidPriceFeedId(feedId);
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = maxPriceAgeForFeedId[feedId];
+        maxPriceAgeForFeedId[feedId] = _maxPriceAge;
+        emit MaxPriceAgeForFeedIdUpdated(feedId, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set max publish-time skew between composite base and quote feeds.
+    /// @dev Set to 0 to disable the skew check.
+    function setMaxCompositePublishTimeSkew(uint256 maxSkew) external onlyOwner {
+        if (maxSkew > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(maxSkew, MAX_PRICE_AGE_LIMIT);
+        uint256 oldSkew = maxCompositePublishTimeSkew;
+        maxCompositePublishTimeSkew = maxSkew;
+        emit MaxCompositePublishTimeSkewUpdated(oldSkew, maxSkew);
+    }
+
     /// @notice Resolve the effective max-price-age for a token.
     function effectiveMaxPriceAge(address token) public view returns (uint256) {
         uint256 perToken = maxPriceAgeForToken[token];
         return perToken == 0 ? maxPriceAge : perToken;
+    }
+
+    /// @notice Resolve the effective max-price-age for an individual feed ID.
+    function effectiveMaxPriceAgeForFeedId(bytes32 feedId) public view returns (uint256) {
+        uint256 perFeed = maxPriceAgeForFeedId[feedId];
+        return perFeed == 0 ? maxPriceAge : perFeed;
     }
 
     /// @notice Set the maximum allowed price deviation between spot and EMA
@@ -379,14 +430,16 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         bytes32 feedId = _getFeedId(token);
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
 
-        (bool baseStale, uint64 basePublishTime) = _isFeedStale(token, feedId);
+        (bool baseStale, uint64 basePublishTime) = _isFeedStale(feedId, effectiveMaxPriceAge(token));
         if (quoteFeedId == bytes32(0)) {
             return (baseStale, basePublishTime);
         }
 
-        (bool quoteStale, uint64 quotePublishTime) = _isFeedStale(token, quoteFeedId);
+        (bool quoteStale, uint64 quotePublishTime) =
+            _isFeedStale(quoteFeedId, effectiveMaxPriceAgeForFeedId(quoteFeedId));
         uint64 oldestPublishTime = basePublishTime < quotePublishTime ? basePublishTime : quotePublishTime;
-        return (baseStale || quoteStale, oldestPublishTime);
+        bool skewStale = _isCompositePublishTimeSkewTooHigh(basePublishTime, quotePublishTime);
+        return (baseStale || quoteStale || skewStale, oldestPublishTime);
     }
 
     /// @notice Get the update fee for price feeds
@@ -455,27 +508,35 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
 
     function _getPythPrice(address token, bool useEma) internal view returns (uint256) {
         bytes32 feedId = _getFeedId(token);
-        uint256 basePrice = _readPythPrice(token, feedId, useEma);
+        (uint256 basePrice, uint256 basePublishTime) =
+            _readPythPrice(token, feedId, useEma, effectiveMaxPriceAge(token));
 
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
         if (quoteFeedId == bytes32(0)) {
             return basePrice;
         }
 
-        uint256 quoteUsdPrice = _readPythPrice(token, quoteFeedId, useEma);
+        (uint256 quoteUsdPrice, uint256 quotePublishTime) =
+            _readPythPrice(token, quoteFeedId, useEma, effectiveMaxPriceAgeForFeedId(quoteFeedId));
+        _validateCompositePublishTimeSkew(token, feedId, quoteFeedId, basePublishTime, quotePublishTime);
         return Math.mulDiv(basePrice, quoteUsdPrice, 1e8);
     }
 
-    function _readPythPrice(address token, bytes32 feedId, bool useEma) internal view returns (uint256) {
+    function _readPythPrice(address token, bytes32 feedId, bool useEma, uint256 priceAge)
+        internal
+        view
+        returns (uint256 price, uint256 publishTime)
+    {
         PythStructs.Price memory priceData;
         if (useEma) {
-            priceData = pyth.getEmaPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
+            priceData = pyth.getEmaPriceNoOlderThan(feedId, priceAge);
         } else {
-            priceData = pyth.getPriceNoOlderThan(feedId, effectiveMaxPriceAge(token));
+            priceData = pyth.getPriceNoOlderThan(feedId, priceAge);
         }
         _validatePublishTimeNotFuture(token, feedId, priceData.publishTime);
         _validateConfidence(token, priceData, useEma);
-        return _convertPrice(token, priceData);
+        price = _convertPrice(token, priceData);
+        publishTime = priceData.publishTime;
     }
 
     function _validatePublishTimeNotFuture(address token, bytes32 feedId, uint256 publishTime) internal view {
@@ -485,7 +546,36 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         }
     }
 
-    function _isFeedStale(address token, bytes32 feedId) internal view returns (bool isStale, uint64 publishTime) {
+    function _validateCompositePublishTimeSkew(
+        address token,
+        bytes32 baseFeedId,
+        bytes32 quoteFeedId,
+        uint256 basePublishTime,
+        uint256 quotePublishTime
+    ) internal view {
+        if (_isCompositePublishTimeSkewTooHigh(basePublishTime, quotePublishTime)) {
+            revert CompositePublishTimeSkewTooHigh(
+                token, baseFeedId, quoteFeedId, basePublishTime, quotePublishTime, maxCompositePublishTimeSkew
+            );
+        }
+    }
+
+    function _isCompositePublishTimeSkewTooHigh(uint256 basePublishTime, uint256 quotePublishTime)
+        internal
+        view
+        returns (bool)
+    {
+        uint256 maxSkew = maxCompositePublishTimeSkew;
+        if (maxSkew == 0) {
+            return false;
+        }
+        uint256 skew = basePublishTime > quotePublishTime
+            ? basePublishTime - quotePublishTime
+            : quotePublishTime - basePublishTime;
+        return skew > maxSkew;
+    }
+
+    function _isFeedStale(bytes32 feedId, uint256 priceAge) internal view returns (bool isStale, uint64 publishTime) {
         try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
             uint256 rawPublishTime = priceData.publishTime;
             uint256 currentTime = block.timestamp;
@@ -493,7 +583,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
             if (rawPublishTime > currentTime) {
                 return (true, publishTime);
             }
-            isStale = (currentTime - rawPublishTime) > effectiveMaxPriceAge(token);
+            isStale = (currentTime - rawPublishTime) > priceAge;
         } catch {
             isStale = true;
             publishTime = 0;
