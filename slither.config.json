@@ -1,5 +1,5 @@
 {
-  "filter_paths": "test/,script/,lib/,contracts/mocks/,contracts/examples/",
+  "filter_paths": "test/,lib/,contracts/mocks/,contracts/examples/",
   "exclude_informational": true,
   "exclude_low": false,
   "exclude_optimization": true,
