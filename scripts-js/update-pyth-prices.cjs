@@ -24,6 +24,7 @@ require("dotenv").config({ path: join(__dirname, "..", ".env") });
 
 const DEFAULT_KEYSTORE_ACCOUNT = "scaffold-eth-default";
 const KEYSTORE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
+const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
 
 /**
  * Get Oracle address from the deployment file for the active chain
@@ -63,6 +64,40 @@ function isValidKeystoreName(keystoreName) {
         keystoreName.length > 0 &&
         KEYSTORE_NAME_PATTERN.test(keystoreName)
     );
+}
+
+function parseCliArgs(args) {
+    const config = {};
+
+    for (let i = 0; i < args.length;) {
+        const rawKey = args[i];
+        if (!rawKey?.startsWith("--")) {
+            i++;
+            continue;
+        }
+        const rawKeyName = rawKey.replace("--", "");
+        const key = rawKeyName === "allow-partial" ? "allowPartial" : rawKeyName;
+        const value = args[i + 1];
+        if (value && !value.startsWith("--")) {
+            config[key] = value;
+            i += 2;
+        } else {
+            config[key] = true;
+            i++;
+        }
+    }
+
+    if (config.strict && config.allowPartial) {
+        throw new Error("--strict and --allow-partial cannot be used together");
+    }
+
+    return config;
+}
+
+function shouldRequireAllPriceUpdates({ strict, allowPartial, chainId }) {
+    if (strict) return true;
+    if (allowPartial) return false;
+    return !LOCAL_CHAIN_IDS.has(String(chainId));
 }
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
@@ -475,30 +510,12 @@ async function updatePriceFeeds(oracleContract, priceUpdateData, signer) {
  */
 async function main() {
     const args = process.argv.slice(2);
-    const config = {};
-    config.strict = args.includes("--strict");
-
-    // Parse command line arguments
-    for (let i = 0; i < args.length;) {
-        const rawKey = args[i];
-        if (!rawKey?.startsWith("--")) {
-            i++;
-            continue;
-        }
-        const key = rawKey.replace("--", "");
-        if (key === "strict") {
-            config.strict = true;
-            i++;
-            continue;
-        }
-        const value = args[i + 1];
-        if (value && !value.startsWith("--")) {
-            config[key] = value;
-            i += 2;
-        } else {
-            config[key] = true;
-            i++;
-        }
+    let config;
+    try {
+        config = parseCliArgs(args);
+    } catch (error) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
     }
 
     const rpcUrl = resolveRpcUrl(config.rpcUrl);
@@ -552,6 +569,11 @@ async function main() {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const network = await provider.getNetwork();
     const chainId = network.chainId.toString();
+    const requireAllPriceUpdates = shouldRequireAllPriceUpdates({
+        strict: Boolean(config.strict),
+        allowPartial: Boolean(config.allowPartial),
+        chainId,
+    });
     const rootDir = join(__dirname, "..");
     const oracleAddress =
         config.oracle || getOracleAddress({ rootDir, chainId });
@@ -576,6 +598,10 @@ async function main() {
     console.log("Oracle:", oracleAddress);
     console.log("Network:", network.name);
     console.log("Chain ID:", chainId);
+    console.log(
+        "Partial feed updates:",
+        requireAllPriceUpdates ? "disabled" : "allowed",
+    );
     console.log("Signer:", await signer.getAddress());
 
     // Check token configuration
@@ -703,9 +729,9 @@ async function main() {
                 `  ⚠ Skipping feed ${failure.feedId}: ${failure.reason}`,
             );
         });
-        if (failures.length > 0 && config.strict) {
+        if (failures.length > 0 && requireAllPriceUpdates) {
             throw new Error(
-                `${failures.length} feed update(s) failed in strict mode`,
+                `${failures.length} feed update(s) failed while partial updates are disabled`,
             );
         }
         const priceUpdateData = updates.map((entry) => entry.update);
@@ -742,5 +768,7 @@ if (require.main === module) {
 module.exports = {
     fetchPriceUpdateData,
     fetchPriceUpdateDataBestEffort,
+    parseCliArgs,
+    shouldRequireAllPriceUpdates,
     updatePriceFeeds,
 };
