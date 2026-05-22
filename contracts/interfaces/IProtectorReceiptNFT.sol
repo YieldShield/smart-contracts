@@ -19,6 +19,11 @@ interface IProtectorReceiptNFT is IERC721 {
 
     function getPosition(uint256 tokenId) external view returns (ProtectorPosition memory);
 
+    function getPositionWithFreshness(uint256 tokenId)
+        external
+        view
+        returns (ProtectorPosition memory position, bool isAmountFresh);
+
     function updateAmount(uint256 tokenId, uint256 newAmount) external;
 
     function setUnlockRequestTime(uint256 tokenId, uint64 time) external;

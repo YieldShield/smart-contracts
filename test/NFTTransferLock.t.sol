@@ -374,6 +374,16 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         assertEq(protectorNFT.ownerOf(tokenId2), recipient);
     }
 
+    function test_ProtectorNFT_InterfaceExposesFreshnessFlag() public {
+        uint256 tokenId = _depositProtector(500e18);
+
+        (IProtectorReceiptNFT.ProtectorPosition memory position, bool isFresh) =
+            IProtectorReceiptNFT(address(protectorNFT)).getPositionWithFreshness(tokenId);
+
+        assertTrue(isFresh, "newly minted protector position should be fresh");
+        assertEq(position.amount, 500e18, "interface should return position details");
+    }
+
     // ============ Helper Functions ============
 
     function _depositProtector(uint256 amount) internal returns (uint256 tokenId) {
