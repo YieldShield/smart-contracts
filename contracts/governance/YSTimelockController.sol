@@ -96,13 +96,27 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
         if (role == DEFAULT_ADMIN_ROLE && account == address(this)) {
             revert TimelockDefaultAdminCannotBeRevoked();
         }
+        if (_isOperationalRole(role) && account == _soleRoleMemberOrZero(role)) {
+            revert TimelockOperationalRoleFrozen(role, account);
+        }
         if (_isTimelockManagedOperationalRole(role)) {
             revert TimelockOperationalRoleFrozen(role, account);
         }
     }
 
     function _isTimelockManagedOperationalRole(bytes32 role) internal view returns (bool) {
-        return msg.sender == address(this) && (role == PROPOSER_ROLE || role == EXECUTOR_ROLE || role == CANCELLER_ROLE);
+        return msg.sender == address(this) && _isOperationalRole(role);
+    }
+
+    function _isOperationalRole(bytes32 role) internal pure returns (bool) {
+        return role == PROPOSER_ROLE || role == EXECUTOR_ROLE || role == CANCELLER_ROLE;
+    }
+
+    function _soleRoleMemberOrZero(bytes32 role) internal view returns (address) {
+        if (getRoleMemberCount(role) != 1) {
+            return address(0);
+        }
+        return getRoleMember(role, 0);
     }
 
     function _isLocalDevelopmentChain() internal view returns (bool) {

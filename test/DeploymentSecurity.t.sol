@@ -182,6 +182,14 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         timelock.revokeRole(proposerRole, address(governor));
+
+        vm.prank(address(governor));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSTimelockController.TimelockOperationalRoleFrozen.selector, proposerRole, address(governor)
+            )
+        );
+        timelock.renounceRole(proposerRole, address(governor));
     }
 
     function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
