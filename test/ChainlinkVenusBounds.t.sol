@@ -68,6 +68,7 @@ contract ChainlinkVenusBoundsTest is Test {
         feed.setTokenFeed(token, address(proxy));
         assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
         assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
+        assertEq(feed.tokenFeedBoundsAggregator(token), proxy.aggregator());
     }
 
     function test_removeTokenFeed_RequiresSchedule() public {
@@ -164,6 +165,28 @@ contract ChainlinkVenusBoundsTest is Test {
 
         assertEq(feed.tokenFeedMinAnswer(token), newMin, "refresh must pick up new aggregator's min");
         assertEq(feed.tokenFeedMaxAnswer(token), newMax, "refresh must pick up new aggregator's max");
+        assertEq(feed.tokenFeedBoundsAggregator(token), address(rotated), "refresh must pin rotated aggregator");
+    }
+
+    function test_getPrice_RevertsWhenAggregatorRotatesBeforeRefresh() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+        address oldAggregator = proxy.aggregator();
+
+        int192 newMin = 1_000e8;
+        int192 newMax = 3_000e8;
+        MockAggregatorBounds rotated = new MockAggregatorBounds(newMin, newMax);
+        proxy.setAggregator(address(rotated));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ChainlinkOracleFeed.FeedBoundsStale.selector, token, address(proxy), oldAggregator, address(rotated)
+            )
+        );
+        feed.getPrice(token);
+
+        feed.refreshFeedBounds(token);
+        assertEq(feed.getPrice(token), 2_000e8, "price should work after bounds refresh");
     }
 
     function test_refreshFeedBounds_RevertsForUnsupportedToken() public {

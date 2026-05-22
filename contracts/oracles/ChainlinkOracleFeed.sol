@@ -67,6 +67,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      check is skipped (logged via FeedBoundsUnavailable on registration).
     mapping(address => int192) public tokenFeedMinAnswer;
     mapping(address => int192) public tokenFeedMaxAnswer;
+    mapping(address => address) public tokenFeedBoundsAggregator;
 
     /// @notice Emitted when a token's feed is set or updated
     event TokenFeedSet(address indexed token, address indexed feed);
@@ -110,6 +111,10 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///         (Venus-style attack pattern: aggregator pins at floor/ceiling instead
     ///         of reporting the true price).
     error PriceOutsideAggregatorBounds(address token, int256 answer, int192 minAnswer, int192 maxAnswer);
+
+    /// @notice Custom error when a Chainlink proxy rotated away from the aggregator
+    ///         whose bounds are cached locally.
+    error FeedBoundsStale(address token, address feed, address cachedAggregator, address currentAggregator);
 
     /// @notice Custom error when sequencer grace period not over
     /// @param timeSinceUp Seconds since sequencer came back up
@@ -187,14 +192,8 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      bounds not exposed), both bounds are cleared and an event is
     ///      emitted so the operator can decide whether to accept the feed.
     function _cacheFeedBounds(address token, address feed) internal {
-        // Resolve underlying aggregator (proxies expose aggregator(); raw
-        // aggregators don't and that's fine). Initialise `underlying` to
-        // `feed` at declaration so slither doesn't flag a catch-branch
-        // reassignment as an uninitialized local.
-        address underlying = feed;
-        try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
-            underlying = agg;
-        } catch { }
+        address underlying = _resolveUnderlyingAggregator(feed);
+        tokenFeedBoundsAggregator[token] = underlying;
 
         try IChainlinkAggregatorBounds(underlying).minAnswer() returns (int192 minA) {
             try IChainlinkAggregatorBounds(underlying).maxAnswer() returns (int192 maxA) {
@@ -213,6 +212,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         tokenFeedMinAnswer[token] = 0;
         tokenFeedMaxAnswer[token] = 0;
         emit FeedBoundsUnavailable(token, feed);
+    }
+
+    function _resolveUnderlyingAggregator(address feed) internal view returns (address underlying) {
+        underlying = feed;
+        try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
+            underlying = agg;
+        } catch { }
     }
 
     /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
@@ -257,6 +263,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         delete tokenFeeds[token];
         delete tokenFeedMinAnswer[token];
         delete tokenFeedMaxAnswer[token];
+        delete tokenFeedBoundsAggregator[token];
         delete maxPriceAgeForToken[token];
         isTokenSupported[token] = false;
         emit TokenFeedSet(token, address(0));
@@ -355,6 +362,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         _checkSequencerUptime();
 
         AggregatorV3Interface feed = tokenFeeds[token];
+        _requireFreshFeedBounds(token, address(feed));
 
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = feed.latestRoundData();
 
@@ -381,6 +389,18 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         // Convert to 8 decimals if necessary
         uint8 feedDecimals = feed.decimals();
         return uint256(answer).normalize(feedDecimals, 8);
+    }
+
+    function _requireFreshFeedBounds(address token, address feed) internal view {
+        address cachedAggregator = tokenFeedBoundsAggregator[token];
+        if (cachedAggregator == address(0)) {
+            return;
+        }
+
+        address currentAggregator = _resolveUnderlyingAggregator(feed);
+        if (currentAggregator != cachedAggregator) {
+            revert FeedBoundsStale(token, feed, cachedAggregator, currentAggregator);
+        }
     }
 
     /// @inheritdoc IOracleFeed
