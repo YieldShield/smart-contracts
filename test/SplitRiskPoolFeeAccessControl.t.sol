@@ -283,6 +283,58 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         assertTrue(pool.accessControlCanGateWithdrawals(), "governance-installed ACL may gate withdrawals");
     }
 
+    function testSetAccessControl_CreatorCannotOverrideGovernanceAclBeforeLaunch() public {
+        AccessControlExample governanceAccessControl = new AccessControlExample(governance);
+        AccessControlExample creatorAccessControl = new AccessControlExample(governance);
+
+        vm.prank(governance);
+        pool.setAccessControl(address(governanceAccessControl));
+
+        assertTrue(pool.accessControlCanGateWithdrawals(), "governance ACL should gate withdrawals");
+        assertTrue(pool.governanceAccessControlInstalled(), "governance ACL install should be sticky");
+
+        vm.prank(poolCreator);
+        vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
+        pool.setAccessControl(address(creatorAccessControl));
+
+        assertEq(pool.accessControl(), address(governanceAccessControl), "creator must not replace governance ACL");
+        assertTrue(pool.accessControlCanGateWithdrawals(), "withdrawal gate should remain active");
+    }
+
+    function testSetAccessControl_CreatorCannotClearGovernanceAclBeforeLaunch() public {
+        AccessControlExample governanceAccessControl = new AccessControlExample(governance);
+
+        vm.prank(governance);
+        pool.setAccessControl(address(governanceAccessControl));
+
+        vm.prank(poolCreator);
+        vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
+        pool.setAccessControl(address(0));
+
+        assertEq(pool.accessControl(), address(governanceAccessControl), "creator must not clear governance ACL");
+        assertTrue(pool.accessControlCanGateWithdrawals(), "withdrawal gate should remain active");
+    }
+
+    function testSetAccessControl_CreatorCannotOverrideAfterGovernanceDisablesAclBeforeLaunch() public {
+        AccessControlExample governanceAccessControl = new AccessControlExample(governance);
+        AccessControlExample creatorAccessControl = new AccessControlExample(governance);
+
+        vm.startPrank(governance);
+        pool.setAccessControl(address(governanceAccessControl));
+        pool.setAccessControl(address(0));
+        vm.stopPrank();
+
+        assertEq(pool.accessControl(), address(0), "governance should be able to disable ACL");
+        assertFalse(pool.accessControlCanGateWithdrawals(), "disabled ACL should not gate withdrawals");
+        assertTrue(pool.governanceAccessControlInstalled(), "sticky governance install flag should remain");
+
+        vm.prank(poolCreator);
+        vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
+        pool.setAccessControl(address(creatorAccessControl));
+
+        assertEq(pool.accessControl(), address(0), "creator must not regain ACL control");
+    }
+
     function testCreatorInstalledAcl_GatesDepositsButCannotBlockShieldedWithdrawals() public {
         AccessControlExample accessControl = new AccessControlExample(governance);
 

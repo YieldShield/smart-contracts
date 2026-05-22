@@ -2400,8 +2400,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      */
     function setAccessControl(address newAccessControl) external {
         bool callerIsGovernance = msg.sender == _governanceTimelock;
-        bool callerIsCreatorBeforeLaunch =
-            msg.sender == POOL_CREATOR && !hasEverLaunched && totalShieldedTokens == 0 && totalProtectorTokens == 0;
+        bool callerIsCreatorBeforeLaunch = msg.sender == POOL_CREATOR && !governanceAccessControlInstalled
+            && !hasEverLaunched && totalShieldedTokens == 0 && totalProtectorTokens == 0;
         if (!callerIsGovernance && !callerIsCreatorBeforeLaunch) {
             revert ErrorsLib.InvalidPoolCreator();
         }
@@ -2414,6 +2414,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         emit EventsLib.AccessControlUpdated(accessControl, newAccessControl);
         accessControl = newAccessControl;
         accessControlCanGateWithdrawals = callerIsGovernance && newAccessControl != address(0);
+        if (accessControlCanGateWithdrawals) {
+            governanceAccessControlInstalled = true;
+        }
     }
 
     function _validateAccessControl(address newAccessControl) internal view {
@@ -2531,6 +2534,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
     /// @notice True when the active ACL was installed by governance and may gate withdrawals
     bool public accessControlCanGateWithdrawals;
+    /// @notice True after governance has installed a withdrawal-gating ACL at least once.
+    bool public governanceAccessControlInstalled;
     /// @notice Commissions owed to the current active protector share epoch
     uint256 public currentEpochCommissionReserve;
     /// @notice Commissions still owed to expired protector share epochs
@@ -2558,5 +2563,5 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///         upgraded pools read this as zero and the payPoolFee path falls
     ///         back to POOL_CREATOR.
     address public poolFeeRecipient;
-    uint256[30] private __gap;
+    uint256[29] private __gap;
 }
