@@ -45,6 +45,9 @@ jobs:
       - name: Check JavaScript formatting
         run: npx prettier --check "scripts-js/**/*.{js,cjs}"
 
+      - name: Run JavaScript unit tests
+        run: npm run test:scripts
+
       - name: Assert via_ir is enabled in [profile.default]
         run: |
           python3 - <<'PY'
