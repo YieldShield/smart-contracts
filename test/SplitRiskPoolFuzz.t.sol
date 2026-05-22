@@ -48,6 +48,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
     uint256 constant BASIS_POINT_SCALE = 1e4;
     uint256 constant REWARD_PRECISION = 1e18;
     uint256 constant USD_ONE = 1e8;
+    uint256 constant TOKEN_UNITS_PER_USD_8 = 1e10;
 
     function setUp() public {
         governance = address(_deployTestTimelock(address(this)));
@@ -166,8 +167,30 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
         return (amount * USD_ONE) / 1e18;
     }
 
+    function _toTokenAmountFromUsd(uint256 valueUsd) internal pure returns (uint256) {
+        return valueUsd * TOKEN_UNITS_PER_USD_8;
+    }
+
     function _boundValidYieldPercent(uint256 percent) internal pure returns (uint256) {
         return bound(percent, 1, 10000); // 0.01% to 100%
+    }
+
+    function _requiredProtectorForShielded(uint256 shieldedAmount) internal pure returns (uint256) {
+        uint256 shieldedUsd = _toUsd(shieldedAmount);
+        uint256 requiredUsd = (shieldedUsd * 15000 + BASIS_POINT_SCALE - 1) / BASIS_POINT_SCALE;
+        return _toTokenAmountFromUsd(requiredUsd);
+    }
+
+    function _maxShieldedForProtectorAmount(uint256 protectorAmount) internal pure returns (uint256) {
+        uint256 protectorUsd = _toUsd(protectorAmount);
+        uint256 maxShieldedUsd = (protectorUsd * BASIS_POINT_SCALE) / 15000;
+        if (maxShieldedUsd == 0) return 0;
+        return _toTokenAmountFromUsd(maxShieldedUsd) + TOKEN_UNITS_PER_USD_8 - 1;
+    }
+
+    function _maxShieldedForSingleProtectorDeposit() internal view returns (uint256) {
+        uint256 maxShielded = _maxShieldedForProtectorAmount(backingMaxDepositAmount);
+        return maxShielded > shieldedMaxDepositAmount ? shieldedMaxDepositAmount : maxShielded;
     }
 
     function _createProtectorPosition(address user, uint256 amount) internal returns (uint256 tokenId) {
@@ -197,14 +220,12 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
     function testFuzz_DepositShieldedWithValidAmounts(uint256 amount) public {
         // Bound to valid deposit range, but also ensure protector deposit fits within max deposit.
         // Max shielded = max backing deposit * 10000 / 15000 (to allow protector to fit in single deposit).
-        uint256 maxShieldedForSingleProtectorDeposit = (backingMaxDepositAmount * BASIS_POINT_SCALE) / 15000;
-        if (maxShieldedForSingleProtectorDeposit > shieldedMaxDepositAmount) {
-            maxShieldedForSingleProtectorDeposit = shieldedMaxDepositAmount;
-        }
+        uint256 maxShieldedForSingleProtectorDeposit = _maxShieldedForSingleProtectorDeposit();
+        if (maxShieldedForSingleProtectorDeposit <= shieldedMinDepositAmount) return;
         amount = bound(amount, shieldedMinDepositAmount + 1, maxShieldedForSingleProtectorDeposit);
 
         // Need protector deposit first for collateral (150% of shielded amount)
-        uint256 requiredProtector = (amount * 15000) / BASIS_POINT_SCALE;
+        uint256 requiredProtector = _requiredProtectorForShielded(amount);
         _createProtectorPosition(protectors[0], requiredProtector);
 
         // Execute shielded deposit
@@ -302,7 +323,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
             vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
             _createShieldedPosition(shielded, shieldedAmount);
         } else {
-            uint256 requiredUsd = (shieldedUsd * 15000) / BASIS_POINT_SCALE;
+            uint256 requiredUsd = (shieldedUsd * 15000 + BASIS_POINT_SCALE - 1) / BASIS_POINT_SCALE;
             bool shouldRevert = requiredUsd > protectorUsd;
 
             if (shouldRevert) {
@@ -387,15 +408,13 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
     /// @notice Test fee scaling when fees exceed deposit
     function testFuzz_FeeScalingWhenExceedsDeposit(uint256 depositAmount, uint256 yieldPercent) public {
         // Use smaller bounds to ensure both deposits fit within limits.
-        uint256 maxShieldedForSingleProtectorDeposit = (backingMaxDepositAmount * BASIS_POINT_SCALE) / 15000;
-        if (maxShieldedForSingleProtectorDeposit > shieldedMaxDepositAmount) {
-            maxShieldedForSingleProtectorDeposit = shieldedMaxDepositAmount;
-        }
+        uint256 maxShieldedForSingleProtectorDeposit = _maxShieldedForSingleProtectorDeposit();
+        if (maxShieldedForSingleProtectorDeposit <= shieldedMinDepositAmount) return;
         depositAmount = bound(depositAmount, shieldedMinDepositAmount + 1, maxShieldedForSingleProtectorDeposit);
         yieldPercent = bound(yieldPercent, 5000, 50000); // 50% to 500% yield
 
         // Ensure we have enough protector tokens
-        uint256 requiredProtector = (depositAmount * 15000) / BASIS_POINT_SCALE;
+        uint256 requiredProtector = _requiredProtectorForShielded(depositAmount);
         _createProtectorPosition(protectors[0], requiredProtector);
 
         uint256 shieldTokenId = _createShieldedPosition(shielded, depositAmount);
@@ -423,7 +442,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
     {
         protectorAmount = bound(protectorAmount, 1e18, 1_000_000e18);
         // Calculate max shielded based on collateral ratio
-        uint256 maxShielded = (protectorAmount * BASIS_POINT_SCALE) / 15000;
+        uint256 maxShielded = _maxShieldedForProtectorAmount(protectorAmount);
         uint256 minShielded = shieldedMinDepositAmount + 1;
         if (maxShielded < minShielded) return; // Skip if protector amount too small for valid shielded deposit
         shieldedAmount = bound(

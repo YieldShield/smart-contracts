@@ -343,7 +343,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // shieldedValueAtDepositUsd is already in USD (8 decimals), no conversion needed
         shieldedValueUsd = shieldedValueAtDepositUsd;
         protectorValueUsd = _getProtectedBackingValue(protectorTokens);
-        requiredCollateralUsd = (shieldedValueUsd * COLLATERAL_RATIO) / ConstantsLib.BASIS_POINT_SCALE;
+        requiredCollateralUsd = _getRequiredCollateralUsd(shieldedValueUsd);
+    }
+
+    function _getRequiredCollateralUsd(uint256 shieldedValueUsd) internal view returns (uint256) {
+        return Math.mulDiv(shieldedValueUsd, COLLATERAL_RATIO, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
     }
 
     /// @dev Returns backing-token price using the oracle's strongest available protection.
@@ -675,8 +679,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         // M-4 FIX: Multiply before divide to avoid precision loss
+        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(totalValueAtDeposit);
         uint256 requiredProtectorTokens =
-            (totalValueAtDeposit * COLLATERAL_RATIO * backingTokenScale) / (ConstantsLib.BASIS_POINT_SCALE * uwPrice);
+            Math.mulDiv(requiredCollateralUsd, backingTokenScale, uwPrice, Math.Rounding.Ceil);
         if (requiredProtectorTokens > totalShieldCollateralAmount) {
             requiredProtectorTokens = totalShieldCollateralAmount;
         }
@@ -748,7 +753,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 totalProtectorUsd = _getProtectedBackingValue(totalProtectorTokens);
 
         // Calculate required collateral based on original deposit values
-        uint256 requiredCollateralUsd = (newTotalValueAtDeposit * COLLATERAL_RATIO) / ConstantsLib.BASIS_POINT_SCALE;
+        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(newTotalValueAtDeposit);
         if (requiredCollateralUsd > totalProtectorUsd) {
             revert ErrorsLib.InsufficientProtectorTokenBalance();
         }
@@ -837,6 +842,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         scaledCommission = Math.mulDiv(commissionAmount, maxTotalFees, totalFees);
         scaledPoolFee = Math.mulDiv(poolFeeAmount, maxTotalFees, totalFees);
         scaledProtocolFee = Math.mulDiv(protocolFeeAmount, maxTotalFees, totalFees);
+
+        uint256 scaledTotal = scaledCommission + scaledPoolFee + scaledProtocolFee;
+        uint256 remainder = maxTotalFees - scaledTotal;
+        if (remainder != 0) {
+            uint256 room = commissionAmount - scaledCommission;
+            uint256 add = remainder < room ? remainder : room;
+            scaledCommission += add;
+            remainder -= add;
+        }
+        if (remainder != 0) {
+            uint256 room = poolFeeAmount - scaledPoolFee;
+            uint256 add = remainder < room ? remainder : room;
+            scaledPoolFee += add;
+            remainder -= add;
+        }
+        if (remainder != 0) {
+            uint256 room = protocolFeeAmount - scaledProtocolFee;
+            uint256 add = remainder < room ? remainder : room;
+            scaledProtocolFee += add;
+        }
     }
 
     function _accumulateProtectorReward(uint256 rewardAmount, uint256 maxSafeAccumulation)
@@ -872,7 +897,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 rewardPerShareIncrement = (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
         if (rewardPerShareIncrement == 0) {
-            revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, 0, 0);
+            revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedCommissions, 0);
         }
 
         rewardPerShareAccumulated += rewardPerShareIncrement;
@@ -1038,9 +1063,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             yieldEarnedUsd.mulDiv(poolConfig.protocolFee, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
 
         // Convert USD fees (8 decimals) to shielded token units using the same probed price.
-        commissionAmount = Math.mulDiv(commissionAmountUsd, shieldedTokenScale, currentPrice);
-        poolFeeAmount = Math.mulDiv(poolFeeAmountUsd, shieldedTokenScale, currentPrice);
-        protocolFeeAmount = Math.mulDiv(protocolFeeAmountUsd, shieldedTokenScale, currentPrice);
+        commissionAmount = commissionAmountUsd == 0
+            ? 0
+            : Math.mulDiv(commissionAmountUsd, shieldedTokenScale, currentPrice, Math.Rounding.Ceil);
+        poolFeeAmount = poolFeeAmountUsd == 0
+            ? 0
+            : Math.mulDiv(poolFeeAmountUsd, shieldedTokenScale, currentPrice, Math.Rounding.Ceil);
+        protocolFeeAmount = protocolFeeAmountUsd == 0
+            ? 0
+            : Math.mulDiv(protocolFeeAmountUsd, shieldedTokenScale, currentPrice, Math.Rounding.Ceil);
 
         // Cap total fees to available amount to prevent underflow
         uint256 totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
@@ -1218,8 +1249,16 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Ends the current share epoch when shield activation wipes all backing assets.
-    function _expireProtectorShareEpochIfDrained() internal {
-        if (totalProtectorTokens == 0 && totalProtectorShares != 0) {
+    ///      Before a fresh backing deposit, callers may also expire a no-shield-value
+    ///      below-minimum dust epoch so new shares do not inherit loss-amplified precision.
+    function _expireProtectorShareEpochIfDrained(bool includeUnprotectedDust) internal {
+        if (
+            totalProtectorShares != 0
+                && (totalProtectorTokens == 0
+                    || (includeUnprotectedDust
+                        && totalValueAtDeposit == 0
+                        && totalProtectorTokens < poolConfig.backingMinDepositAmount))
+        ) {
             uint256 expiredEpoch = protectorShareEpoch;
             protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
             protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
@@ -1390,6 +1429,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _validateDeposit(asset, received);
         _markPoolLaunched();
 
+        _expireProtectorShareEpochIfDrained(true);
+
         uint256 currentTotalShares = totalProtectorShares;
         uint256 sharesMinted = currentTotalShares == 0 || totalProtectorTokens == 0
             ? received
@@ -1468,8 +1509,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Calculate USD value for cross-asset withdrawal and fee calculation
         uint256 valueAtDeposit = _getShieldedValue(received);
-        uint256 requiredCollateralUsd = (valueAtDeposit * COLLATERAL_RATIO) / ConstantsLib.BASIS_POINT_SCALE;
-        uint256 collateralAmount = Math.mulDiv(requiredCollateralUsd, backingTokenScale, _getProtectedBackingPrice());
+        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(valueAtDeposit);
+        uint256 collateralAmount =
+            Math.mulDiv(requiredCollateralUsd, backingTokenScale, _getProtectedBackingPrice(), Math.Rounding.Ceil);
+        if (valueAtDeposit != 0 && collateralAmount == 0) {
+            revert ErrorsLib.InvalidOraclePrice();
+        }
 
         // Update pool balances (TOKEN-BASED)
         poolState.shieldedTokenBalance += received;
@@ -1602,7 +1647,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
 
             uint256 uwPrice = _getProtectedBackingPrice();
-            payoutAmount = Math.mulDiv(pos.valueAtDeposit, backingTokenScale, uwPrice);
+            payoutAmount = Math.mulDiv(pos.valueAtDeposit, backingTokenScale, uwPrice, Math.Rounding.Ceil);
 
             // Cap to original collateral amount (in token terms, not recalculated)
             // This ensures users can't claim more tokens than were originally allocated
@@ -1624,7 +1669,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
             totalProtectorTokens -= payoutAmount;
             poolState.totalBackingTokenBalance -= payoutAmount;
-            _expireProtectorShareEpochIfDrained();
+            _expireProtectorShareEpochIfDrained(false);
         }
 
         // Update shielded totals (TOKEN-BASED)

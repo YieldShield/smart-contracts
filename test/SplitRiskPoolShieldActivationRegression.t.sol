@@ -178,6 +178,38 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         vm.stopPrank();
     }
 
+    function _disableTvlCapAndUseHighPrecisionPrices() internal {
+        (
+            uint256 shieldedMinDepositAmount,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address protocolFeeRecipient,
+            uint256 protocolFee,
+            address priceOracle
+        ) = pool.poolConfig();
+        assertGt(maxTotalValueLockedUsd, 0, "test fixture should have a TVL cap");
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            type(uint256).max,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            protocolFeeRecipient,
+            priceOracle
+        );
+
+        oracle.setPrice(address(shieldedToken), 1e18);
+        oracle.setPrice(address(backingToken), 1e18);
+    }
+
     function test_crossAssetShieldActivationSocializesProtectorLossesAndCommissions() public {
         vm.prank(protector1);
         uint256 protectorTokenId1 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
@@ -406,35 +438,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
     }
 
     function test_backingDustCanBeExitedWhenProtectorClaimsRoundToZero() public {
-        (
-            uint256 shieldedMinDepositAmount,
-            uint256 shieldedMaxDepositAmount,
-            uint256 backingMinDepositAmount,
-            uint256 backingMaxDepositAmount,
-            uint256 maxTotalValueLockedUsd,
-            uint256 minimumPoolTime,
-            uint256 unlockDuration,
-            address protocolFeeRecipient,
-            uint256 protocolFee,
-            address priceOracle
-        ) = pool.poolConfig();
-        assertGt(maxTotalValueLockedUsd, 0, "test fixture should have a TVL cap");
-        vm.prank(governance);
-        pool.updatePoolConfig(
-            shieldedMinDepositAmount,
-            shieldedMaxDepositAmount,
-            backingMinDepositAmount,
-            backingMaxDepositAmount,
-            type(uint256).max,
-            minimumPoolTime,
-            unlockDuration,
-            protocolFee,
-            protocolFeeRecipient,
-            priceOracle
-        );
-
-        oracle.setPrice(address(shieldedToken), 1e18);
-        oracle.setPrice(address(backingToken), 1e18);
+        _disableTvlCapAndUseHighPrecisionPrices();
 
         vm.prank(protector1);
         uint256 protectorTokenId1 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
@@ -473,6 +477,35 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(pool.totalProtectorTokens(), 0, "backing dust should be cleared");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(backingPoolBalance, 0, "tracked backing balance should be cleared");
+    }
+
+    function test_backingDustEpochExpiresBeforeFutureDeposits() public {
+        _disableTvlCapAndUseHighPrecisionPrices();
+
+        vm.prank(protector1);
+        uint256 staleProtectorTokenId1 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(protector2);
+        uint256 staleProtectorTokenId2 = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 200e18 - 1, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), 1, "activation should leave one wei backing dust");
+        assertGt(pool.totalProtectorShares(), 0, "dust remains claimable until a fresh deposit resets the epoch");
+
+        vm.prank(protector1);
+        uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId1), 0, "old position 1 should stay wiped");
+        assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId2), 0, "old position 2 should stay wiped");
+        assertEq(
+            pool.getProtectorPositionAmount(newProtectorTokenId), 100e18 + 1, "new depositor inherits backing dust"
+        );
+        assertEq(pool.totalProtectorShares(), 100e18, "fresh deposit should reset active share supply");
     }
 
     function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {
