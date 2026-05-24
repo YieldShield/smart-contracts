@@ -527,6 +527,9 @@ contract PythOracleTest is Test {
         oracle.setMaxPriceAgeForToken(address(token1), 120);
         vm.stopPrank();
 
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1e8, 990_000, -8, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID_2, 1e8, 990_000, -8, uint64(block.timestamp));
         vm.warp(block.timestamp + 90);
 
         vm.expectRevert();
@@ -592,6 +595,31 @@ contract PythOracleTest is Test {
             abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 95e6, 200)
         );
         oracle.getPrice(address(token1));
+    }
+
+    function testCompositePriceFeed_RevertsWhenCombinedConfidenceTooWide() public {
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 100e6, 1_010_000, -8, uint64(block.timestamp)); // 1.01%
+        _updatePriceFeed(FEED_ID_2, 100e6, 1_000_000, -8, uint64(block.timestamp)); // 1.00%
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PythOracle.CompositePriceConfidenceTooWide.selector, address(token1), 203, 200)
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testCompositePriceFeed_AllowsCombinedConfidenceAtThreshold() public {
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 100e6, 1_000_000, -8, uint64(block.timestamp)); // 1.00%
+        _updatePriceFeed(FEED_ID_2, 100e6, 990_000, -8, uint64(block.timestamp)); // 0.99%
+
+        assertEq(oracle.getPrice(address(token1)), 100_000_000);
     }
 
     function testSetTokenPriceFeed_ClearsCompositeQuoteFeed() public {

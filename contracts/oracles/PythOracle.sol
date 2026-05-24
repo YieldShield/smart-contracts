@@ -168,6 +168,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         uint256 quotePublishTime,
         uint256 maxSkew
     );
+    error CompositePriceConfidenceTooWide(address token, uint256 combinedConfidenceBps, uint256 maxConfidenceBps);
 
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract on the current network
@@ -496,9 +497,13 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return result;
     }
 
-    function _validateConfidence(address token, PythStructs.Price memory priceData, bool useEma) internal view {
+    function _validateConfidence(address token, PythStructs.Price memory priceData, bool useEma)
+        internal
+        view
+        returns (uint256 confidenceBps)
+    {
         if (priceData.price <= 0) {
-            return;
+            return 0;
         }
         uint256 price = uint256(uint64(priceData.price));
         uint256 confidence = uint256(priceData.conf);
@@ -506,14 +511,15 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         // exactly when we want EMA as a stable fallback. Use a relaxed
         // threshold for EMA so the protected path doesn't revert in shocks.
         uint256 threshold = useEma ? maxEmaConfidenceBps : maxConfidenceBps;
-        if (confidence * 10_000 > price * threshold) {
+        confidenceBps = Math.mulDiv(confidence, 10_000, price, Math.Rounding.Ceil);
+        if (confidenceBps > threshold) {
             revert PriceConfidenceTooWide(token, confidence, price, threshold);
         }
     }
 
     function _getPythPrice(address token, bool useEma) internal view returns (uint256) {
         bytes32 feedId = _getFeedId(token);
-        (uint256 basePrice, uint256 basePublishTime) =
+        (uint256 basePrice, uint256 basePublishTime, uint256 baseConfidenceBps) =
             _readPythPrice(token, feedId, useEma, effectiveMaxPriceAge(token));
 
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
@@ -521,16 +527,17 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
             return basePrice;
         }
 
-        (uint256 quoteUsdPrice, uint256 quotePublishTime) =
+        (uint256 quoteUsdPrice, uint256 quotePublishTime, uint256 quoteConfidenceBps) =
             _readPythPrice(token, quoteFeedId, useEma, effectiveMaxPriceAgeForFeedId(quoteFeedId));
         _validateCompositePublishTimeSkew(token, feedId, quoteFeedId, basePublishTime, quotePublishTime);
+        _validateCompositeConfidence(token, baseConfidenceBps, quoteConfidenceBps, useEma);
         return Math.mulDiv(basePrice, quoteUsdPrice, 1e8);
     }
 
     function _readPythPrice(address token, bytes32 feedId, bool useEma, uint256 priceAge)
         internal
         view
-        returns (uint256 price, uint256 publishTime)
+        returns (uint256 price, uint256 publishTime, uint256 confidenceBps)
     {
         PythStructs.Price memory priceData;
         if (useEma) {
@@ -539,9 +546,23 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
             priceData = pyth.getPriceNoOlderThan(feedId, priceAge);
         }
         _validatePublishTimeNotFuture(token, feedId, priceData.publishTime);
-        _validateConfidence(token, priceData, useEma);
+        confidenceBps = _validateConfidence(token, priceData, useEma);
         price = _convertPrice(token, priceData);
         publishTime = priceData.publishTime;
+    }
+
+    function _validateCompositeConfidence(
+        address token,
+        uint256 baseConfidenceBps,
+        uint256 quoteConfidenceBps,
+        bool useEma
+    ) internal view {
+        uint256 combinedConfidenceBps = baseConfidenceBps + quoteConfidenceBps
+            + Math.mulDiv(baseConfidenceBps, quoteConfidenceBps, 10_000, Math.Rounding.Ceil);
+        uint256 threshold = useEma ? maxEmaConfidenceBps : maxConfidenceBps;
+        if (combinedConfidenceBps > threshold) {
+            revert CompositePriceConfidenceTooWide(token, combinedConfidenceBps, threshold);
+        }
     }
 
     function _validatePublishTimeNotFuture(address token, bytes32 feedId, uint256 publishTime) internal view {
