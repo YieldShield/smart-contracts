@@ -168,11 +168,12 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         governanceTimelock = address(_deployTestTimelock(address(this)));
         factory = _deployFactory(address(this), governanceTimelock, address(poolImpl));
 
-        // Set composite oracle first (required before adding tokens)
+        // Transfer composite oracle custody before registering it with the factory.
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
 
-        // Authorize factory to set token oracle feeds
-        compositeOracle.setAuthorizedCaller(address(factory), true);
+        // Authorize this test harness for direct CompositeOracle setup in focused tests.
+        factory.setCompositeOracleAuthorizedCaller(address(this), true);
 
         // Whitelist tokens with oracle feed (required for pool creation)
         // Using address(0) for backup oracle = single-feed mode
@@ -469,7 +470,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     function testSetDefaultPriceOracle() public {
         CompositeOracle newOracle = new CompositeOracle();
-        newOracle.setAuthorizedCaller(address(factory), true);
+        newOracle.transferOwnership(address(factory));
 
         (,,, address primaryFeedA,,) = factory.tokenInfo(address(tokenA));
         assertEq(primaryFeedA, address(oracle), "Factory token feed should remain unchanged");
@@ -492,7 +493,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
 
         CompositeOracle newOracle = new CompositeOracle();
-        newOracle.setAuthorizedCaller(address(factory), true);
+        newOracle.transferOwnership(address(factory));
 
         vm.prank(governanceTimelock);
         factory.setCompositeOracle(address(newOracle));
@@ -512,7 +513,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         );
 
         CompositeOracle newOracle = new CompositeOracle();
-        newOracle.setAuthorizedCaller(address(factory), true);
+        newOracle.transferOwnership(address(factory));
         vm.prank(governanceTimelock);
         factory.setCompositeOracle(address(newOracle));
 
@@ -537,11 +538,13 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(backupOracleFeed, address(0), "factory backup feed should remain unchanged");
     }
 
-    function testSetCompositeOracleRevertsWhenFactoryNotAuthorized() public {
+    function testSetCompositeOracleRevertsWhenFactoryDoesNotOwnOracle() public {
         CompositeOracle newOracle = new CompositeOracle();
 
         vm.prank(governanceTimelock);
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.UnauthorizedCaller.selector, address(factory)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
+        );
         factory.setCompositeOracle(address(newOracle));
     }
 
@@ -549,7 +552,6 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockOracle backupOracle = new MockOracle();
         backupOracle.setPrice(address(tokenB), 2e8);
         compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
-        compositeOracle.transferOwnership(address(factory));
 
         compositeOracle.challengeForToken(address(tokenB));
         (,,,, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(tokenB));
@@ -571,7 +573,6 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockOracle backupOracle = new MockOracle();
         backupOracle.setPrice(address(tokenB), 2e8);
         compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
-        compositeOracle.transferOwnership(address(factory));
 
         compositeOracle.challengeForToken(address(tokenB));
         vm.warp(block.timestamp + compositeOracle.challengeDurationSec() + 1);
@@ -593,7 +594,6 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockOracle backupOracle = new MockOracle();
         backupOracle.setPrice(address(tokenB), 2e8);
         compositeOracle.setTokenOracleFeedDual(address(tokenB), address(oracle), address(backupOracle));
-        compositeOracle.transferOwnership(address(factory));
 
         compositeOracle.challengeForToken(address(tokenB));
 

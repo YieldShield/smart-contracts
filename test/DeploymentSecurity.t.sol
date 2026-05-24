@@ -414,11 +414,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(deployer, address(timelock), address(poolImplementation));
 
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
         factory.setDefaultProtocolFeeRecipient(address(timelock));
-        compositeOracle.setAuthorizedCaller(address(factory), true);
 
-        compositeOracle.transferOwnership(address(factory));
         pythOracle.transferOwnership(address(factory));
         erc4626OracleFeed.transferOwnership(address(factory));
         factory.setManagedPythOracle(address(pythOracle));

@@ -161,11 +161,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             actualMinimumCreationBondUsd == factory.DEFAULT_MINIMUM_CREATION_BOND_USD(),
             "Factory minimum creation bond not set correctly"
         );
+        compositeOracle.transferOwnership(factoryAddr);
         factory.setCompositeOracle(compositeOracleAddr);
         factory.setDefaultProtocolFeeRecipient(timelockAddr);
-        compositeOracle.setAuthorizedCaller(factoryAddr, true);
 
-        compositeOracle.transferOwnership(factoryAddr);
         pythOracle.transferOwnership(factoryAddr);
         erc4626OracleFeed.transferOwnership(factoryAddr);
         factory.setManagedPythOracle(pythOracleAddr);

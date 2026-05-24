@@ -58,10 +58,9 @@ contract LowSeverityFixesTest is Test, FactoryProxyTestBase {
         factory = _deployFactory(address(this), governance, address(poolImpl));
 
         // Set composite oracle first (required before adding tokens)
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
-
-        // Authorize factory to set token oracle feeds
-        compositeOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracleAuthorizedCaller(address(this), true);
 
         // Whitelist tokens with oracle feed
         factory.addTokenInitial(address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000);

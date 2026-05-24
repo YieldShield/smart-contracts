@@ -402,9 +402,10 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         compositeOracle = new CompositeOracle();
         SplitRiskPool implementation = new SplitRiskPool();
         factory = _deployFactory(address(this), governance, address(implementation));
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
         factory.setDefaultProtocolFeeRecipient(protocolFeeRecipient);
-        compositeOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracleAuthorizedCaller(address(this), true);
         vm.prank(governance);
         factory.setMinimumCreationBondUsd(0);
 

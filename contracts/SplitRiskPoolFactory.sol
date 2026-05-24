@@ -229,6 +229,7 @@ contract SplitRiskPoolFactory is
     function setCompositeOracle(address newOracle) external {
         _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && _bootstrapOwnerActionsAllowed());
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _requireOwnedByFactory(newOracle);
 
         uint256 tokenCount = whitelistedTokens.length;
         for (uint256 i = 0; i < tokenCount;) {
@@ -302,7 +303,8 @@ contract SplitRiskPoolFactory is
         IOwnableOracleAdmin(oracle).transferOwnership(newOwner);
     }
 
-    function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external onlyGovernance {
+    function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external {
+        _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
         _requireManagedOracleConfigured(compositeOracle);
         ICompositeOracleAdmin(compositeOracle).setAuthorizedCaller(caller, authorized);
     }

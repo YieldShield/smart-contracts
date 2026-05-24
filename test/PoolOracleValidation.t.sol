@@ -46,8 +46,9 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         governance = address(_deployTestTimelock(address(this)));
         factory = _deployFactory(address(this), governance, address(poolImpl));
 
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
-        compositeOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracleAuthorizedCaller(address(this), true);
 
         factory.addTokenInitial(address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000);
         factory.addTokenInitial(address(backingToken), "Backing Token", "BKT", address(oracle), address(0), 10000);
@@ -175,7 +176,7 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
         CompositeOracle newCompositeOracle = new CompositeOracle();
-        newCompositeOracle.setAuthorizedCaller(address(factory), true);
+        newCompositeOracle.transferOwnership(address(factory));
         vm.prank(governance);
         factory.setCompositeOracle(address(newCompositeOracle));
 

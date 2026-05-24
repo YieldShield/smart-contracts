@@ -195,13 +195,17 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             "Factory minimum creation bond not set correctly!"
         );
 
+        // Transfer CompositeOracle custody before registering it with the factory.
+        compositeOracle.transferOwnership(factoryAddr);
+        console.log("CompositeOracle ownership transferred to factory");
+
         // Set composite oracle
         factory.setCompositeOracle(compositeOracleAddr);
         console.log("Composite oracle set to:", compositeOracleAddr);
 
-        // Authorize factory to set token oracle feeds in CompositeOracle
-        compositeOracle.setAuthorizedCaller(factoryAddr, true);
-        console.log("Factory authorized to configure CompositeOracle");
+        // Temporarily authorize deployer for direct launch-feed setup below.
+        factory.setCompositeOracleAuthorizedCaller(deployer, true);
+        console.log("Deployer temporarily authorized to configure CompositeOracle");
 
         // Set default protocol fee recipient (using timelock for governance control)
         factory.setDefaultProtocolFeeRecipient(timelockAddr);
@@ -711,6 +715,9 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         console.log("Enabled strict protected pricing for 12 direct-feed launch assets");
         console.log("ERC4626 NAV-backed vault tokens remain non-strict until they have a strict circuit-breaker path");
 
+        factory.setCompositeOracleAuthorizedCaller(deployer, false);
+        console.log("Removed temporary deployer CompositeOracle authorization");
+
         factory.finalizeBootstrap();
         require(!factory.bootstrapModeEnabled(), "Factory bootstrap mode not finalized");
         console.log("Factory bootstrap mode finalized");
@@ -721,8 +728,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             console.log("Transferring factory ownership to test account:", testAccount);
             factory.transferOwnership(testAccount);
 
-            console.log("Transferring CompositeOracle ownership to test account:", testAccount);
-            compositeOracle.transferOwnership(testAccount);
+            require(compositeOracle.owner() == factoryAddr, "CompositeOracle owner should remain factory");
 
             console.log("SUCCESS: Ownership transferred!");
         } else {
@@ -731,8 +737,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
             console.log("Transferring factory ownership to governance timelock:", timelock);
             factory.transferOwnership(timelock);
 
-            console.log("Transferring CompositeOracle ownership to governance timelock:", timelock);
-            compositeOracle.transferOwnership(timelock);
+            require(compositeOracle.owner() == factoryAddr, "CompositeOracle owner should remain factory");
 
             console.log("SUCCESS: Ownership transferred to governance!");
         }

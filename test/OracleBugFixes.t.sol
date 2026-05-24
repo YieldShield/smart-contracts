@@ -76,8 +76,9 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         factory = _deployFactory(address(this), governanceTimelock, address(poolImpl));
 
         // Set up factory
+        compositeOracle.transferOwnership(address(factory));
         factory.setCompositeOracle(address(compositeOracle));
-        compositeOracle.setAuthorizedCaller(address(factory), true);
+        factory.setCompositeOracleAuthorizedCaller(address(this), true);
         factory.setDefaultProtocolFeeRecipient(address(this));
     }
 
