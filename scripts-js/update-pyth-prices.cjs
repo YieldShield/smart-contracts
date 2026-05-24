@@ -46,6 +46,18 @@ function getOracleAddress({ rootDir, chainId }) {
     );
 }
 
+function getFactoryAddress({ rootDir, chainId, cliFactory }) {
+    if (cliFactory) {
+        return cliFactory;
+    }
+
+    return resolveContractAddress({
+        rootDir,
+        chainId,
+        contractName: "SplitRiskPoolFactory",
+    });
+}
+
 function resolveRpcUrl(cliRpcUrl) {
     if (cliRpcUrl) {
         return cliRpcUrl;
@@ -98,6 +110,139 @@ function shouldRequireAllPriceUpdates({ strict, allowPartial, chainId }) {
     if (strict) return true;
     if (allowPartial) return false;
     return !LOCAL_CHAIN_IDS.has(String(chainId));
+}
+
+function isZeroHash(value) {
+    return !value || value.toLowerCase() === ethers.ZeroHash.toLowerCase();
+}
+
+function isZeroAddress(value) {
+    return !value || value.toLowerCase() === ethers.ZeroAddress.toLowerCase();
+}
+
+function registryByAddress(registryTokens) {
+    const byAddress = new Map();
+    for (const token of registryTokens) {
+        if (token.address) {
+            byAddress.set(token.address.toLowerCase(), token);
+        }
+    }
+    return byAddress;
+}
+
+async function collectTokenCandidates({ factoryContract, oracleContract, registryTokens }) {
+    const candidates = new Map();
+    const addCandidate = (address, source) => {
+        if (!address || isZeroAddress(address)) return;
+        const key = address.toLowerCase();
+        const existing = candidates.get(key);
+        candidates.set(key, {
+            address,
+            sources: existing ? [...existing.sources, source] : [source],
+        });
+    };
+
+    if (factoryContract) {
+        try {
+            const whitelistedTokens = await factoryContract.getWhitelistedTokens();
+            whitelistedTokens.forEach((address) => addCandidate(address, "factory"));
+        } catch (error) {
+            console.warn(`  ⚠ Could not read factory whitelist: ${error.message}`);
+        }
+    }
+
+    for (const token of registryTokens) {
+        addCandidate(token.address, "registry");
+    }
+
+    try {
+        const priceFeedEvents = await oracleContract.queryFilter(
+            oracleContract.filters.TokenPriceFeedSet(),
+            0,
+            "latest",
+        );
+        priceFeedEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
+
+        const compositeEvents = await oracleContract.queryFilter(
+            oracleContract.filters.TokenCompositePriceFeedSet(),
+            0,
+            "latest",
+        );
+        compositeEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
+    } catch (error) {
+        console.warn(`  ⚠ Could not scan Pyth token events: ${error.message}`);
+    }
+
+    return [...candidates.values()];
+}
+
+async function discoverConfiguredPythTokens({ oracleContract, factoryContract, registryTokens }) {
+    const registryLookup = registryByAddress(registryTokens);
+    const candidates = await collectTokenCandidates({
+        factoryContract,
+        oracleContract,
+        registryTokens,
+    });
+
+    const configuredTokens = [];
+    const missingConfigs = [];
+
+    for (const candidate of candidates) {
+        const registryToken = registryLookup.get(candidate.address.toLowerCase());
+        const name = registryToken?.name || candidate.address;
+
+        try {
+            const [isSupported, feedId] = await Promise.all([
+                oracleContract.isTokenSupported(candidate.address),
+                oracleContract.tokenToPriceFeedId(candidate.address),
+            ]);
+            let quoteFeedId = ethers.ZeroHash;
+            try {
+                quoteFeedId = await oracleContract.tokenToQuotePriceFeedId(candidate.address);
+            } catch (_) {
+                quoteFeedId = ethers.ZeroHash;
+            }
+
+            if (!isSupported || isZeroHash(feedId)) {
+                missingConfigs.push({ ...candidate, name });
+                continue;
+            }
+
+            if (registryToken && feedId.toLowerCase() !== registryToken.feedId.toLowerCase()) {
+                console.warn(
+                    `  ⚠ ${name}: using on-chain feed ${feedId}, registry expected ${registryToken.feedId}`,
+                );
+            }
+            if (
+                registryToken &&
+                !isZeroHash(quoteFeedId) &&
+                (registryToken.quoteFeedId || ethers.ZeroHash).toLowerCase() !== quoteFeedId.toLowerCase()
+            ) {
+                console.warn(
+                    `  ⚠ ${name}: using on-chain quote ${quoteFeedId}, registry expected ${
+                        registryToken.quoteFeedId || ethers.ZeroHash
+                    }`,
+                );
+            }
+
+            configuredTokens.push({
+                ...registryToken,
+                name,
+                address: candidate.address,
+                sources: candidate.sources,
+                actualFeedId: feedId,
+                actualQuoteFeedId: isZeroHash(quoteFeedId) ? null : quoteFeedId,
+            });
+        } catch (error) {
+            missingConfigs.push({
+                ...candidate,
+                name,
+                reason: error.message,
+            });
+        }
+    }
+
+    return { configuredTokens, missingConfigs };
 }
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
@@ -575,8 +720,6 @@ async function main() {
         chainId,
     });
     const rootDir = join(__dirname, "..");
-    const oracleAddress =
-        config.oracle || getOracleAddress({ rootDir, chainId });
     signer = signer.connect(provider);
 
     // PythOracle ABI (minimal for updatePriceFeeds)
@@ -586,7 +729,37 @@ async function main() {
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
         "function tokenToQuotePriceFeedId(address) external view returns (bytes32)",
+        "event TokenPriceFeedSet(address indexed token, bytes32 indexed feedId)",
+        "event TokenCompositePriceFeedSet(address indexed token, bytes32 indexed baseFeedId, bytes32 indexed quoteFeedId)",
     ];
+    const factoryAbi = [
+        "function pythOracle() external view returns (address)",
+        "function getWhitelistedTokens() external view returns (address[] memory)",
+    ];
+
+    const factoryAddress = getFactoryAddress({
+        rootDir,
+        chainId,
+        cliFactory: config.factory,
+    });
+    let factoryContract = null;
+    let oracleAddress = config.oracle || null;
+    if (factoryAddress) {
+        factoryContract = new ethers.Contract(factoryAddress, factoryAbi, provider);
+        if (!oracleAddress) {
+            try {
+                const factoryPythOracle = await factoryContract.pythOracle();
+                if (!isZeroAddress(factoryPythOracle)) {
+                    oracleAddress = factoryPythOracle;
+                }
+            } catch (error) {
+                console.warn(`  ⚠ Could not resolve factory Pyth oracle: ${error.message}`);
+            }
+        }
+    }
+    if (!oracleAddress) {
+        oracleAddress = getOracleAddress({ rootDir, chainId });
+    }
 
     const oracleContract = new ethers.Contract(
         oracleAddress,
@@ -596,6 +769,9 @@ async function main() {
 
     console.log("=== Updating Pyth Price Feeds ===");
     console.log("Oracle:", oracleAddress);
+    if (factoryAddress) {
+        console.log("Factory:", factoryAddress);
+    }
     console.log("Network:", network.name);
     console.log("Chain ID:", chainId);
     console.log(
@@ -605,75 +781,19 @@ async function main() {
     console.log("Signer:", await signer.getAddress());
 
     // Check token configuration
-    console.log("Checking token configuration...");
-    const tokensToCheck = resolvePythTokenConfigs({
+    console.log("Discovering on-chain token configuration...");
+    const registryTokens = resolvePythTokenConfigs({
         rootDir,
         chainId,
     });
-
-    const missingConfigs = [];
-    const configuredTokens = [];
-    const zeroHash =
-        "0x0000000000000000000000000000000000000000000000000000000000000000";
-    for (const token of tokensToCheck) {
-        if (!token.address) {
-            console.warn(
-                `  ⚠ ${token.name}: no token address resolved; skipping config check`,
-            );
-            continue;
-        }
-
-        try {
-            const [isSupported, feedId] = await Promise.all([
-                oracleContract.isTokenSupported(token.address),
-                oracleContract.tokenToPriceFeedId(token.address),
-            ]);
-            let quoteFeedId = ethers.ZeroHash;
-            try {
-                quoteFeedId = await oracleContract.tokenToQuotePriceFeedId(
-                    token.address,
-                );
-            } catch (_) {
-                quoteFeedId = ethers.ZeroHash;
-            }
-
-            const expectedFeedId = token.feedId.toLowerCase();
-            const actualFeedId = feedId.toLowerCase();
-            const expectedQuoteFeedId = (
-                token.quoteFeedId || zeroHash
-            ).toLowerCase();
-            const actualQuoteFeedId = (quoteFeedId || zeroHash).toLowerCase();
-            if (!isSupported || actualFeedId === zeroHash) {
-                console.warn(
-                    `  ⚠ ${token.name} (${token.address}): NOT CONFIGURED`,
-                );
-                missingConfigs.push(token);
-            } else {
-                if (actualFeedId !== expectedFeedId) {
-                    console.warn(
-                        `  ⚠ ${token.name}: using on-chain feed ${feedId}, registry expected ${token.feedId}`,
-                    );
-                }
-                if (actualQuoteFeedId !== expectedQuoteFeedId) {
-                    console.warn(
-                        `  ⚠ ${token.name}: using on-chain quote ${quoteFeedId}, registry expected ${
-                            token.quoteFeedId || zeroHash
-                        }`,
-                    );
-                }
-                console.log(`  ✓ ${token.name} (${token.address}): configured`);
-                configuredTokens.push({
-                    ...token,
-                    actualFeedId: feedId,
-                    actualQuoteFeedId: actualQuoteFeedId === zeroHash ? null : quoteFeedId,
-                });
-            }
-        } catch (e) {
-            console.warn(
-                `  ⚠ ${token.name}: Could not check configuration (${e.message})`,
-            );
-        }
-    }
+    const { configuredTokens, missingConfigs } = await discoverConfiguredPythTokens({
+        oracleContract,
+        factoryContract,
+        registryTokens,
+    });
+    configuredTokens.forEach((token) => {
+        console.log(`  ✓ ${token.name} (${token.address}): configured`);
+    });
 
     if (missingConfigs.length > 0) {
         console.warn(
@@ -686,18 +806,19 @@ async function main() {
         console.warn("    node scripts-js/configure-pyth-tokens.cjs");
         console.warn("\n  Missing configurations:");
         missingConfigs.forEach((token) => {
+            const feedSuffix = token.feedId ? ` → Feed ID: ${token.feedId}` : "";
             const quoteSuffix = token.quoteFeedId
                 ? `, Quote Feed ID: ${token.quoteFeedId}`
                 : "";
             console.warn(
-                `    - ${token.name} (${token.address}) → Feed ID: ${token.feedId}${quoteSuffix}`,
+                `    - ${token.name} (${token.address})${feedSuffix}${quoteSuffix}`,
             );
         });
         console.warn(
             "\n  The deployment script should have configured these, but they may have been",
         );
         console.warn(
-            "  lost if the Oracle was redeployed separately from the tokens.\n",
+            "  configured through governance after this updater's token discovery sources.\n",
         );
     } else {
         console.log("\n✓ All tokens are properly configured\n");
@@ -766,8 +887,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+    collectTokenCandidates,
+    discoverConfiguredPythTokens,
     fetchPriceUpdateData,
     fetchPriceUpdateDataBestEffort,
+    getFactoryAddress,
     parseCliArgs,
     shouldRequireAllPriceUpdates,
     updatePriceFeeds,
