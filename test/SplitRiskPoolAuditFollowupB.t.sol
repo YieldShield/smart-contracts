@@ -22,8 +22,12 @@ import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @dev Minimal factory stand-in whose `tokenRequiresStrictProtectedPrice`
 ///      always reverts. The pool's initialize-time staticcall against this
-///      address must therefore fail, exercising the B9 event path.
+///      address must therefore fail closed.
 contract FailingStrictProbeFactory {
+    function splitRiskPoolImplementation() external pure returns (address) {
+        return address(0x1234);
+    }
+
     function tokenRequiresStrictProtectedPrice(address) external pure returns (bool) {
         revert("probe failed");
     }
@@ -34,8 +38,8 @@ contract FailingStrictProbeFactory {
 ///         B4 commission overflow reverts, B5 whenNotPaused fee paths,
 ///         B6 same-asset withdraw also gates BACKING challenge, B7
 ///         _getShieldedSpotPrice internalises challenge guard, B8
-///         governance backstop on setPoolFeeRecipient, B9 init-time event
-///         on strict-pricing probe failure.
+///         governance backstop on setPoolFeeRecipient, B9 fail-closed
+///         strict-pricing probe handling.
 contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     using stdStorage for StdStorage;
 
@@ -391,15 +395,13 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     }
 
     // ----------------------------------------------------------------------
-    // B9: H-5 init-time event on strict-pricing probe failure
+    // B9: H-5 init-time fail-closed strict-pricing probe failure
     // ----------------------------------------------------------------------
 
-    /// @notice When the factory `tokenRequiresStrictProtectedPrice` staticcall
-    ///         reverts at init time, the pool must emit
-    ///         `StrictPricingProbeFailed` before pinning the snapshot to
-    ///         false. Monitoring relies on this event to flag a probe
-    ///         regression instead of a deliberate downgrade.
-    function test_B9_initEmitsStrictPricingProbeFailedOnRevert() public {
+    /// @notice When a contract factory's `tokenRequiresStrictProtectedPrice`
+    ///         staticcall reverts at init time, the pool must fail closed
+    ///         instead of pinning the snapshot to false.
+    function test_B9_initRevertsWhenContractFactoryStrictPricingProbeFails() public {
         FailingStrictProbeFactory failingFactory = new FailingStrictProbeFactory();
 
         TokenWhitelistLib.TokenInfo memory shieldedInfo = TokenWhitelistLib.TokenInfo({
@@ -439,14 +441,7 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
             address(failingFactory) // initialOwner — also the staticcall target
         );
 
-        // Expect the StrictPricingProbeFailed(token, factory) event during proxy init.
-        // Indexed topics: token, factory. No data.
-        vm.expectEmit(true, true, false, false);
-        emit SplitRiskPool.StrictPricingProbeFailed(address(backingToken), address(failingFactory));
-
-        SplitRiskPool deployed = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
-
-        // Probe failure must pin the snapshot to false (safe default).
-        assertEq(deployed.requiresStrictProtectedBackingPrice(), false, "failed probe should pin strict-mode false");
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        new ERC1967Proxy(address(implementation), initData);
     }
 }

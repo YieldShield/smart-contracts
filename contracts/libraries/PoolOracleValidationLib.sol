@@ -54,16 +54,10 @@ library PoolOracleValidationLib {
             (bool strictSuccess, bytes memory strictData) =
                 oracle.staticcall(abi.encodeCall(ICompositeOracle.getPriceWithStrictCircuitBreaker, (backingToken)));
 
-            if (strictSuccess) {
-                _validateDecodedPrice(strictData);
-                _validateCompositeConfiguredProtectedPrices(oracle, backingToken);
-                return;
-            }
-
-            // Oracle does not expose the strict entrypoint. Fall back to the generic
-            // safe-default price API, which is the strongest guarantee available on
-            // non-composite implementations.
-            if (strictData.length != 0) revert ErrorsLib.InvalidAssetAddress();
+            if (!strictSuccess || strictData.length < 32) revert ErrorsLib.InvalidAssetAddress();
+            _validateDecodedPrice(strictData);
+            _validateCompositeConfiguredProtectedPrices(oracle, backingToken);
+            return;
         }
 
         _validateProtectedPriceSelector(oracle, backingToken);

@@ -292,16 +292,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // H-5: snapshot the factory's strict-protected-backing-price policy at
         // initialize so a future factory regression cannot silently downgrade
-        // strict-mode pricing for this pool.
+        // strict-mode pricing for this pool. Direct test/legacy deployments that
+        // do not look like a factory have no factory policy and pin the compatibility default.
         {
             (bool success, bytes memory data) = initialOwner.staticcall(
                 abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (_backingTokenInfo.token))
             );
-            // B9 (H-5 follow-up): if the probe call reverts or returns
-            // malformed data, the pinned snapshot defaults to `false`. Emit a
-            // dedicated event BEFORE pinning so off-chain monitoring can flag
-            // the regression — silent downgrade was the original H-5 concern.
             if (!success || data.length < 32) {
+                if (_isPoolFactoryLikeController(initialOwner)) revert ErrorsLib.InvalidAssetAddress();
                 _strictProtectedBackingPriceAtInit = false;
                 emit StrictPricingProbeFailed(_backingTokenInfo.token, initialOwner);
             } else {
@@ -438,6 +436,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             if (strictSuccess) {
                 return strictPrice;
             }
+            revert ErrorsLib.InvalidAssetAddress();
         }
 
         price = IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN);
@@ -538,11 +537,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @dev Best-effort wrapper for protected backing-token pricing.
     function _tryGetProtectedBackingPrice() internal view returns (bool success, uint256 price) {
         if (_requiresStrictProtectedBackingPrice()) {
-            bool methodMissing;
-            (success, price, methodMissing) = _tryGetStrictProtectedBackingPriceSoft();
-            if (success || !methodMissing) {
-                return (success, price);
-            }
+            (success, price,) = _tryGetStrictProtectedBackingPriceSoft();
+            return (success, price);
         }
 
         try IPriceOracle(poolConfig.priceOracle).getPrice(BACKING_TOKEN) returns (uint256 protectedPrice) {
@@ -605,6 +601,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      cannot silently downgrade strict pricing.
     function _requiresStrictProtectedBackingPrice() internal view returns (bool) {
         return requiresStrictProtectedBackingPrice();
+    }
+
+    function _isPoolFactoryLikeController(address controller) internal view returns (bool) {
+        if (controller.code.length == 0) {
+            return false;
+        }
+        (bool success, bytes memory data) =
+            controller.staticcall(abi.encodeCall(ISplitRiskPoolFactory.splitRiskPoolImplementation, ()));
+        return success && data.length >= 32;
     }
 
     /// @dev Uses the strict composite-oracle path when available and bubbles real strict-mode errors.
