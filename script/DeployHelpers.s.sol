@@ -120,6 +120,10 @@ contract ScaffoldETHDeploy is Script {
 
         string memory jsonObjectKey = string.concat("deployment-export-", chainIdStr, "-", vm.toString(gasleft()));
 
+        (bool foundExisting, string memory existingJson) = _readDeploymentFile();
+        if (foundExisting) {
+            _serializeExistingDeployments(jsonObjectKey, existingJson);
+        }
         _serializeCurrentDeployments(jsonObjectKey);
 
         string memory chainName;
@@ -131,6 +135,25 @@ contract ScaffoldETHDeploy is Script {
         }
         string memory jsonWrite = vm.serializeString(jsonObjectKey, "networkName", chainName);
         vm.writeFile(path, jsonWrite);
+    }
+
+    function _serializeExistingDeployments(string memory jsonObjectKey, string memory existingJson) internal {
+        try vm.parseJsonKeys(existingJson, ".") returns (string[] memory keys) {
+            for (uint256 i = 0; i < keys.length; i++) {
+                if (!_isAddressJsonKey(keys[i])) {
+                    continue;
+                }
+
+                string memory jsonPath = string.concat(".", keys[i]);
+                try vm.parseJsonString(existingJson, jsonPath) returns (string memory name) {
+                    address addr = vm.parseAddress(keys[i]);
+                    if (_currentRunSupersedesDeployment(name, addr)) {
+                        continue;
+                    }
+                    vm.serializeString(jsonObjectKey, keys[i], name);
+                } catch { }
+            }
+        } catch { }
     }
 
     function _serializeCurrentDeployments(string memory jsonObjectKey) internal {
@@ -156,6 +179,24 @@ contract ScaffoldETHDeploy is Script {
         }
 
         return false;
+    }
+
+    function _currentRunSupersedesDeployment(string memory name, address addr) internal view returns (bool) {
+        bytes32 nameHash = keccak256(bytes(name));
+        for (uint256 i = 0; i < deployments.length; i++) {
+            if (_hasNewerCurrentDeployment(i)) {
+                continue;
+            }
+            if (deployments[i].addr == addr || keccak256(bytes(deployments[i].name)) == nameHash) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _isAddressJsonKey(string memory key) internal pure returns (bool) {
+        bytes memory keyBytes = bytes(key);
+        return keyBytes.length == 42 && keyBytes[0] == "0" && (keyBytes[1] == "x" || keyBytes[1] == "X");
     }
 
     function _resolveDeploymentAddress(string memory contractName) internal view returns (address) {
