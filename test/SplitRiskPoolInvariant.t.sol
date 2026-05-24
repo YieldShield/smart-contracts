@@ -52,6 +52,8 @@ contract SplitRiskPoolHandler is Test {
     uint256 public calls_withdrawShieldedCrossAsset;
     uint256 public calls_dropPrice;
     uint256 public calls_generateYield;
+    uint256 public calls_dropBackingPrice;
+    uint256 public calls_increaseBackingPrice;
 
     // Pool config
     uint256 public shieldedMinDepositAmount;
@@ -340,6 +342,31 @@ contract SplitRiskPoolHandler is Test {
         calls_generateYield++;
     }
 
+    /// @notice Drop the backing token price to fuzz collateral cap accounting under FX movement
+    function dropBackingPrice(uint256 dropBps) external {
+        dropBps = bound(dropBps, 0, 5000);
+        if (dropBps == 0) return;
+
+        uint256 currentPrice = oracle.getPrice(address(backingToken));
+        uint256 newPrice = currentPrice - (currentPrice * dropBps) / 1e4;
+        if (newPrice == 0) newPrice = 1;
+
+        oracle.setPrice(address(backingToken), newPrice);
+        calls_dropBackingPrice++;
+    }
+
+    /// @notice Increase the backing token price to fuzz collateral release under favorable movement
+    function increaseBackingPrice(uint256 increaseBps) external {
+        increaseBps = bound(increaseBps, 0, 5000);
+        if (increaseBps == 0) return;
+
+        uint256 currentPrice = oracle.getPrice(address(backingToken));
+        uint256 newPrice = currentPrice + (currentPrice * increaseBps) / 1e4;
+
+        oracle.setPrice(address(backingToken), newPrice);
+        calls_increaseBackingPrice++;
+    }
+
     /// @notice Warp time forward
     function warpTime(uint256 seconds_) external {
         seconds_ = bound(seconds_, 0, 30 days);
@@ -435,7 +462,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         targetContract(address(handler));
 
         // Exclude specific selectors that shouldn't be called randomly
-        bytes4[] memory selectors = new bytes4[](10);
+        bytes4[] memory selectors = new bytes4[](12);
         selectors[0] = SplitRiskPoolHandler.depositProtector.selector;
         selectors[1] = SplitRiskPoolHandler.depositShielded.selector;
         selectors[2] = SplitRiskPoolHandler.withdrawProtector.selector;
@@ -446,6 +473,8 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         selectors[7] = SplitRiskPoolHandler.warpTime.selector;
         selectors[8] = SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector;
         selectors[9] = SplitRiskPoolHandler.dropPrice.selector;
+        selectors[10] = SplitRiskPoolHandler.dropBackingPrice.selector;
+        selectors[11] = SplitRiskPoolHandler.increaseBackingPrice.selector;
 
         targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
     }
@@ -607,6 +636,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         // Sum all shielded positions (only non-withdrawn)
         uint256 sumShieldedPositions = 0;
         uint256 sumShieldedValueAtDeposit = 0;
+        uint256 sumShieldedCollateralAmount = 0;
         uint256 shieldedNextTokenId = shieldNFT.nextTokenId();
         for (uint256 tokenId = 0; tokenId < shieldedNextTokenId; tokenId++) {
             try shieldNFT.ownerOf(tokenId) returns (address owner) {
@@ -614,6 +644,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
                     IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(tokenId);
                     sumShieldedPositions += pos.amount;
                     sumShieldedValueAtDeposit += pos.valueAtDeposit;
+                    sumShieldedCollateralAmount += pos.collateralAmount;
                 }
             } catch {
                 // Token doesn't exist or was burned
@@ -638,6 +669,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
             pool.totalValueAtDeposit(),
             sumShieldedValueAtDeposit,
             "Total valueAtDeposit should match sum of position valueAtDeposit values"
+        );
+        assertEq(
+            pool.totalShieldCollateralAmount(),
+            sumShieldedCollateralAmount,
+            "Total shield collateral should match sum of position collateral amounts"
         );
     }
 

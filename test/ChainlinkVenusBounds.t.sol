@@ -14,6 +14,8 @@ contract MockAggregatorBounds {
     }
 }
 
+contract MockAggregatorWithoutBounds { }
+
 contract MockChainlinkProxyWithBounds {
     int256 internal _price;
     uint8 internal _decimals;
@@ -33,6 +35,38 @@ contract MockChainlinkProxyWithBounds {
         _price = price;
         _roundId++;
         _updatedAt = block.timestamp;
+    }
+
+    function setAggregator(address newAgg) external {
+        aggregator = newAgg;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+    {
+        return (_roundId, _price, block.timestamp, _updatedAt, _roundId);
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+}
+
+contract MockChainlinkProxyWithoutBounds {
+    int256 internal _price;
+    uint8 internal _decimals;
+    uint80 internal _roundId;
+    uint256 internal _updatedAt;
+    address public aggregator;
+
+    constructor(int256 price, uint8 feedDecimals) {
+        _price = price;
+        _decimals = feedDecimals;
+        _roundId = 1;
+        _updatedAt = block.timestamp;
+        aggregator = address(new MockAggregatorWithoutBounds());
     }
 
     function setAggregator(address newAgg) external {
@@ -139,6 +173,25 @@ contract ChainlinkVenusBoundsTest is Test {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
         assertEq(feed.getPrice(token), 2_000e8);
+    }
+
+    function test_setTokenFeed_AllowsBoundsUnavailableButSignalsAndCanRefreshLater() public {
+        MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(2_000e8, 8);
+
+        vm.expectEmit(true, true, false, false);
+        emit ChainlinkOracleFeed.FeedBoundsUnavailable(token, address(proxy));
+        feed.setTokenFeed(token, address(proxy));
+
+        assertEq(feed.tokenFeedMinAnswer(token), 0);
+        assertEq(feed.tokenFeedMaxAnswer(token), 0);
+        assertEq(feed.getPrice(token), 2_000e8, "price should still work without optional bounds");
+
+        MockAggregatorBounds compatible = new MockAggregatorBounds(MIN_BOUND, MAX_BOUND);
+        proxy.setAggregator(address(compatible));
+        feed.refreshFeedBounds(token);
+
+        assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
+        assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
     }
 
     // A1 (2026-05-19): Chainlink proxies can rotate the underlying aggregator

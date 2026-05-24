@@ -255,6 +255,72 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore, "protocol bucket must not change");
     }
 
+    function test_B4_sameAssetWithdraw_RevertsAtomicallyOnCommissionAccumulatorOverflow() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(ConstantsLib.MAX_SAFE_ACCUMULATION);
+        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
+        backupOracle.setPrice(address(shieldedToken), 1.1e8);
+
+        IShieldReceiptNFT.ShieldPosition memory positionBefore =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        uint256 baselineBefore = pool.feeValueBaselineUsd(shieldTokenId);
+        uint256 totalShieldedBefore = pool.totalShieldedTokens();
+        uint256 totalValueBefore = pool.totalValueAtDeposit();
+        uint256 totalCollateralBefore = pool.totalShieldCollateralAmount();
+        uint256 commissionsBefore = pool.accumulatedCommissions();
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shielded);
+        vm.expectRevert();
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
+
+        IShieldReceiptNFT.ShieldPosition memory positionAfter =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        assertEq(shieldNFT.ownerOf(shieldTokenId), shielded, "NFT ownership must remain");
+        assertEq(positionAfter.amount, positionBefore.amount, "position amount must not change");
+        assertEq(positionAfter.valueAtDeposit, positionBefore.valueAtDeposit, "position value must not change");
+        assertEq(positionAfter.collateralAmount, positionBefore.collateralAmount, "position collateral must not change");
+        assertEq(pool.feeValueBaselineUsd(shieldTokenId), baselineBefore, "baseline must not advance");
+        assertEq(pool.totalShieldedTokens(), totalShieldedBefore, "total shielded must not change");
+        assertEq(pool.totalValueAtDeposit(), totalValueBefore, "total value must not change");
+        assertEq(pool.totalShieldCollateralAmount(), totalCollateralBefore, "collateral total must not change");
+        assertEq(pool.accumulatedCommissions(), commissionsBefore, "commissions must not change");
+    }
+
+    function test_B4_partialWithdraw_RevertsAtomicallyOnCommissionAccumulatorOverflow() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(ConstantsLib.MAX_SAFE_ACCUMULATION);
+        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
+        backupOracle.setPrice(address(shieldedToken), 1.1e8);
+
+        IShieldReceiptNFT.ShieldPosition memory positionBefore =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        uint256 nextTokenIdBefore = shieldNFT.nextTokenId();
+        uint256 baselineBefore = pool.feeValueBaselineUsd(shieldTokenId);
+        uint256 totalShieldedBefore = pool.totalShieldedTokens();
+        uint256 totalValueBefore = pool.totalValueAtDeposit();
+        uint256 totalCollateralBefore = pool.totalShieldCollateralAmount();
+        uint256 commissionsBefore = pool.accumulatedCommissions();
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shielded);
+        vm.expectRevert();
+        pool.partialWithdrawShielded(shieldTokenId, 100e18, address(shieldedToken), 0);
+
+        IShieldReceiptNFT.ShieldPosition memory positionAfter =
+            IShieldReceiptNFT(pool.shieldReceiptNFT()).getPosition(shieldTokenId);
+        assertEq(shieldNFT.ownerOf(shieldTokenId), shielded, "old NFT ownership must remain");
+        assertEq(shieldNFT.nextTokenId(), nextTokenIdBefore, "no replacement NFT should mint");
+        assertEq(positionAfter.amount, positionBefore.amount, "position amount must not change");
+        assertEq(positionAfter.valueAtDeposit, positionBefore.valueAtDeposit, "position value must not change");
+        assertEq(positionAfter.collateralAmount, positionBefore.collateralAmount, "position collateral must not change");
+        assertEq(pool.feeValueBaselineUsd(shieldTokenId), baselineBefore, "baseline must not advance");
+        assertEq(pool.totalShieldedTokens(), totalShieldedBefore, "total shielded must not change");
+        assertEq(pool.totalValueAtDeposit(), totalValueBefore, "total value must not change");
+        assertEq(pool.totalShieldCollateralAmount(), totalCollateralBefore, "collateral total must not change");
+        assertEq(pool.accumulatedCommissions(), commissionsBefore, "commissions must not change");
+    }
+
     // ----------------------------------------------------------------------
     // B5: whenNotPaused on fee-extraction paths
     // ----------------------------------------------------------------------
