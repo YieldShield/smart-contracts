@@ -7,6 +7,7 @@ import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol"
 import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFactory.sol";
+import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -38,6 +39,59 @@ contract SplitRiskPoolFactoryV2Mock is SplitRiskPoolFactory {
 
     function version() external pure returns (uint256) {
         return 2;
+    }
+}
+
+contract ManagedPythOracleMock is Ownable, IOracleFeed {
+    bytes32 public constant BAD_FEED_ID = bytes32(type(uint256).max);
+    mapping(address => uint256) internal prices;
+
+    constructor(address owner_) Ownable(owner_) { }
+
+    function setTokenPriceFeed(address token, bytes32 feedId) external onlyOwner {
+        prices[token] = feedId == BAD_FEED_ID ? 0 : 1e8;
+    }
+
+    function setTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32) external onlyOwner {
+        prices[token] = baseFeedId == BAD_FEED_ID ? 0 : 1e8;
+    }
+
+    function scheduleRemoveToken(address) external view onlyOwner { }
+
+    function cancelScheduledRemoveToken(address) external view onlyOwner { }
+
+    function removeToken(address token) external onlyOwner {
+        prices[token] = 0;
+    }
+
+    function setMaxPriceAge(uint256) external view onlyOwner { }
+
+    function setMaxPriceAgeForToken(address, uint256) external view onlyOwner { }
+
+    function setMaxPriceDeviation(uint256) external view onlyOwner { }
+
+    function setMaxConfidenceBps(uint256) external view onlyOwner { }
+
+    function setMaxEmaConfidenceBps(uint256) external view onlyOwner { }
+
+    function setMaxPriceAgeForFeedId(bytes32, uint256) external view onlyOwner { }
+
+    function setMaxCompositePublishTimeSkew(uint256) external view onlyOwner { }
+
+    function getPrice(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function getPriceUnsafe(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Managed Pyth Oracle Mock";
     }
 }
 
@@ -697,6 +751,25 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         assertEq(pythOracle.maxPriceAgeForFeedId(feedId), 120, "feed-specific age should update");
         assertEq(pythOracle.maxCompositePublishTimeSkew(), 15, "composite skew should update");
+    }
+
+    function testManagedPythFeedUpdateRevertsWhenLiveCompositeRouteBreaks() public {
+        bytes32 goodFeedId = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+        ManagedPythOracleMock managedPyth = new ManagedPythOracleMock(address(factory));
+        factory.setManagedPythOracle(address(managedPyth));
+
+        vm.prank(governanceTimelock);
+        factory.setPythTokenPriceFeed(address(tokenB), goodFeedId);
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeed(address(tokenB), address(managedPyth));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
+        factory.setPythTokenPriceFeed(address(tokenB), bytes32(type(uint256).max));
+
+        assertEq(managedPyth.getPriceUnsafe(address(tokenB)), 1e8, "failed live update should roll back");
+        assertEq(compositeOracle.getTokenOracleFeed(address(tokenB)), address(managedPyth));
     }
 
     function testFactoryCanRemoveManagedERC4626Vault() public {

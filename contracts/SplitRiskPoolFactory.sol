@@ -382,6 +382,7 @@ contract SplitRiskPoolFactory is
 
     function setPythTokenPriceFeed(address token, bytes32 feedId) external onlyGovernance {
         _pythOracleAdmin().setTokenPriceFeed(token, feedId);
+        _validateWhitelistedCompositeOracleTokenFeed(token);
     }
 
     function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId)
@@ -389,6 +390,7 @@ contract SplitRiskPoolFactory is
         onlyGovernance
     {
         _pythOracleAdmin().setTokenCompositePriceFeed(token, baseFeedId, quoteUsdFeedId);
+        _validateWhitelistedCompositeOracleTokenFeed(token);
     }
 
     function schedulePythTokenRemoval(address token) external onlyGovernance {
@@ -401,50 +403,62 @@ contract SplitRiskPoolFactory is
 
     function removePythToken(address token) external onlyGovernance {
         _pythOracleAdmin().removeToken(token);
+        _validateWhitelistedCompositeOracleTokenFeed(token);
     }
 
     function setPythMaxPriceAge(uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAge(maxPriceAge);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAgeForToken(token, maxPriceAge);
+        _validateWhitelistedCompositeOracleTokenFeed(token);
     }
 
     function setPythMaxPriceAgeForFeedId(bytes32 feedId, uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAgeForFeedId(feedId, maxPriceAge);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setPythMaxCompositePublishTimeSkew(uint256 maxSkew) external onlyGovernance {
         _pythOracleAdmin().setMaxCompositePublishTimeSkew(maxSkew);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceDeviation(maxPriceDeviation);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external onlyGovernance {
         _pythOracleAdmin().setMaxConfidenceBps(maxConfidenceBps);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external onlyGovernance {
         _pythOracleAdmin().setMaxEmaConfidenceBps(maxEmaConfidenceBps);
+        _validateCompositeOracleFeedsUsing(pythOracle);
     }
 
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external onlyGovernance {
         _erc4626OracleFeedAdmin().setUnderlyingPriceOracle(underlyingPriceOracle);
+        _validateCompositeOracleFeedsUsing(erc4626OracleFeed);
     }
 
     function registerERC4626Vault(address vault, address underlying) external onlyGovernance {
         _erc4626OracleFeedAdmin().registerVault(vault, underlying);
+        _validateWhitelistedCompositeOracleTokenFeed(vault);
     }
 
     function refreshERC4626VaultSharePriceReference(address vault) external onlyGovernance {
         _erc4626OracleFeedAdmin().refreshVaultSharePriceReference(vault);
+        _validateWhitelistedCompositeOracleTokenFeed(vault);
     }
 
     function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external onlyGovernance {
         _erc4626OracleFeedAdmin().setVaultSharePriceDeviation(vault, maxDeviationBps);
+        _validateWhitelistedCompositeOracleTokenFeed(vault);
     }
 
     function scheduleERC4626VaultRemoval(address vault) external onlyGovernance {
@@ -457,6 +471,7 @@ contract SplitRiskPoolFactory is
 
     function removeERC4626Vault(address vault) external onlyGovernance {
         _erc4626OracleFeedAdmin().removeVault(vault);
+        _validateWhitelistedCompositeOracleTokenFeed(vault);
     }
 
     /**
@@ -930,6 +945,30 @@ contract SplitRiskPoolFactory is
         PoolOracleValidationLib.validateBackingTokenOracle(
             compositeOracle, token, tokenRequiresStrictProtectedPrice[token]
         );
+    }
+
+    function _validateWhitelistedCompositeOracleTokenFeed(address token) internal view {
+        if (!isWhitelisted[token]) {
+            return;
+        }
+        _validateCompositeOracleTokenFeed(token);
+    }
+
+    function _validateCompositeOracleFeedsUsing(address oracleFeed) internal view {
+        if (oracleFeed == address(0)) {
+            return;
+        }
+        uint256 tokenCount = whitelistedTokens.length;
+        for (uint256 i = 0; i < tokenCount;) {
+            address token = whitelistedTokens[i];
+            TokenWhitelistLib.TokenInfo memory info = tokenInfo[token];
+            if (info.primaryOracleFeed == oracleFeed || info.backupOracleFeed == oracleFeed) {
+                _validateCompositeOracleTokenFeed(token);
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for
