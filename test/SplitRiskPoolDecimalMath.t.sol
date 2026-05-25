@@ -255,7 +255,7 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
         vm.stopPrank();
     }
 
-    function test_DepositBackingAsset_UsesSpotShieldedPriceForTvlWhenCircuitBreakerTrips() public {
+    function test_DepositBackingAsset_RevertsWhenShieldedCircuitBreakerTripsDuringTvlCheck() public {
         MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "Shielded Token", "SHIELD");
         MockUSDC backingToken = new MockUSDC();
@@ -288,10 +288,9 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
         );
 
         vm.startPrank(PROTECTOR);
+        vm.expectRevert(abi.encodeWithSelector(MockOracle.MockCircuitBreakerTriggered.selector, address(shieldedToken)));
         pool.depositBackingAsset(address(backingToken), 50e6, 0);
         vm.stopPrank();
-
-        assertEq(pool.totalProtectorTokens(), 250e6, "backing deposits should still work during shielded CB events");
     }
 
     function test_DepositShieldedAsset_UsesProtectedShieldedPriceForTvlLimit() public {

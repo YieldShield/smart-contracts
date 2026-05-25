@@ -893,7 +893,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             minDepositAmount = poolConfig.backingMinDepositAmount;
             maxDepositAmount = poolConfig.backingMaxDepositAmount;
             depositValueUsd = _getProtectedBackingValue(depositAmount);
-            allowShieldedSpotFallback = true;
         } else {
             revert ErrorsLib.UnsupportedAsset();
         }
@@ -1871,6 +1870,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ) external nonReentrant whenNotPaused onlyShieldNFTOwner(tokenId) returns (uint256 newTokenId) {
         if (preferredAsset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset(); // Partial withdrawal only for same asset
         if (withdrawAmount == 0) revert ErrorsLib.NoTokensToWithdraw();
+        _requireNoOraclePendingChallenge(BACKING_TOKEN);
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+
         if (
             accessControlCanGateWithdrawals && accessControl != address(0)
                 && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)

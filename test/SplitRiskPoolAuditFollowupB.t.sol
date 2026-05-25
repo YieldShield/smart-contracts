@@ -459,6 +459,17 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
     }
 
+    function test_B6_partialWithdraw_RevertsOnBackingChallenge() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+
+        backupOracle.setPrice(address(backingToken), 2e8);
+        compositeOracle.challengeForToken(address(backingToken));
+
+        vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(backingToken)));
+        pool.partialWithdrawShielded(shieldTokenId, 100e18, address(shieldedToken), 0);
+    }
+
     // ----------------------------------------------------------------------
     // B7: _getShieldedSpotPrice internalises challenge guard
     // ----------------------------------------------------------------------
