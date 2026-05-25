@@ -2414,7 +2414,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @notice Returns the governance timelock address
     /// @return The address of the governance timelock contract
-    function governanceTimelock() public view override(ProtocolAccessControlUpgradeable) returns (address) {
+    function governanceTimelock()
+        public
+        view
+        override(ISplitRiskPool, ProtocolAccessControlUpgradeable)
+        returns (address)
+    {
         return ProtocolAccessControlUpgradeable.governanceTimelock();
     }
 
@@ -2433,6 +2438,23 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
     }
 
+    function setGovernanceTimelockFromFactory(address newGovernanceTimelock) external override {
+        address factory = _poolFactoryController();
+        if (msg.sender != factory) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "setGovernanceTimelockFromFactory");
+        }
+        if (ISplitRiskPoolFactory(factory).pendingGovernanceTimelock() != newGovernanceTimelock) {
+            revert InvalidGovernanceTimelock(newGovernanceTimelock);
+        }
+
+        _validateGovernanceTimelock(newGovernanceTimelock, bytes32(0));
+        _validateGovernanceTimelockOperationalRolesMatch(newGovernanceTimelock, _governanceTimelock);
+        _validateKnownDefaultAdminCleared(newGovernanceTimelock, owner());
+        _validateKnownDefaultAdminCleared(newGovernanceTimelock, _governanceTimelock);
+        _pendingGovernanceTimelock = newGovernanceTimelock;
+        emit GovernanceTimelockTransferStarted(_governanceTimelock, newGovernanceTimelock);
+    }
+
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable) {
@@ -2445,8 +2467,44 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    function acceptGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external override {
+        address factory = _poolFactoryController();
+        if (msg.sender != factory) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "acceptGovernanceTimelockFromFactory");
+        }
+        if (
+            _pendingGovernanceTimelock == address(0) || _pendingGovernanceTimelock != expectedGovernanceTimelock
+                || ISplitRiskPoolFactory(factory).governanceTimelock() != expectedGovernanceTimelock
+        ) {
+            revert InvalidGovernanceTimelock(expectedGovernanceTimelock);
+        }
+
+        _validateGovernanceTimelock(_pendingGovernanceTimelock, bytes32(0));
+        _validateGovernanceTimelockOperationalRolesMatch(_pendingGovernanceTimelock, _governanceTimelock);
+        _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
+        _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);
+        address previousGovernance = _governanceTimelock;
+        emit GovernanceTimelockUpdated(previousGovernance, _pendingGovernanceTimelock);
+        _governanceTimelock = _pendingGovernanceTimelock;
+        _governanceTimelockCodehash = _pendingGovernanceTimelock.codehash;
+        _pendingGovernanceTimelock = address(0);
+
+        if (owner() == previousGovernance) {
+            _transferOwnership(_governanceTimelock);
+        }
+        if (poolConfig.protocolFeeRecipient == previousGovernance) {
+            poolConfig.protocolFeeRecipient = _governanceTimelock;
+            emit EventsLib.ProtocolFeeRecipientUpdated(previousGovernance, poolConfig.protocolFeeRecipient);
+        }
+    }
+
     /// @notice Returns the pending governance timelock address
-    function pendingGovernanceTimelock() public view override(ProtocolAccessControlUpgradeable) returns (address) {
+    function pendingGovernanceTimelock()
+        public
+        view
+        override(ISplitRiskPool, ProtocolAccessControlUpgradeable)
+        returns (address)
+    {
         return ProtocolAccessControlUpgradeable.pendingGovernanceTimelock();
     }
 

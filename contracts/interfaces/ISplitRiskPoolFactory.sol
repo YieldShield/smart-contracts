@@ -106,6 +106,8 @@ interface ISplitRiskPoolFactory {
     function setGovernanceTimelock(address newGovernanceTimelock) external;
     function acceptGovernanceTimelock() external;
     function pendingGovernanceTimelock() external view returns (address);
+    function startPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external;
+    function acceptPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external;
     function finalizeBootstrap() external;
     function setCompositeOracle(address newOracle) external;
     function setDefaultProtocolFeeRecipient(address newRecipient) external;

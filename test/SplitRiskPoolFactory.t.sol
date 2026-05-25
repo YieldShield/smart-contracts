@@ -922,6 +922,35 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factory.defaultProtocolFeeRecipient(), user1, "Custom protocol fee recipient should remain unchanged");
     }
 
+    function testGovernanceTimelockRotationCanCascadeToExistingPools() public {
+        address pool1 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        address pool2 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(1, 1);
+
+        assertEq(SplitRiskPool(payable(pool1)).pendingGovernanceTimelock(), replacementGovernance);
+        assertEq(SplitRiskPool(payable(pool2)).pendingGovernanceTimelock(), replacementGovernance);
+
+        vm.prank(replacementGovernance);
+        factory.acceptGovernanceTimelock();
+
+        vm.prank(replacementGovernance);
+        factory.acceptPoolGovernanceTimelockTransfers(0, 1);
+        assertEq(SplitRiskPool(payable(pool1)).governanceTimelock(), replacementGovernance);
+        assertEq(SplitRiskPool(payable(pool2)).governanceTimelock(), governanceTimelock);
+
+        vm.prank(replacementGovernance);
+        factory.acceptPoolGovernanceTimelockTransfers(1, 1);
+        assertEq(SplitRiskPool(payable(pool2)).governanceTimelock(), replacementGovernance);
+    }
+
     function testRevertCreatePoolWithoutDefaultOracle() public {
         // Create a new factory without setting default oracle
         SplitRiskPool poolImpl = new SplitRiskPool();

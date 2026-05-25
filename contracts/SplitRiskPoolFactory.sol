@@ -213,6 +213,37 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    /// @notice Starts the same pending governance transfer on a page of historical pools.
+    /// @dev Call after `setGovernanceTimelock` and before the factory accepts the new timelock.
+    function startPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external override onlyGovernance {
+        address pendingGovernance = pendingGovernanceTimelock();
+        if (pendingGovernance == address(0)) revert NoPendingGovernance();
+        uint256 end = _poolPageEnd(offset, limit);
+        for (uint256 i = offset; i < end;) {
+            SplitRiskPool(payable(pools[i])).setGovernanceTimelockFromFactory(pendingGovernance);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice Accepts the factory's current governance timelock on pools that were pre-staged.
+    /// @dev Call after `acceptGovernanceTimelock` on the factory. Pools outside the requested
+    ///      page, or pools not staged for the current timelock, are left untouched.
+    function acceptPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external override onlyGovernance {
+        address currentGovernance = governanceTimelock();
+        uint256 end = _poolPageEnd(offset, limit);
+        for (uint256 i = offset; i < end;) {
+            SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
+            if (pool.pendingGovernanceTimelock() == currentGovernance) {
+                pool.acceptGovernanceTimelockFromFactory(currentGovernance);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice Returns the pending governance timelock address
     function pendingGovernanceTimelock()
         public
@@ -221,6 +252,17 @@ contract SplitRiskPoolFactory is
         returns (address)
     {
         return ProtocolAccessControlUpgradeable.pendingGovernanceTimelock();
+    }
+
+    function _poolPageEnd(uint256 offset, uint256 limit) internal view returns (uint256 end) {
+        uint256 totalPools = pools.length;
+        if (offset >= totalPools || limit == 0) {
+            return offset;
+        }
+        end = offset + limit;
+        if (end > totalPools) {
+            end = totalPools;
+        }
     }
 
     /**

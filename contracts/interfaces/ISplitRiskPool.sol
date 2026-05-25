@@ -58,6 +58,8 @@ interface ISplitRiskPool {
             address priceOracle
         );
     function requiresStrictProtectedBackingPrice() external view returns (bool);
+    function governanceTimelock() external view returns (address);
+    function pendingGovernanceTimelock() external view returns (address);
 
     function poolState() external view returns (uint256 shieldedTokenBalance, uint256 totalBackingTokenBalance);
 
@@ -145,6 +147,8 @@ interface ISplitRiskPool {
         address newProtocolFeeRecipient,
         address newPriceOracle
     ) external;
+    function setGovernanceTimelockFromFactory(address newGovernanceTimelock) external;
+    function acceptGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external;
 
     // Payment Functions
     function payPoolFee() external;
