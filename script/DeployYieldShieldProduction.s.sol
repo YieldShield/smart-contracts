@@ -15,6 +15,11 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
+interface IProductionOwnable {
+    function owner() external view returns (address);
+    function transferOwnership(address newOwner) external;
+}
+
 /**
  * @notice Production deployment script for public networks
  * @dev Deploys only governance and core protocol contracts. Token whitelisting and launch assets
@@ -35,6 +40,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
     bytes4 private constant MASTER_COPY_SELECTOR = bytes4(keccak256("masterCopy()"));
     bytes4 private constant PYTH_VALID_TIME_PERIOD_SELECTOR = bytes4(keccak256("getValidTimePeriod()"));
+    bytes32 private constant NAME_FACTORY = "SplitRiskPoolFactory";
+    bytes32 private constant NAME_COMPOSITE_ORACLE = "CompositeOracle";
+    bytes32 private constant NAME_PYTH_ORACLE = "PythOracle";
+    bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
+    bytes32 private constant NAME_TIMELOCK = "TimelockController";
+    bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
+    bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
+    bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
+    bytes32 private constant FIELD_PROTOCOL_FEE_RECIPIENT = "factory.feeRecipient";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -45,6 +59,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolderOwnersHash(address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash);
     error InvalidProductionPythContract(address pythAddress);
     error ProductionPythUpdaterNotConfirmed(uint256 chainId, uint256 maxPriceAge);
+    error InvalidProductionProtocolContract(bytes32 name, address contractAddress);
+    error ProductionProtocolOwnerMismatch(bytes32 name, address actualOwner, address expectedOwner);
+    error ProductionProtocolAddressMismatch(bytes32 field, address actualAddress, address expectedAddress);
+    error ProductionProtocolBootstrapModeOpen(address factory);
+    error ProductionProtocolLaunchAssetsPresent(address factory);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
@@ -62,6 +81,36 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             compositeOracleAddr,
             pythOracleAddr,
             erc4626OracleFeedAddr
+        );
+    }
+
+    function finalizeProductionProtocolBootstrap(
+        address factoryAddr,
+        address compositeOracleAddr,
+        address pythOracleAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr
+    ) external ScaffoldEthDeployerRunner {
+        if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _finalizeProductionProtocolBootstrap(
+            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr, deployer
+        );
+
+        deployments.push(Deployment("PythOracle", pythOracleAddr));
+        deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
+        deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
+        deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
+    }
+
+    function validateProductionProtocolFinalized(
+        address factoryAddr,
+        address compositeOracleAddr,
+        address pythOracleAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr
+    ) external view {
+        _validateProductionProtocolFinalized(
+            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr
         );
     }
 
@@ -169,24 +218,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             actualMinimumCreationBondUsd == factory.DEFAULT_MINIMUM_CREATION_BOND_USD(),
             "Factory minimum creation bond not set correctly"
         );
-        compositeOracle.transferOwnership(factoryAddr);
-        factory.setCompositeOracle(compositeOracleAddr);
-        factory.setDefaultProtocolFeeRecipient(timelockAddr);
-
-        pythOracle.transferOwnership(factoryAddr);
-        erc4626OracleFeed.transferOwnership(factoryAddr);
-        factory.setManagedPythOracle(pythOracleAddr);
-        factory.setManagedERC4626OracleFeed(erc4626OracleFeedAddr);
-        factory.finalizeBootstrap();
-        factory.transferOwnership(timelockAddr);
-
-        require(factory.owner() == timelockAddr, "Factory owner not transferred");
-        require(!factory.bootstrapModeEnabled(), "Factory bootstrap mode not finalized");
-        require(compositeOracle.owner() == factoryAddr, "Composite oracle owner not transferred");
-        require(pythOracle.owner() == factoryAddr, "Pyth oracle owner not transferred");
-        require(erc4626OracleFeed.owner() == factoryAddr, "ERC4626 oracle owner not transferred");
-        require(factory.pythOracle() == pythOracleAddr, "Factory Pyth oracle not registered");
-        require(factory.erc4626OracleFeed() == erc4626OracleFeedAddr, "Factory ERC4626 oracle not registered");
+        _finalizeProductionProtocolBootstrap(
+            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr, deployer
+        );
 
         deployments.push(Deployment("PythOracle", pythOracleAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
@@ -226,6 +260,145 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _isLocalNetwork() internal view returns (bool) {
         return block.chainid == 31337 || block.chainid == 1337;
+    }
+
+    function _finalizeProductionProtocolBootstrap(
+        address factoryAddr,
+        address compositeOracleAddr,
+        address pythOracleAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address bootstrapAdmin
+    ) internal {
+        _requireProductionContract(NAME_FACTORY, factoryAddr);
+        _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
+        _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
+        _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
+        _requireProductionContract(NAME_TIMELOCK, timelockAddr);
+
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        address configuredCompositeOracle = factory.compositeOracle();
+        if (configuredCompositeOracle != address(0)) {
+            _requireProductionAddress(FIELD_COMPOSITE_ORACLE, configuredCompositeOracle, compositeOracleAddr);
+        }
+        address configuredProtocolFeeRecipient = factory.defaultProtocolFeeRecipient();
+        if (configuredProtocolFeeRecipient != address(0)) {
+            _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, configuredProtocolFeeRecipient, timelockAddr);
+        }
+        address configuredPythOracle = factory.pythOracle();
+        if (configuredPythOracle != address(0)) {
+            _requireProductionAddress(FIELD_PYTH_ORACLE, configuredPythOracle, pythOracleAddr);
+        }
+        address configuredERC4626OracleFeed = factory.erc4626OracleFeed();
+        if (configuredERC4626OracleFeed != address(0)) {
+            _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, configuredERC4626OracleFeed, erc4626OracleFeedAddr);
+        }
+
+        _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, compositeOracleAddr, factoryAddr, bootstrapAdmin);
+        _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, pythOracleAddr, factoryAddr, bootstrapAdmin);
+        _transferOwnershipToFactoryIfNeeded(
+            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, factoryAddr, bootstrapAdmin
+        );
+
+        if (factory.compositeOracle() == address(0)) {
+            factory.setCompositeOracle(compositeOracleAddr);
+        }
+        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), compositeOracleAddr);
+
+        if (factory.defaultProtocolFeeRecipient() == address(0)) {
+            factory.setDefaultProtocolFeeRecipient(timelockAddr);
+        }
+        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), timelockAddr);
+
+        if (factory.pythOracle() == address(0)) {
+            factory.setManagedPythOracle(pythOracleAddr);
+        }
+        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), pythOracleAddr);
+
+        if (factory.erc4626OracleFeed() == address(0)) {
+            factory.setManagedERC4626OracleFeed(erc4626OracleFeedAddr);
+        }
+        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), erc4626OracleFeedAddr);
+
+        if (factory.bootstrapModeEnabled()) {
+            if (factory.owner() != bootstrapAdmin) {
+                revert ProductionProtocolBootstrapModeOpen(factoryAddr);
+            }
+            factory.finalizeBootstrap();
+        }
+
+        if (factory.owner() == bootstrapAdmin) {
+            factory.transferOwnership(timelockAddr);
+        }
+
+        _validateProductionProtocolFinalized(
+            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr
+        );
+    }
+
+    function _validateProductionProtocolFinalized(
+        address factoryAddr,
+        address compositeOracleAddr,
+        address pythOracleAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr
+    ) internal view {
+        _requireProductionContract(NAME_FACTORY, factoryAddr);
+        _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
+        _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
+        _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
+        _requireProductionContract(NAME_TIMELOCK, timelockAddr);
+
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        _requireProductionOwner(NAME_FACTORY, factory.owner(), timelockAddr);
+        if (factory.bootstrapModeEnabled()) {
+            revert ProductionProtocolBootstrapModeOpen(factoryAddr);
+        }
+        if (factory.poolCount() != 0 || factory.getWhitelistedTokens().length != 0) {
+            revert ProductionProtocolLaunchAssetsPresent(factoryAddr);
+        }
+
+        _requireProductionOwner(NAME_COMPOSITE_ORACLE, IProductionOwnable(compositeOracleAddr).owner(), factoryAddr);
+        _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(pythOracleAddr).owner(), factoryAddr);
+        _requireProductionOwner(NAME_ERC4626_ORACLE_FEED, IProductionOwnable(erc4626OracleFeedAddr).owner(), factoryAddr);
+        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), compositeOracleAddr);
+        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), timelockAddr);
+        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), pythOracleAddr);
+        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), erc4626OracleFeedAddr);
+    }
+
+    function _transferOwnershipToFactoryIfNeeded(
+        bytes32 name,
+        address contractAddress,
+        address factoryAddr,
+        address bootstrapAdmin
+    ) internal {
+        address currentOwner = IProductionOwnable(contractAddress).owner();
+        if (currentOwner == factoryAddr) {
+            return;
+        }
+        if (currentOwner != bootstrapAdmin) {
+            revert ProductionProtocolOwnerMismatch(name, currentOwner, factoryAddr);
+        }
+        IProductionOwnable(contractAddress).transferOwnership(factoryAddr);
+    }
+
+    function _requireProductionContract(bytes32 name, address contractAddress) internal view {
+        if (contractAddress == address(0) || contractAddress.code.length == 0) {
+            revert InvalidProductionProtocolContract(name, contractAddress);
+        }
+    }
+
+    function _requireProductionOwner(bytes32 name, address actualOwner, address expectedOwner) internal pure {
+        if (actualOwner != expectedOwner) {
+            revert ProductionProtocolOwnerMismatch(name, actualOwner, expectedOwner);
+        }
+    }
+
+    function _requireProductionAddress(bytes32 field, address actualAddress, address expectedAddress) internal pure {
+        if (actualAddress != expectedAddress) {
+            revert ProductionProtocolAddressMismatch(field, actualAddress, expectedAddress);
+        }
     }
 
     /// @dev Enforces Safe shape and pins the bootstrap holder to an
