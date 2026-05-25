@@ -1237,6 +1237,29 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
     }
 
+    function testInactivePoolCannotBeReanimatedByUnpause() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+
+        vm.prank(governanceTimelock);
+        factory.deactivatePool(poolAddress);
+        vm.prank(governanceTimelock);
+        pool.unpause();
+
+        tokenB.mint(user1, 100e18);
+        tokenA.mintShares(user1, 100e18);
+
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, 100e18);
+        vm.expectRevert(ErrorsLib.PoolNotActive.selector);
+        pool.depositBackingAsset(address(tokenB), 100e18, 0);
+
+        tokenA.approve(poolAddress, 100e18);
+        vm.expectRevert(ErrorsLib.PoolNotActive.selector);
+        pool.depositShieldedAsset(address(tokenA), 100e18, 0);
+        vm.stopPrank();
+    }
+
     function testDeactivateDustPoolSweepsMinimumBackingAndFreesActiveSlot() public {
         vm.prank(governanceTimelock);
         factory.setDefaultProtocolFeeRecipient(user2);
@@ -1271,6 +1294,83 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
         assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testDeactivateProtectorOnlyPoolFreesSlotWithoutSweepingBacking() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        uint256 protectorAmount = 100e18;
+
+        tokenB.mint(user1, protectorAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, protectorAmount);
+        uint256 tokenId = pool.depositBackingAsset(address(tokenB), protectorAmount, 0);
+        vm.stopPrank();
+
+        ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
+        uint256 executableAt = info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY();
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.PoolDeactivationTooEarly.selector, executableAt));
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        vm.warp(executableAt);
+        vm.prank(governanceTimelock);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        assertEq(factory.activePoolCount(), 0, "Protector-only deactivation should free the active slot");
+        assertFalse(factory.isPoolActive(poolAddress), "Protector-only pool should no longer be active");
+        assertFalse(pool.paused(), "Protector-only deactivation should leave exits available");
+        assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector backing should remain in the pool");
+        (, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, protectorAmount, "Tracked backing balance should remain withdrawable");
+        assertEq(
+            tokenB.balanceOf(user2) - recipientBalanceBefore,
+            expectedBondAmount,
+            "Protocol recipient should receive only the forfeited bond"
+        );
+
+        vm.startPrank(user1);
+        pool.startUnlockProcess(tokenId);
+        (,,,,,, uint256 unlockDuration,,,) = pool.poolConfig();
+        vm.warp(block.timestamp + unlockDuration + 1);
+        uint256 protectorBalanceBefore = tokenB.balanceOf(user1);
+        pool.protectorWithdraw(tokenId, protectorAmount, address(tokenB), 0);
+        vm.stopPrank();
+
+        assertEq(tokenB.balanceOf(user1) - protectorBalanceBefore, protectorAmount, "Protector should recover backing");
+        assertEq(pool.totalProtectorTokens(), 0, "Protector withdrawal should clear backing accounting");
+
+        address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
+        assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
+        assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testDeactivateProtectorOnlyPoolRevertsWhenShieldedLiabilitiesRemain() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+
+        tokenB.mint(user1, 200e18);
+        tokenA.mintShares(user1, 100e18);
+
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, 200e18);
+        pool.depositBackingAsset(address(tokenB), 200e18, 0);
+        tokenA.approve(poolAddress, 100e18);
+        pool.depositShieldedAsset(address(tokenA), 100e18, 0);
+        vm.stopPrank();
+
+        ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
+        vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        assertTrue(factory.isPoolActive(poolAddress), "Pool with shielded liabilities should remain active");
     }
 
     function testDeactivateDustPoolRevertsForMaterialBacking() public {

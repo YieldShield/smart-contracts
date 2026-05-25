@@ -91,6 +91,7 @@ contract SplitRiskPoolFactory is
     /// @notice Maximum number of active pools that can exist at the same time
     uint256 public constant MAX_POOLS = 1000;
     uint256 public constant DEFAULT_MINIMUM_CREATION_BOND_USD = 500e8;
+    uint256 public constant PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY = 7 days;
 
     // Token whitelist (governance-controlled) - all whitelisted tokens use TokenInfo
     address[] public whitelistedTokens;
@@ -952,6 +953,26 @@ contract SplitRiskPoolFactory is
         emit EventsLib.PoolDeactivated(pool);
     }
 
+    /// @notice Deactivates a protector-only pool without sweeping valid protector backing.
+    /// @dev Frees the active slot after a grace delay when no shielded liabilities or fees
+    ///      remain. The pool is left unpaused so protectors can unlock and withdraw normally;
+    ///      the pool itself blocks new deposits once removed from the factory active registry.
+    function deactivateProtectorOnlyPool(address pool) external onlyGovernance nonReentrant {
+        ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
+        if (info.shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
+        if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
+
+        uint256 executableAt = info.createdAt + PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY;
+        if (block.timestamp < executableAt) {
+            revert ErrorsLib.PoolDeactivationTooEarly(executableAt);
+        }
+
+        _requireProtectorOnlyPool(pool);
+        _removeActivePool(pool);
+        _forfeitCreationBond(pool);
+        emit EventsLib.PoolDeactivated(pool);
+    }
+
     /**
      * @notice Closes an empty pool and returns the active-slot stake to the creator
      * @param pool Address of the pool to close
@@ -1098,6 +1119,18 @@ contract SplitRiskPoolFactory is
             targetPool.totalShieldedTokens() != 0 || targetPool.totalProtectorTokens() != 0
                 || targetPool.getReservedFees() != 0 || shieldedTokenPoolBalance != 0
                 || totalBackingTokenPoolBalance != 0
+        ) {
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
+        }
+    }
+
+    function _requireProtectorOnlyPool(address pool) internal view {
+        SplitRiskPool targetPool = SplitRiskPool(payable(pool));
+        (uint256 shieldedTokenPoolBalance, uint256 totalBackingTokenPoolBalance) = targetPool.getPoolBalances();
+        if (
+            targetPool.totalShieldedTokens() != 0 || targetPool.totalValueAtDeposit() != 0
+                || targetPool.totalShieldCollateralAmount() != 0 || targetPool.getReservedFees() != 0
+                || shieldedTokenPoolBalance != 0 || totalBackingTokenPoolBalance != targetPool.totalProtectorTokens()
         ) {
             revert ErrorsLib.PoolNotEmptyForDeactivation();
         }

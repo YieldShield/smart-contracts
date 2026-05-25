@@ -1614,6 +1614,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         returns (uint256 tokenId)
     {
         if (asset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
+        _requireActiveFactoryPoolForDeposit();
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canDepositProtector(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositProtector");
         }
@@ -1687,10 +1688,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         whenNotPaused
         returns (uint256 tokenId)
     {
+        if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
+        _requireActiveFactoryPoolForDeposit();
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canDepositShielded(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositShielded");
         }
-        if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
 
         // Block deposits while either priced leg has a pending dual-feed challenge.
         // The active feed is suspect for up to `challengeDurationSec`; locking
@@ -2627,6 +2629,19 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         factory = POOL_FACTORY;
         if (factory == address(0)) {
             factory = owner();
+        }
+    }
+
+    function _requireActiveFactoryPoolForDeposit() internal view {
+        address factory = _poolFactoryController();
+        if (factory == address(0) || !_isPoolFactoryLikeController(factory)) {
+            return;
+        }
+
+        (bool success, bytes memory data) =
+            factory.staticcall(abi.encodeCall(ISplitRiskPoolFactory.isPoolActive, (address(this))));
+        if (!success || data.length < 32 || !abi.decode(data, (bool))) {
+            revert ErrorsLib.PoolNotActive();
         }
     }
 
