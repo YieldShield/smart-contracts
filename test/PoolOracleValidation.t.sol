@@ -205,6 +205,42 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         assertTrue(pool.requiresStrictProtectedBackingPrice(), "refresh should adopt the new policy");
     }
 
+    function testPoolStrictProtectedPriceRefreshRevertsOnFactoryLookupFailure() public {
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "test starts from pinned strict=true");
+
+        bytes memory lookup =
+            abi.encodeWithSignature("tokenRequiresStrictProtectedPrice(address)", address(backingToken));
+        vm.mockCallRevert(address(factory), lookup, "probe failed");
+
+        vm.prank(governance);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        pool.refreshStrictProtectedBackingPriceFlag();
+
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "failed refresh must preserve previous pin");
+        vm.clearMockedCalls();
+    }
+
+    function testPoolStrictProtectedPriceRefreshCanAdoptExplicitFalse() public {
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
+        assertTrue(pool.requiresStrictProtectedBackingPrice());
+
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), false);
+
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
+
+        assertFalse(pool.requiresStrictProtectedBackingPrice(), "explicit factory false remains adoptable");
+    }
+
     function testPoolStrictProtectedPriceRequirementSurvivesPoolOwnerTransfer() public {
         // H-5: pool snapshots the flag at init. To adopt a new factory policy,
         // governance must call refreshStrictProtectedBackingPriceFlag(). After

@@ -582,15 +582,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      snapshot from initialize is used.
     function refreshStrictProtectedBackingPriceFlag() external onlyGovernance {
         address factory = _poolFactoryController();
-        bool newValue = false;
-        if (factory != address(0) && factory.code.length != 0) {
-            (bool success, bytes memory data) = factory.staticcall(
-                abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
-            );
-            if (success && data.length >= 32) {
-                newValue = abi.decode(data, (bool));
-            }
+        if (factory == address(0) || factory.code.length == 0) {
+            revert ErrorsLib.InvalidAssetAddress();
         }
+
+        (bool success, bytes memory data) = factory.staticcall(
+            abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
+        );
+        if (!success || data.length < 32) {
+            revert ErrorsLib.InvalidAssetAddress();
+        }
+        bool newValue = abi.decode(data, (bool));
         _strictProtectedBackingPriceAtInit = newValue;
         _strictProtectedBackingPricePinned = true;
         emit EventsLib.ParameterUpdated("strictProtectedBackingPrice", newValue ? 1 : 0);
