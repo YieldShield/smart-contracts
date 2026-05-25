@@ -71,6 +71,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Oracle for quote token USD price
     IOracleFeed public quoteTokenOracle;
 
+    address public scheduledQuoteTokenOracle;
+    uint256 public scheduledQuoteTokenOracleTime;
+
     /// @notice ERC20 scale for the quote token
     uint256 public immutable quoteTokenScale;
 
@@ -88,11 +91,18 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted with the old/new quote-token prices observed during an oracle swap (L-6)
     event QuoteTokenOracleSwapPrices(uint256 oldPrice, uint256 newPrice, uint256 deviationBps);
+    event QuoteTokenOracleFailoverScheduled(address indexed newOracle, uint256 executableAt);
+    event QuoteTokenOracleFailoverCancelled(address indexed newOracle);
 
     /// @notice Maximum allowed deviation between old and new quote-token oracle prices at swap-time
     uint256 public constant MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS = 1000; // 10%
+    uint256 public constant QUOTE_ORACLE_FAILOVER_DELAY = 1 days;
+    uint256 public constant QUOTE_ORACLE_FAILOVER_EXPIRY = 7 days;
 
     error QuoteOracleSwapDeviationTooHigh(uint256 oldPrice, uint256 newPrice, uint256 deviationBps);
+    error QuoteOracleFailoverNotScheduled();
+    error QuoteOracleFailoverTooEarly(uint256 executableAt);
+    error QuoteOracleFailoverExpired(uint256 expiredAt);
 
     /// @notice Emitted when minimum average liquidity is updated
     event MinimumAverageLiquidityUpdated(uint128 oldMinimum, uint128 newMinimum);
@@ -268,7 +278,44 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         }
 
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
+        scheduledQuoteTokenOracle = address(0);
+        scheduledQuoteTokenOracleTime = 0;
         emit QuoteTokenOracleUpdated(oldOracle, _quoteTokenOracle);
+    }
+
+    function scheduleQuoteTokenOracleFailover(address _quoteTokenOracle) external onlyOwner {
+        if (_quoteTokenOracle == address(0)) revert("Invalid quote token oracle");
+        uint256 newPrice = IOracleFeed(_quoteTokenOracle).getPrice(quoteToken);
+        if (newPrice == 0) revert PriceTruncatedToZero(quoteToken);
+
+        scheduledQuoteTokenOracle = _quoteTokenOracle;
+        scheduledQuoteTokenOracleTime = block.timestamp + QUOTE_ORACLE_FAILOVER_DELAY;
+        emit QuoteTokenOracleFailoverScheduled(_quoteTokenOracle, scheduledQuoteTokenOracleTime);
+    }
+
+    function cancelQuoteTokenOracleFailover() external onlyOwner {
+        address scheduled = scheduledQuoteTokenOracle;
+        scheduledQuoteTokenOracle = address(0);
+        scheduledQuoteTokenOracleTime = 0;
+        emit QuoteTokenOracleFailoverCancelled(scheduled);
+    }
+
+    function executeQuoteTokenOracleFailover() external onlyOwner {
+        address newOracle = scheduledQuoteTokenOracle;
+        uint256 executableAt = scheduledQuoteTokenOracleTime;
+        if (newOracle == address(0) || executableAt == 0) revert QuoteOracleFailoverNotScheduled();
+        if (block.timestamp < executableAt) revert QuoteOracleFailoverTooEarly(executableAt);
+        uint256 expiresAt = executableAt + QUOTE_ORACLE_FAILOVER_EXPIRY;
+        if (block.timestamp > expiresAt) revert QuoteOracleFailoverExpired(expiresAt);
+
+        uint256 newPrice = IOracleFeed(newOracle).getPrice(quoteToken);
+        if (newPrice == 0) revert PriceTruncatedToZero(quoteToken);
+
+        address oldOracle = address(quoteTokenOracle);
+        quoteTokenOracle = IOracleFeed(newOracle);
+        scheduledQuoteTokenOracle = address(0);
+        scheduledQuoteTokenOracleTime = 0;
+        emit QuoteTokenOracleUpdated(oldOracle, newOracle);
     }
 
     function _absoluteDeviationBps(uint256 a, uint256 b) internal pure returns (uint256) {
