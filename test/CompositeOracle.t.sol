@@ -269,12 +269,11 @@ contract CompositeOracleTest is Test {
         staleOracle.setPrice(address(underlyingAsset), 1e8);
 
         ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(staleOracle));
-        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
-
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(vault));
+        uint256 minSupply = erc4626Feed.MIN_VAULT_SHARE_COUNT() * 1e18;
         underlyingAsset.mint(address(this), minSupply);
         underlyingAsset.approve(address(vault), minSupply);
         vault.deposit(minSupply, address(this));
+        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
 
         compositeOracle.setTokenOracleFeedWithType(address(vault), address(erc4626Feed), "erc4626");
 

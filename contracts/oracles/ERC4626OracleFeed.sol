@@ -164,6 +164,8 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint8 shareDecimals = _getTokenDecimals(vault);
         uint8 underlyingDecimals = _getTokenDecimals(underlying);
         uint256 shareUnit = _getScaleFactor(vault, shareDecimals);
+        uint256 minimumSupply = _getMinimumVaultSupply(vault, shareDecimals, shareUnit);
+        _requireMinimumVaultSupply(vault, minimumSupply);
         uint256 referenceAssetsPerShare = IERC4626(vault).convertToAssets(shareUnit);
 
         vaultToUnderlying[vault] = underlying;
@@ -171,7 +173,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             underlying: underlying,
             shareUnit: shareUnit,
             underlyingUnit: _getScaleFactor(underlying, underlyingDecimals),
-            minimumSupply: _getMinimumVaultSupply(vault, shareDecimals, shareUnit),
+            minimumSupply: minimumSupply,
             referenceAssetsPerShare: referenceAssetsPerShare,
             maxSharePriceDeviationBps: DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS
         });
@@ -183,6 +185,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @param vault Address of the registered vault
     function refreshVaultSharePriceReference(address vault) external onlyOwner {
         VaultConfig storage config = _getVaultConfigStorage(vault);
+        _requireMinimumVaultSupply(vault, config.minimumSupply);
         uint256 newReference = IERC4626(vault).convertToAssets(config.shareUnit);
         uint256 oldReference = config.referenceAssetsPerShare;
         config.referenceAssetsPerShare = newReference;
@@ -347,9 +350,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         returns (uint256)
     {
         uint256 totalSupply = IERC4626(vault).totalSupply();
-        if (totalSupply < config.minimumSupply) {
-            revert InsufficientVaultLiquidity(vault, totalSupply, config.minimumSupply);
-        }
+        _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
 
         uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
@@ -466,6 +467,16 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             revert UnsupportedTokenDecimals(vault, shareDecimals);
         }
         return shareUnit * MIN_VAULT_SHARE_COUNT;
+    }
+
+    function _requireMinimumVaultSupply(address vault, uint256 minimumSupply) internal view {
+        _requireMinimumVaultSupply(vault, minimumSupply, IERC4626(vault).totalSupply());
+    }
+
+    function _requireMinimumVaultSupply(address vault, uint256 minimumSupply, uint256 totalSupply) internal pure {
+        if (totalSupply < minimumSupply) {
+            revert InsufficientVaultLiquidity(vault, totalSupply, minimumSupply);
+        }
     }
 
     /// @notice Check if underlying oracle price is stale

@@ -47,6 +47,14 @@ contract GauntletUSDCPrimeTest is Test {
 
         // Deploy ERC4626OracleFeed for NAV-based pricing
         erc4626Feed = new ERC4626OracleFeed(address(mockOracle));
+
+        // Deposit enough to meet the vault's native minimum share threshold.
+        // Since shares are 18 decimals and USDC is 6 decimals, at 1:1 rate:
+        // 1000e18 shares needs 1000e6 USDC (1000 USDC).
+        uint256 initialDepositUSDC = 1000e6;
+        usdc.mint(owner, initialDepositUSDC);
+        usdc.approve(address(gtusdc), initialDepositUSDC);
+        gtusdc.deposit(initialDepositUSDC, owner);
         erc4626Feed.registerVault(address(gtusdc), address(usdc));
 
         // Deploy CompositeOracle with dual-feed support
@@ -57,14 +65,6 @@ contract GauntletUSDCPrimeTest is Test {
         // Fund test accounts with USDC
         usdc.mint(alice, 100000e6); // 100,000 USDC
         usdc.mint(bob, 100000e6);
-
-        // Deposit enough to meet the vault's native minimum share threshold.
-        // Since shares are 18 decimals and USDC is 6 decimals, at 1:1 rate:
-        // 1000e18 shares needs 1000e6 USDC (1000 USDC).
-        uint256 initialDepositUSDC = 1000e6;
-        usdc.mint(owner, initialDepositUSDC);
-        usdc.approve(address(gtusdc), initialDepositUSDC);
-        gtusdc.deposit(initialDepositUSDC, owner);
     }
 
     // ============ Vault Basic Tests ============

@@ -10,6 +10,8 @@ import { MockERC4626WithDecimalsOffset } from "../contracts/mocks/MockERC4626Wit
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 contract ERC4626OracleFeedTest is Test {
     ERC4626OracleFeed public erc4626Feed;
@@ -39,15 +41,28 @@ contract ERC4626OracleFeedTest is Test {
         // Deploy ERC4626 oracle feed
         erc4626Feed = new ERC4626OracleFeed(address(underlyingOracle));
 
-        // Register vault
-        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
+        _seedAndRegister(IERC20(address(underlyingAsset)), IERC4626(address(vault)));
+    }
 
-        // Deposit enough to meet the native minimum share threshold for this vault.
-        // This ensures basic tests pass the share inflation protection
-        uint256 depositAmount = erc4626Feed.minimumVaultSupply(address(vault));
-        underlyingAsset.mint(address(this), depositAmount);
-        underlyingAsset.approve(address(vault), depositAmount);
-        vault.deposit(depositAmount, address(this));
+    function _minimumSupplyForVault(address targetVault) internal view returns (uint256) {
+        return erc4626Feed.MIN_VAULT_SHARE_COUNT() * (10 ** IERC20Metadata(targetVault).decimals());
+    }
+
+    function _seedVaultToMinimum(IERC20 asset, IERC4626 targetVault) internal returns (uint256 minimumShares) {
+        minimumShares = _minimumSupplyForVault(address(targetVault));
+        _seedVaultShares(asset, targetVault, minimumShares);
+    }
+
+    function _seedVaultShares(IERC20 asset, IERC4626 targetVault, uint256 shares) internal {
+        uint256 assets = targetVault.previewMint(shares);
+        deal(address(asset), address(this), asset.balanceOf(address(this)) + assets);
+        asset.approve(address(targetVault), assets);
+        targetVault.mint(shares, address(this));
+    }
+
+    function _seedAndRegister(IERC20 asset, IERC4626 targetVault) internal returns (uint256 minimumShares) {
+        minimumShares = _seedVaultToMinimum(asset, targetVault);
+        erc4626Feed.registerVault(address(targetVault), address(asset));
     }
 
     // ============ Initialization Tests ============
@@ -70,9 +85,9 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 newVault = new MockERC4626(IERC20(address(newAsset)), "New Vault", "NV");
         underlyingOracle.setPrice(address(newAsset), 1e8);
 
+        _seedVaultToMinimum(IERC20(address(newAsset)), IERC4626(address(newVault)));
         vm.expectEmit(true, true, false, true);
         emit VaultRegistered(address(newVault), address(newAsset));
-
         erc4626Feed.registerVault(address(newVault), address(newAsset));
 
         assertEq(erc4626Feed.vaultToUnderlying(address(newVault)), address(newAsset));
@@ -310,6 +325,19 @@ contract ERC4626OracleFeedTest is Test {
         assertApproxEqAbs(erc4626Feed.getPrice(address(vault)), 2e8, 1);
     }
 
+    function test_RefreshVaultSharePriceReference_RevertsBelowMinimumSupply() public {
+        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(vault));
+        vault.burnShares(address(this), 1);
+        underlyingAsset.mint(address(vault), minSupply);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(vault), minSupply - 1, minSupply
+            )
+        );
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+    }
+
     function test_GetPrice_RevertsOnUnregisteredVault() public {
         address unregisteredVault = address(0x9999);
 
@@ -363,13 +391,7 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 vault2 = new MockERC4626(IERC20(address(asset2)), "Vault 2", "V2");
         underlyingOracle.setPrice(address(asset2), 2e8); // $2.00
 
-        erc4626Feed.registerVault(address(vault2), address(asset2));
-
-        // Fund vault2 to meet minimum supply requirement
-        uint256 depositAmount = erc4626Feed.minimumVaultSupply(address(vault2));
-        asset2.mint(address(this), depositAmount);
-        asset2.approve(address(vault2), depositAmount);
-        vault2.deposit(depositAmount, address(this));
+        _seedAndRegister(IERC20(address(asset2)), IERC4626(address(vault2)));
 
         // Check prices
         uint256 price1 = erc4626Feed.getPrice(address(vault));
@@ -387,15 +409,9 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 lowSupplyVault = new MockERC4626(IERC20(address(lowSupplyAsset)), "Low Supply Vault", "LSV");
         underlyingOracle.setPrice(address(lowSupplyAsset), 1e8);
 
-        erc4626Feed.registerVault(address(lowSupplyVault), address(lowSupplyAsset));
-
-        // Deposit only 100 shares, below the native minimum supply threshold.
+        uint256 minSupply = _seedAndRegister(IERC20(address(lowSupplyAsset)), IERC4626(address(lowSupplyVault)));
         uint256 smallDeposit = 100e18;
-        lowSupplyAsset.mint(address(this), smallDeposit);
-        lowSupplyAsset.approve(address(lowSupplyVault), smallDeposit);
-        lowSupplyVault.deposit(smallDeposit, address(this));
-
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(lowSupplyVault));
+        lowSupplyVault.burnShares(address(this), minSupply - smallDeposit);
 
         // Should revert due to insufficient liquidity
         vm.expectRevert(
@@ -412,10 +428,8 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 emptyVault = new MockERC4626(IERC20(address(emptyAsset)), "Empty Vault", "EV");
         underlyingOracle.setPrice(address(emptyAsset), 1e8);
 
-        erc4626Feed.registerVault(address(emptyVault), address(emptyAsset));
-
-        // Should revert due to insufficient liquidity (0 < minimum vault supply)
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(emptyVault));
+        uint256 minSupply = _seedAndRegister(IERC20(address(emptyAsset)), IERC4626(address(emptyVault)));
+        emptyVault.burnShares(address(this), minSupply);
         vm.expectRevert(
             abi.encodeWithSelector(
                 ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(emptyVault), 0, minSupply
@@ -430,12 +444,7 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 minVault = new MockERC4626(IERC20(address(minAsset)), "Min Vault", "MV");
         underlyingOracle.setPrice(address(minAsset), 1e8);
 
-        erc4626Feed.registerVault(address(minVault), address(minAsset));
-
-        uint256 exactMin = erc4626Feed.minimumVaultSupply(address(minVault));
-        minAsset.mint(address(this), exactMin);
-        minAsset.approve(address(minVault), exactMin);
-        minVault.deposit(exactMin, address(this));
+        _seedAndRegister(IERC20(address(minAsset)), IERC4626(address(minVault)));
 
         // Should succeed at exact minimum
         uint256 price = erc4626Feed.getPrice(address(minVault));
@@ -459,25 +468,20 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 attackVault = new MockERC4626(IERC20(address(attackAsset)), "Attack Vault", "AV");
         underlyingOracle.setPrice(address(attackAsset), 1e8);
 
-        erc4626Feed.registerVault(address(attackVault), address(attackAsset));
-
         // Attacker deposits tiny amount (1 wei would be ideal, but we use 1e18 for realistic test)
         uint256 tinyDeposit = 1e18; // 1 share
         attackAsset.mint(address(this), tinyDeposit);
         attackAsset.approve(address(attackVault), tinyDeposit);
         attackVault.deposit(tinyDeposit, address(this));
 
-        // Even with donation attack, oracle will reject due to low supply
-        // Note: In real attack, attacker would donate assets to inflate ratio.
-        // The oracle still rejects because the share supply is below the vault-specific threshold.
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(attackVault));
+        uint256 minSupply = _minimumSupplyForVault(address(attackVault));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(attackVault), tinyDeposit, minSupply
             )
         );
-        erc4626Feed.getPrice(address(attackVault));
+        erc4626Feed.registerVault(address(attackVault), address(attackAsset));
     }
 
     function test_MIN_VAULT_SHARE_COUNT_Value() public view {
@@ -491,24 +495,20 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 referenceAsset = new MockERC20("Reference Asset", "RA");
         MockERC4626 referenceVault = new MockERC4626(IERC20(address(referenceAsset)), "Reference Vault", "RV");
         underlyingOracle.setPrice(address(referenceAsset), 1e8);
-        erc4626Feed.registerVault(address(referenceVault), address(referenceAsset));
+        uint256 minSupply = _seedAndRegister(IERC20(address(referenceAsset)), IERC4626(address(referenceVault)));
 
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(referenceVault));
+        assertEq(erc4626Feed.minimumVaultSupply(address(referenceVault)), minSupply);
 
         // Test with minimum supply - 1 (should revert)
         MockERC20 asset1 = new MockERC20("Asset 1", "A1");
         MockERC4626 vault1 = new MockERC4626(IERC20(address(asset1)), "Vault 1", "V1");
         underlyingOracle.setPrice(address(asset1), 1e8);
-        erc4626Feed.registerVault(address(vault1), address(asset1));
-
-        uint256 deposit1 = minSupply - 1;
-        asset1.mint(address(this), deposit1);
-        asset1.approve(address(vault1), deposit1);
-        vault1.deposit(deposit1, address(this));
+        _seedAndRegister(IERC20(address(asset1)), IERC4626(address(vault1)));
+        vault1.burnShares(address(this), 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(vault1), deposit1, minSupply
+                ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(vault1), minSupply - 1, minSupply
             )
         );
         erc4626Feed.getPrice(address(vault1));
@@ -517,12 +517,7 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 asset2 = new MockERC20("Asset 2", "A2");
         MockERC4626 vault2 = new MockERC4626(IERC20(address(asset2)), "Vault 2", "V2");
         underlyingOracle.setPrice(address(asset2), 1e8);
-        erc4626Feed.registerVault(address(vault2), address(asset2));
-
-        uint256 deposit2 = minSupply;
-        asset2.mint(address(this), deposit2);
-        asset2.approve(address(vault2), deposit2);
-        vault2.deposit(deposit2, address(this));
+        _seedAndRegister(IERC20(address(asset2)), IERC4626(address(vault2)));
 
         uint256 price2 = erc4626Feed.getPrice(address(vault2));
         assertEq(price2, 1e8, "Should succeed at exact minimum");
@@ -531,12 +526,8 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 asset3 = new MockERC20("Asset 3", "A3");
         MockERC4626 vault3 = new MockERC4626(IERC20(address(asset3)), "Vault 3", "V3");
         underlyingOracle.setPrice(address(asset3), 1e8);
+        _seedVaultShares(IERC20(address(asset3)), IERC4626(address(vault3)), minSupply + 1);
         erc4626Feed.registerVault(address(vault3), address(asset3));
-
-        uint256 deposit3 = minSupply + 1;
-        asset3.mint(address(this), deposit3);
-        asset3.approve(address(vault3), deposit3);
-        vault3.deposit(deposit3, address(this));
 
         uint256 price3 = erc4626Feed.getPrice(address(vault3));
         assertEq(price3, 1e8, "Should succeed at minimum + 1");
@@ -545,12 +536,8 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 asset4 = new MockERC20("Asset 4", "A4");
         MockERC4626 vault4 = new MockERC4626(IERC20(address(asset4)), "Vault 4", "V4");
         underlyingOracle.setPrice(address(asset4), 1e8);
+        _seedVaultShares(IERC20(address(asset4)), IERC4626(address(vault4)), minSupply * 2);
         erc4626Feed.registerVault(address(vault4), address(asset4));
-
-        uint256 deposit4 = minSupply * 2;
-        asset4.mint(address(this), deposit4);
-        asset4.approve(address(vault4), deposit4);
-        vault4.deposit(deposit4, address(this));
 
         uint256 price4 = erc4626Feed.getPrice(address(vault4));
         assertEq(price4, 1e8, "Should succeed at 2x minimum");
@@ -559,12 +546,8 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 asset5 = new MockERC20("Asset 5", "A5");
         MockERC4626 vault5 = new MockERC4626(IERC20(address(asset5)), "Vault 5", "V5");
         underlyingOracle.setPrice(address(asset5), 1e8);
+        _seedVaultShares(IERC20(address(asset5)), IERC4626(address(vault5)), minSupply * 10);
         erc4626Feed.registerVault(address(vault5), address(asset5));
-
-        uint256 deposit5 = minSupply * 10;
-        asset5.mint(address(this), deposit5);
-        asset5.approve(address(vault5), deposit5);
-        vault5.deposit(deposit5, address(this));
 
         uint256 price5 = erc4626Feed.getPrice(address(vault5));
         assertEq(price5, 1e8, "Should succeed at 10x minimum");
@@ -575,9 +558,8 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 attackAsset = new MockERC20("Attack Asset", "ATK");
         MockERC4626 attackVault = new MockERC4626(IERC20(address(attackAsset)), "Attack Vault", "AV");
         underlyingOracle.setPrice(address(attackAsset), 1e8);
-        erc4626Feed.registerVault(address(attackVault), address(attackAsset));
 
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(attackVault));
+        uint256 minSupply = _minimumSupplyForVault(address(attackVault));
 
         // Attacker deposits minimal amount (just below threshold)
         uint256 tinyDeposit = minSupply - 1;
@@ -600,7 +582,7 @@ contract ERC4626OracleFeedTest is Test {
                 minSupply
             )
         );
-        erc4626Feed.getPrice(address(attackVault));
+        erc4626Feed.registerVault(address(attackVault), address(attackAsset));
 
         // Verify that totalSupply check happens before price calculation
         // Even with inflated assets, low supply is caught first
@@ -613,13 +595,10 @@ contract ERC4626OracleFeedTest is Test {
         MockERC20 edgeAsset = new MockERC20("Edge Asset", "EA");
         MockERC4626 edgeVault = new MockERC4626(IERC20(address(edgeAsset)), "Edge Vault", "EV");
         underlyingOracle.setPrice(address(edgeAsset), 1e8);
-        erc4626Feed.registerVault(address(edgeVault), address(edgeAsset));
-
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(edgeVault));
+        uint256 minSupply = _minimumSupplyForVault(address(edgeVault));
         uint256 edgeDeposit = minSupply + 1; // Just above threshold
-        edgeAsset.mint(address(this), edgeDeposit);
-        edgeAsset.approve(address(edgeVault), edgeDeposit);
-        edgeVault.deposit(edgeDeposit, address(this));
+        _seedVaultShares(IERC20(address(edgeAsset)), IERC4626(address(edgeVault)), edgeDeposit);
+        erc4626Feed.registerVault(address(edgeVault), address(edgeAsset));
 
         // Should succeed at boundary
         uint256 price = erc4626Feed.getPrice(address(edgeVault));
@@ -643,7 +622,9 @@ contract ERC4626OracleFeedTest is Test {
             new MockERC4626WithDecimalsOffset(IERC20(address(usdc)), "Offset Vault", "ovUSDC", 12);
 
         underlyingOracle.setPrice(address(usdc), UNDERLYING_PRICE);
+        _seedVaultToMinimum(IERC20(address(usdc)), IERC4626(address(sixDecimalVault)));
         erc4626Feed.registerVault(address(sixDecimalVault), address(usdc));
+        _seedVaultToMinimum(IERC20(address(usdc)), IERC4626(address(offsetVault)));
         erc4626Feed.registerVault(address(offsetVault), address(usdc));
 
         assertEq(erc4626Feed.minimumVaultSupply(address(sixDecimalVault)), 1000e6);
@@ -655,12 +636,7 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 sixDecimalVault = new MockERC4626(IERC20(address(usdc)), "USDC Vault", "vUSDC");
 
         underlyingOracle.setPrice(address(usdc), UNDERLYING_PRICE);
-        erc4626Feed.registerVault(address(sixDecimalVault), address(usdc));
-
-        uint256 depositAmount = erc4626Feed.minimumVaultSupply(address(sixDecimalVault));
-        usdc.mint(address(this), depositAmount);
-        usdc.approve(address(sixDecimalVault), depositAmount);
-        sixDecimalVault.deposit(depositAmount, address(this));
+        _seedAndRegister(IERC20(address(usdc)), IERC4626(address(sixDecimalVault)));
 
         uint256 price = erc4626Feed.getPrice(address(sixDecimalVault));
         assertEq(price, UNDERLYING_PRICE);
@@ -672,14 +648,7 @@ contract ERC4626OracleFeedTest is Test {
             new MockERC4626WithDecimalsOffset(IERC20(address(usdc)), "Offset Vault", "ovUSDC", 12);
 
         underlyingOracle.setPrice(address(usdc), 2e8);
-        erc4626Feed.registerVault(address(offsetVault), address(usdc));
-
-        uint256 minimumShares = erc4626Feed.minimumVaultSupply(address(offsetVault));
-        uint256 depositAmount = offsetVault.previewMint(minimumShares);
-
-        usdc.mint(address(this), depositAmount);
-        usdc.approve(address(offsetVault), depositAmount);
-        offsetVault.mint(minimumShares, address(this));
+        _seedAndRegister(IERC20(address(usdc)), IERC4626(address(offsetVault)));
 
         uint256 price = erc4626Feed.getPrice(address(offsetVault));
         assertEq(price, 2e8);
@@ -690,19 +659,14 @@ contract ERC4626OracleFeedTest is Test {
         MockERC4626 sixDecimalVault = new MockERC4626(IERC20(address(usdc)), "USDC Vault", "vUSDC");
 
         underlyingOracle.setPrice(address(usdc), UNDERLYING_PRICE);
-        erc4626Feed.registerVault(address(sixDecimalVault), address(usdc));
-
-        uint256 minSupply = erc4626Feed.minimumVaultSupply(address(sixDecimalVault));
-        uint256 depositAmount = minSupply - 1;
-        usdc.mint(address(this), depositAmount);
-        usdc.approve(address(sixDecimalVault), depositAmount);
-        sixDecimalVault.deposit(depositAmount, address(this));
+        uint256 minSupply = _seedAndRegister(IERC20(address(usdc)), IERC4626(address(sixDecimalVault)));
+        sixDecimalVault.burnShares(address(this), 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 ERC4626OracleFeed.InsufficientVaultLiquidity.selector,
                 address(sixDecimalVault),
-                depositAmount,
+                minSupply - 1,
                 minSupply
             )
         );

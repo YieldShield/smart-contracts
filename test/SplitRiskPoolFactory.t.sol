@@ -787,6 +787,10 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         erc4626Feed.transferOwnership(address(factory));
         factory.setManagedERC4626OracleFeed(address(erc4626Feed));
 
+        uint256 minShares = erc4626Feed.MIN_VAULT_SHARE_COUNT() * (10 ** tokenA.decimals());
+        tokenB.approve(address(tokenA), minShares);
+        tokenA.deposit(minShares, address(this));
+
         vm.prank(governanceTimelock);
         factory.registerERC4626Vault(address(tokenA), address(tokenB));
 
