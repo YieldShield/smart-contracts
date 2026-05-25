@@ -387,6 +387,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _assetsFromProtectorShares(shares, totalProtectorTokens, totalProtectorShares);
     }
 
+    /// @dev Converts native backing-token units into 18-decimal protector share units.
+    ///      Asset balances stay in native units; only shares are normalized so
+    ///      high-decimal backing tokens cannot make material shielded rewards
+    ///      round down to undistributable reward-per-share dust.
+    function _backingAmountToProtectorShares(uint256 amount) internal view returns (uint256 shares) {
+        if (amount == 0) return 0;
+
+        if (backingTokenDecimals == ConstantsLib.TOKEN_DECIMALS_UINT8) {
+            return amount;
+        }
+
+        if (backingTokenDecimals > ConstantsLib.TOKEN_DECIMALS_UINT8) {
+            uint256 divisor = 10 ** (backingTokenDecimals - ConstantsLib.TOKEN_DECIMALS_UINT8);
+            return amount / divisor;
+        }
+
+        uint256 multiplier = 10 ** (ConstantsLib.TOKEN_DECIMALS_UINT8 - backingTokenDecimals);
+        return amount * multiplier;
+    }
+
     /// @notice Returns the current backing-token claim for a protector position.
     function getProtectorPositionAmount(uint256 tokenId) public view returns (uint256) {
         uint256 shares = _getActiveProtectorPositionShares(tokenId);
@@ -1585,7 +1605,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 currentTotalShares = totalProtectorShares;
         uint256 sharesMinted = currentTotalShares == 0 || totalProtectorTokens == 0
-            ? received
+            ? _backingAmountToProtectorShares(received)
             : Math.mulDiv(received, currentTotalShares, totalProtectorTokens);
         if (sharesMinted == 0) revert ErrorsLib.InsufficientDepositAmount();
 
