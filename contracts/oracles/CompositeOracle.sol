@@ -1135,6 +1135,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (!_supportsCircuitBreaker(activeFeed, token)) {
             revert CircuitBreakerNotSupported(token, activeFeed);
         }
+        if (!_supportsStrictProtectedPrice(activeFeed, token)) {
+            revert CircuitBreakerNotSupported(token, activeFeed);
+        }
 
         uint256 price = IOracleFeed(activeFeed).getPrice(token);
         if (price == 0) {
@@ -1177,19 +1180,31 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed, strictCircuitBreakerRequired[token]);
     }
 
-    function _validateStrictCircuitBreakerConfig(address token, address primaryFeed, address backupFeed, bool)
+    function _validateStrictCircuitBreakerConfig(address token, address primaryFeed, address backupFeed, bool strictRequired)
         internal
         view
     {
         _requireCircuitBreakerSupport(token, primaryFeed);
+        if (strictRequired) {
+            _requireStrictProtectedPriceSupport(token, primaryFeed);
+        }
 
         if (backupFeed != address(0)) {
             _requireCircuitBreakerSupport(token, backupFeed);
+            if (strictRequired) {
+                _requireStrictProtectedPriceSupport(token, backupFeed);
+            }
         }
     }
 
     function _requireCircuitBreakerSupport(address token, address feed) internal view {
         if (!_supportsCircuitBreaker(feed, token)) {
+            revert CircuitBreakerNotSupported(token, feed);
+        }
+    }
+
+    function _requireStrictProtectedPriceSupport(address token, address feed) internal view {
+        if (!_supportsStrictProtectedPrice(feed, token)) {
             revert CircuitBreakerNotSupported(token, feed);
         }
     }
@@ -1221,6 +1236,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return unsafeData.length >= 32;
         }
         return unsafeData.length != 0;
+    }
+
+    function _supportsStrictProtectedPrice(address feed, address token) internal view returns (bool) {
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeWithSignature("supportsStrictProtectedPrice(address)", token));
+
+        if (!success || data.length == 0) {
+            return true;
+        }
+        if (data.length < 32) {
+            return false;
+        }
+        return abi.decode(data, (bool));
     }
 
     /// @notice Detect oracle type from feed description

@@ -56,6 +56,7 @@ library PoolOracleValidationLib {
 
             if (!strictSuccess || strictData.length < 32) revert ErrorsLib.InvalidAssetAddress();
             _validateDecodedPrice(strictData);
+            _validateStrictProtectedPriceSupport(oracle, backingToken);
             _validateCompositeConfiguredProtectedPrices(oracle, backingToken);
             return;
         }
@@ -108,11 +109,13 @@ library PoolOracleValidationLib {
 
         if (primaryFeed != address(0)) {
             _validateProtectedPriceSelector(primaryFeed, backingToken);
+            _validateStrictProtectedPriceSupport(primaryFeed, backingToken);
             _validateNonZeroOracleResponse(primaryFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
 
         if (isDualFeed && backupFeed != address(0)) {
             _validateProtectedPriceSelector(backupFeed, backingToken);
+            _validateStrictProtectedPriceSupport(backupFeed, backingToken);
             _validateNonZeroOracleResponse(backupFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
     }
@@ -123,6 +126,16 @@ library PoolOracleValidationLib {
         if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
 
         _validateDecodedPrice(data);
+    }
+
+    function _validateStrictProtectedPriceSupport(address oracle, address token) private view {
+        (bool success, bytes memory data) =
+            oracle.staticcall(abi.encodeWithSignature("supportsStrictProtectedPrice(address)", token));
+
+        if (!success || data.length == 0) {
+            return;
+        }
+        if (data.length < 32 || !abi.decode(data, (bool))) revert ErrorsLib.InvalidAssetAddress();
     }
 
     /// @dev Confirms the oracle advertises the safe/unsafe split (i.e. exposes the

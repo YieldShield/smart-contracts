@@ -353,6 +353,29 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         return _getPrice(token);
     }
 
+    /// @notice Whether this token feed satisfies the stricter protected-collateral policy.
+    /// @dev Non-strict consumers may accept Chainlink feeds without retrievable aggregator
+    ///      bounds. Strict backing collateral must have fresh usable bounds so pinned
+    ///      min/max-answer circuit-breaker values cannot be treated as valid prices.
+    function supportsStrictProtectedPrice(address token) external view returns (bool) {
+        if (!isTokenSupported[token]) {
+            return false;
+        }
+
+        int192 minA = tokenFeedMinAnswer[token];
+        int192 maxA = tokenFeedMaxAnswer[token];
+        if (minA == 0 && maxA == 0) {
+            return false;
+        }
+
+        address cachedAggregator = tokenFeedBoundsAggregator[token];
+        if (cachedAggregator == address(0)) {
+            return false;
+        }
+
+        return _resolveUnderlyingAggregator(address(tokenFeeds[token])) == cachedAggregator;
+    }
+
     function _getPrice(address token) internal view returns (uint256) {
         if (!isTokenSupported[token]) {
             revert TokenNotSupported(token);

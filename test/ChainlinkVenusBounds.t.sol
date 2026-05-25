@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 
 contract MockAggregatorBounds {
     int192 public minAnswer;
@@ -103,6 +104,7 @@ contract ChainlinkVenusBoundsTest is Test {
         assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
         assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
         assertEq(feed.tokenFeedBoundsAggregator(token), proxy.aggregator());
+        assertTrue(feed.supportsStrictProtectedPrice(token));
     }
 
     function test_removeTokenFeed_RequiresSchedule() public {
@@ -184,6 +186,7 @@ contract ChainlinkVenusBoundsTest is Test {
 
         assertEq(feed.tokenFeedMinAnswer(token), 0);
         assertEq(feed.tokenFeedMaxAnswer(token), 0);
+        assertFalse(feed.supportsStrictProtectedPrice(token));
         assertEq(feed.getPrice(token), 2_000e8, "price should still work without optional bounds");
 
         MockAggregatorBounds compatible = new MockAggregatorBounds(MIN_BOUND, MAX_BOUND);
@@ -192,6 +195,7 @@ contract ChainlinkVenusBoundsTest is Test {
 
         assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
         assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
+        assertTrue(feed.supportsStrictProtectedPrice(token));
     }
 
     // A1 (2026-05-19): Chainlink proxies can rotate the underlying aggregator
@@ -213,12 +217,14 @@ contract ChainlinkVenusBoundsTest is Test {
         // Until the protocol calls refresh, the cache still reflects the OLD bounds.
         assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND, "stale bound before refresh");
         assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND, "stale bound before refresh");
+        assertFalse(feed.supportsStrictProtectedPrice(token), "rotated bounds are not strict-safe before refresh");
 
         feed.refreshFeedBounds(token);
 
         assertEq(feed.tokenFeedMinAnswer(token), newMin, "refresh must pick up new aggregator's min");
         assertEq(feed.tokenFeedMaxAnswer(token), newMax, "refresh must pick up new aggregator's max");
         assertEq(feed.tokenFeedBoundsAggregator(token), address(rotated), "refresh must pin rotated aggregator");
+        assertTrue(feed.supportsStrictProtectedPrice(token));
     }
 
     function test_getPrice_RevertsWhenAggregatorRotatesBeforeRefresh() public {
@@ -254,5 +260,48 @@ contract ChainlinkVenusBoundsTest is Test {
         vm.prank(address(0xBEEF));
         vm.expectRevert();
         feed.refreshFeedBounds(token);
+    }
+
+    function test_compositeStrictRequirementRejectsChainlinkFeedWithoutBounds() public {
+        MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(2_000e8, 8);
+        feed.setTokenFeed(token, address(proxy));
+
+        CompositeOracle composite = new CompositeOracle();
+        composite.setTokenOracleFeed(token, address(feed));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, token, address(feed))
+        );
+        composite.setStrictCircuitBreakerRequired(token, true);
+    }
+
+    function test_compositeStrictRequirementAcceptsChainlinkFeedWithBounds() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+
+        CompositeOracle composite = new CompositeOracle();
+        composite.setTokenOracleFeed(token, address(feed));
+        composite.setStrictCircuitBreakerRequired(token, true);
+
+        assertTrue(composite.strictCircuitBreakerRequired(token));
+        assertEq(composite.getPriceWithStrictCircuitBreaker(token), 2_000e8);
+    }
+
+    function test_compositeStrictRequirementRejectsInactiveBackupWithoutBounds() public {
+        MockChainlinkProxyWithBounds boundedProxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(boundedProxy));
+
+        MockChainlinkProxyWithoutBounds unboundedProxy = new MockChainlinkProxyWithoutBounds(2_000e8, 8);
+        ChainlinkOracleFeed backupFeed = new ChainlinkOracleFeed(3600);
+        backupFeed.setTokenFeed(token, address(unboundedProxy));
+
+        CompositeOracle composite = new CompositeOracle();
+        composite.setTokenOracleFeed(token, address(feed));
+        composite.setStrictCircuitBreakerRequired(token, true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, token, address(backupFeed))
+        );
+        composite.setTokenOracleFeedDual(token, address(feed), address(backupFeed));
     }
 }
