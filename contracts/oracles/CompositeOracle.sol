@@ -1155,6 +1155,18 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
     }
 
+    /// @inheritdoc ICompositeOracle
+    function supportsStrictProtectedPrice(address token) external view override returns (bool) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) {
+            return false;
+        }
+
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+        return _supportsStrictProtectedPrice(activeFeed, token);
+    }
+
     // ============ Internal Helper Functions ============
 
     function _getValueForPrice(address token, uint256 amount, uint256 price) internal view returns (uint256) {
@@ -1188,10 +1200,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed, strictCircuitBreakerRequired[token]);
     }
 
-    function _validateStrictCircuitBreakerConfig(address token, address primaryFeed, address backupFeed, bool strictRequired)
-        internal
-        view
-    {
+    function _validateStrictCircuitBreakerConfig(
+        address token,
+        address primaryFeed,
+        address backupFeed,
+        bool strictRequired
+    ) internal view {
         _requireCircuitBreakerSupport(token, primaryFeed);
         if (strictRequired) {
             _requireStrictProtectedPriceSupport(token, primaryFeed);
@@ -1247,15 +1261,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     function _supportsStrictProtectedPrice(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) {
+            return false;
+        }
+
         (bool success, bytes memory data) =
             feed.staticcall(abi.encodeWithSignature("supportsStrictProtectedPrice(address)", token));
 
-        if (!success || data.length == 0) {
-            return true;
-        }
-        if (data.length < 32) {
-            return false;
-        }
+        if (!success || data.length < 32) return false;
         return abi.decode(data, (bool));
     }
 

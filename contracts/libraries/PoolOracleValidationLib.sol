@@ -132,10 +132,8 @@ library PoolOracleValidationLib {
         (bool success, bytes memory data) =
             oracle.staticcall(abi.encodeWithSignature("supportsStrictProtectedPrice(address)", token));
 
-        if (!success || data.length == 0) {
-            return;
-        }
-        if (data.length < 32 || !abi.decode(data, (bool))) revert ErrorsLib.InvalidAssetAddress();
+        if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
+        if (!abi.decode(data, (bool))) revert ErrorsLib.InvalidAssetAddress();
     }
 
     /// @dev Confirms the oracle advertises the safe/unsafe split (i.e. exposes the

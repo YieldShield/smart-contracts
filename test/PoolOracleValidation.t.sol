@@ -284,6 +284,32 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
             address(fallbackCompositeOracle)
         );
     }
+
+    function testUpdatePoolConfigRevertsWhenStrictCompositeOmitsSupportSelector() public {
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
+
+        MockFallbackCompositeOracle fallbackCompositeOracle = new MockFallbackCompositeOracle();
+        fallbackCompositeOracle.setTokenOracleFeed(address(shieldedToken), address(oracle));
+        fallbackCompositeOracle.setTokenOracleFeed(address(backingToken), address(oracle));
+
+        vm.prank(governance);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        pool.updatePoolConfig(
+            1e18,
+            1000e18,
+            1e18,
+            1000e18,
+            1000000e8,
+            1 days,
+            28 days,
+            100,
+            protocolFeeRecipient,
+            address(fallbackCompositeOracle)
+        );
+    }
 }
 
 contract MockPriceOnlyOracle {

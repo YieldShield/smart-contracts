@@ -942,6 +942,19 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
+    function test_SetStrictCircuitBreakerRequired_RevertsWhenFeedOmitsStrictSupportSelector() public {
+        MockStalenessOracleFeed missingStrictSupportFeed = new MockStalenessOracleFeed();
+        missingStrictSupportFeed.setPrice(address(token), PRIMARY_PRICE);
+        compositeOracle.setTokenOracleFeed(address(token), address(missingStrictSupportFeed));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(missingStrictSupportFeed)
+            )
+        );
+        compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
+    }
+
     function test_SetDualFeed_RevertsWhenStrictTokenUsesUnsupportedBackup() public {
         compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
