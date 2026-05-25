@@ -112,6 +112,51 @@ function shouldRequireAllPriceUpdates({ strict, allowPartial, chainId }) {
     return !LOCAL_CHAIN_IDS.has(String(chainId));
 }
 
+function normalizeFeedId(feedId) {
+    return String(feedId || "").toLowerCase();
+}
+
+function classifyConfiguredTokenRefreshes({
+    configuredTokens,
+    updates,
+    failures = [],
+}) {
+    const updatedFeedIds = new Set(
+        updates.map((entry) => normalizeFeedId(entry.feedId)),
+    );
+    const failedFeedIds = new Set(
+        failures.map((entry) => normalizeFeedId(entry.feedId)),
+    );
+
+    const refreshedTokens = [];
+    const skippedTokens = [];
+
+    for (const token of configuredTokens) {
+        const requiredFeedIds = [token.actualFeedId];
+        if (token.actualQuoteFeedId) {
+            requiredFeedIds.push(token.actualQuoteFeedId);
+        }
+
+        const missingFeedIds = requiredFeedIds.filter(
+            (feedId) => !updatedFeedIds.has(normalizeFeedId(feedId)),
+        );
+
+        if (missingFeedIds.length === 0) {
+            refreshedTokens.push(token);
+        } else {
+            skippedTokens.push({
+                token,
+                missingFeedIds,
+                failedFeedIds: missingFeedIds.filter((feedId) =>
+                    failedFeedIds.has(normalizeFeedId(feedId)),
+                ),
+            });
+        }
+    }
+
+    return { refreshedTokens, skippedTokens };
+}
+
 function isZeroHash(value) {
     return !value || value.toLowerCase() === ethers.ZeroHash.toLowerCase();
 }
@@ -866,13 +911,34 @@ async function main() {
         await updatePriceFeeds(oracleContract, priceUpdateData, signer);
 
         console.log("\n✅ Price feeds updated successfully!");
+        const { refreshedTokens, skippedTokens } =
+            classifyConfiguredTokenRefreshes({
+                configuredTokens,
+                updates,
+                failures,
+            });
         console.log("\nRefreshed Pyth feeds for:");
-        configuredTokens.forEach((token) => {
+        if (refreshedTokens.length === 0) {
+            console.log("  (none)");
+        }
+        refreshedTokens.forEach((token) => {
             console.log(`  - ${token.name}: ${token.actualFeedId}`);
             if (token.actualQuoteFeedId) {
                 console.log(`    quote: ${token.actualQuoteFeedId}`);
             }
         });
+        if (skippedTokens.length > 0) {
+            console.warn("\nSkipped configured token feeds:");
+            skippedTokens.forEach(({ token, missingFeedIds, failedFeedIds }) => {
+                const failedSuffix =
+                    failedFeedIds.length > 0
+                        ? ` (failed: ${failedFeedIds.join(", ")})`
+                        : "";
+                console.warn(
+                    `  - ${token.name}: missing update for ${missingFeedIds.join(", ")}${failedSuffix}`,
+                );
+            });
+        }
     } catch (error) {
         console.error("\n❌ Failed to update price feeds:", error.message);
         process.exit(1);
@@ -887,6 +953,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    classifyConfiguredTokenRefreshes,
     collectTokenCandidates,
     discoverConfiguredPythTokens,
     fetchPriceUpdateData,

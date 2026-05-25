@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const {
+    classifyConfiguredTokenRefreshes,
     discoverConfiguredPythTokens,
     parseCliArgs,
     shouldRequireAllPriceUpdates,
@@ -83,6 +84,54 @@ test("shouldRequireAllPriceUpdates honors explicit flags", () => {
         }),
         false,
     );
+});
+
+test("classifyConfiguredTokenRefreshes separates refreshed and skipped feeds", () => {
+    const baseA =
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const baseB =
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const quoteB =
+        "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const baseC =
+        "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const quoteC =
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const baseD =
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+    const { refreshedTokens, skippedTokens } =
+        classifyConfiguredTokenRefreshes({
+            configuredTokens: [
+                { name: "A", actualFeedId: baseA },
+                { name: "B", actualFeedId: baseB, actualQuoteFeedId: quoteB },
+                { name: "C", actualFeedId: baseC, actualQuoteFeedId: quoteC },
+                { name: "D", actualFeedId: baseD },
+            ],
+            updates: [
+                { feedId: baseA, update: "0x01" },
+                { feedId: baseB.toUpperCase(), update: "0x02" },
+                { feedId: baseC, update: "0x03" },
+                { feedId: quoteC, update: "0x04" },
+            ],
+            failures: [
+                { feedId: quoteB, reason: "missing quote" },
+                { feedId: baseD, reason: "missing base" },
+            ],
+        });
+
+    assert.deepEqual(
+        refreshedTokens.map((token) => token.name),
+        ["A", "C"],
+    );
+    assert.deepEqual(
+        skippedTokens.map(({ token }) => token.name),
+        ["B", "D"],
+    );
+    assert.deepEqual(skippedTokens[0].missingFeedIds, [quoteB]);
+    assert.deepEqual(skippedTokens[0].failedFeedIds, [quoteB]);
+    assert.deepEqual(skippedTokens[1].missingFeedIds, [baseD]);
+    assert.deepEqual(skippedTokens[1].failedFeedIds, [baseD]);
 });
 
 test("discoverConfiguredPythTokens includes governance-added factory tokens absent from registry", async () => {
