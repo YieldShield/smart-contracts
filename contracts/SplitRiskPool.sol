@@ -136,6 +136,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///         should treat that as a probe regression rather than a
     ///         deliberate downgrade.
     event StrictPricingProbeFailed(address indexed token, address indexed factory);
+    event ShieldedTokenTransferIntegrityBroken(address indexed token, uint256 nominalAmount, uint256 receivedAmount);
 
     /* Modifiers */
     modifier onlyShieldNFTOwner(uint256 tokenId) {
@@ -939,6 +940,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         received = afterBal - beforeBal;
     }
 
+    function _markShieldedTransferIntegrityIfReduced(uint256 nominalAmount, uint256 receivedAmount) internal {
+        if (receivedAmount < nominalAmount && !shieldedTokenTransferIntegrityBroken) {
+            shieldedTokenTransferIntegrityBroken = true;
+            emit ShieldedTokenTransferIntegrityBroken(SHIELDED_TOKEN, nominalAmount, receivedAmount);
+        }
+    }
+
+    function _requireUntaxedShieldedSelfTransfer(uint256 nominalAmount) internal {
+        if (nominalAmount == 0) {
+            return;
+        }
+
+        uint256 beforeBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
+        SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), address(this), nominalAmount);
+        uint256 afterBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
+        if (afterBal != beforeBal) {
+            revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
+        }
+    }
+
     function _scaleFeesToAvailableAmount(
         uint256 commissionAmount,
         uint256 poolFeeAmount,
@@ -1494,6 +1515,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         poolState.shieldedTokenBalance -= claimable;
         uint256 received = _transferOutAndGetReceived(SHIELDED_TOKEN, recipient, claimable);
+        if (received != claimable) {
+            revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
+        }
         if (isExpiredEpoch && tracksExpiredEpoch) {
             _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
         }
@@ -1677,6 +1701,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Transfer asset from depositor (balance-delta for fee-on-transfer tokens)
         uint256 received = _transferAndGetReceived(asset, depositAmount);
+        if (received < depositAmount && !shieldedTokenTransferIntegrityBroken) {
+            shieldedTokenTransferIntegrityBroken = true;
+            emit ShieldedTokenTransferIntegrityBroken(SHIELDED_TOKEN, depositAmount, received);
+        }
 
         // If minReceivedAmount > 0, verify received amount meets minimum expectation
         if (minReceivedAmount > 0) {
@@ -1751,6 +1779,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Check minimum pool time only if withdrawing backing assets (shield activation)
         if (preferredAsset == BACKING_TOKEN) {
+            if (shieldedTokenTransferIntegrityBroken) {
+                revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
+            }
             _requireNoOraclePendingChallenge(BACKING_TOKEN);
             _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
@@ -1815,6 +1846,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             uint256 forfeitedShieldedAmount = pos.amount - totalFees;
+            _requireUntaxedShieldedSelfTransfer(forfeitedShieldedAmount);
             (uint256 accumulatedReward, uint256 redirectedReward) =
                 _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
             if (accumulatedReward + redirectedReward != forfeitedShieldedAmount) {
@@ -1853,6 +1885,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         totalShieldedTokens -= pos.amount;
 
         uint256 actualReceived = _transferOutAndGetReceived(preferredAsset, msg.sender, payoutAmount);
+        if (preferredAsset == SHIELDED_TOKEN) {
+            _markShieldedTransferIntegrityIfReduced(payoutAmount, actualReceived);
+        }
         SlippageLib.enforceMinReceived(actualReceived, minAmountOut);
 
         emit EventsLib.ShieldedWithdrawal(msg.sender, payoutAmount, preferredAsset);
@@ -1967,6 +2002,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Transfer (external call, safe after state updates)
         uint256 actualReceived = _transferOutAndGetReceived(preferredAsset, msg.sender, withdrawAmount);
+        _markShieldedTransferIntegrityIfReduced(withdrawAmount, actualReceived);
         SlippageLib.enforceMinReceived(actualReceived, minAmountOut);
 
         emit EventsLib.PartialWithdrawal(msg.sender, tokenId, newTokenId, withdrawAmount, remaining);
@@ -2770,5 +2806,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     address public poolFeeRecipient;
     /// @notice Protector commission dust reserved until it becomes share-distributable.
     uint256 public pendingProtectorRewardDust;
-    uint256[28] private __gap;
+    /// @notice True once the shielded token has charged transfer tax against this pool.
+    bool public shieldedTokenTransferIntegrityBroken;
+    uint256[27] private __gap;
 }

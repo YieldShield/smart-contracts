@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { EventsLib } from "../contracts/libraries/EventsLib.sol";
+import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { SlippageLib } from "../contracts/libraries/SlippageLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -246,20 +247,49 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         assertEq(pool.accumulatedProtocolFee(), 0);
     }
 
-    function test_claimCommission_EmitsAndPaysActualReceivedWithTransferFee() public {
+    function test_claimCommission_RevertsRatherThanUnderpayingWithTransferFee() public {
         _accrueShieldedYieldFees();
 
-        uint256 nominalCommission = pool.accumulatedCommissions();
-        uint256 expectedReceived = (nominalCommission * 9500) / 10000;
         shieldedToken.setTransferFee(500);
 
-        uint256 beforeBalance = shieldedToken.balanceOf(protector);
         vm.prank(protector);
-        vm.expectEmit(true, true, false, true);
-        emit EventsLib.CommissionClaimed(protector, 0, expectedReceived);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
         pool.claimCommission(0);
 
-        assertEq(shieldedToken.balanceOf(protector) - beforeBalance, expectedReceived);
-        assertEq(pool.accumulatedCommissions(), 0);
+        assertGt(pool.accumulatedCommissions(), 0, "commission remains reserved when exact payout is impossible");
+    }
+
+    function test_crossAssetWithdraw_RevertsAfterShieldedTransferFeeObserved() public {
+        shieldedToken.setTransferFee(500);
+        uint256 tokenId = _depositShielded(100e18);
+
+        assertTrue(pool.shieldedTokenTransferIntegrityBroken(), "taxed deposit should flag shielded token");
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
+    }
+
+    function test_crossAssetWithdraw_RevertsIfShieldedTokenBecomesTaxedAfterDeposit() public {
+        uint256 tokenId = _depositShielded(100e18);
+        shieldedToken.setTransferFee(500);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
     }
 }

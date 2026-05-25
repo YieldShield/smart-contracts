@@ -105,6 +105,8 @@ library ErrorsLib {
     error RewardAccumulationIncomplete(uint256 expected, uint256 accumulated, uint256 redirected);
     /// @notice Thrown when old protector backing must be claimed before a fresh epoch can launch
     error ResidualProtectorBackingPending(uint256 amount);
+    /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token
+    error IncompatibleShieldedTokenForCrossAssetWithdrawal(address token);
 
     // ============ Unsupported/Not Allowed Errors ============
     /// @notice Thrown when asset is not supported by the pool
