@@ -536,7 +536,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         view
         returns (bool)
     {
-        if (config.backupFeed == address(0) || config.isBackupActive) {
+        if (config.backupFeed == address(0)) {
             return false;
         }
 
@@ -549,6 +549,13 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        if (config.isBackupActive) {
+            if (!primarySuccess || !_supportsCircuitBreaker(config.primaryFeed, token)) {
+                return false;
+            }
+            return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) > deviationThresholdBps;
+        }
+
         bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
         uint256 deviation = primaryProtectedAvailable
             ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
@@ -889,6 +896,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) return (true, 0);
         if (config.challengeStartTime != 0 && !config.isBackupActive) return (true, 0);
+        if (_hasUnresolvedDualFeedDeviation(config, token)) return (true, 0);
 
         address activeFeed =
             (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;

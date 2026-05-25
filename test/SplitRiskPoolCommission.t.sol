@@ -1128,8 +1128,9 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         // Finalize challenge (switches to backup)
         compositeOracle.finalizeChallenge(address(shieldedToken));
         assertTrue(compositeOracle.isBackupActiveForToken(address(shieldedToken)), "Backup oracle should be active");
+        primaryOracle.setPrice(address(shieldedToken), 0);
 
-        // Now perform withdrawal - should use backup oracle
+        // Now perform withdrawal - should use backup oracle while the primary remains unavailable.
         vm.prank(shielded);
         poolWithCompositeOracle.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
 
@@ -1150,6 +1151,7 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
 
         // Scenario 2: Test that withdrawal works with primary oracle after revert
         // Revert to primary
+        primaryOracle.setPrice(address(shieldedToken), 1e8);
         backupOracle.setPrice(address(shieldedToken), 1e8); // Reset deviation
         compositeOracle.revertToPrimary(address(shieldedToken));
         assertFalse(
