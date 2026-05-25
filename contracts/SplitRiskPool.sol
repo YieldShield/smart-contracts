@@ -954,6 +954,21 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    function _tryDistributePendingProtectorRewardDust() internal {
+        uint256 pendingDust = pendingProtectorRewardDust;
+        if (pendingDust == 0 || totalProtectorShares == 0 || totalProtectorTokens == 0) {
+            return;
+        }
+
+        uint256 rewardPerShareIncrement = (pendingDust * ConstantsLib.REWARD_PRECISION) / totalProtectorShares;
+        if (rewardPerShareIncrement == 0) {
+            return;
+        }
+
+        rewardPerShareAccumulated += rewardPerShareIncrement;
+        pendingProtectorRewardDust = 0;
+    }
+
     function _accumulateProtectorReward(uint256 rewardAmount, uint256 maxSafeAccumulation)
         internal
         returns (uint256 accumulatedReward, uint256 redirectedProtocolAmount)
@@ -985,12 +1000,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedCommissions, 0);
         }
 
-        uint256 rewardPerShareIncrement = (rewardAmount * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
+        uint256 distributableReward = pendingProtectorRewardDust + rewardAmount;
+        uint256 rewardPerShareIncrement = (distributableReward * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
         if (rewardPerShareIncrement == 0) {
-            revert ErrorsLib.RewardAccumulationIncomplete(rewardAmount, accumulatedCommissions, 0);
+            pendingProtectorRewardDust = distributableReward;
+            accumulatedCommissions += rewardAmount;
+            currentEpochCommissionReserve += rewardAmount;
+            totalCommissionsEverAccumulated += rewardAmount;
+            return (rewardAmount, 0);
         }
 
         rewardPerShareAccumulated += rewardPerShareIncrement;
+        pendingProtectorRewardDust = 0;
         accumulatedCommissions += rewardAmount;
         currentEpochCommissionReserve += rewardAmount;
         totalCommissionsEverAccumulated += rewardAmount;
@@ -1002,6 +1023,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
+        pendingProtectorRewardDust = 0;
         uint256 orphanedCommissions = currentEpochCommissionReserve;
         currentEpochCommissionReserve = 0;
         if (orphanedCommissions > accumulatedCommissions) {
@@ -1357,6 +1379,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 historicalCommissionReserve += currentEpochCommissionReserve;
                 currentEpochCommissionReserve = 0;
             }
+            pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
         }
@@ -1367,6 +1390,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 claimable)
     {
+        _tryDistributePendingProtectorRewardDust();
+
         uint256 positionEpoch = protectorShareEpochs[tokenId];
         bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
         bool tracksExpiredEpoch =
@@ -2569,5 +2594,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///         upgraded pools read this as zero and the payPoolFee path falls
     ///         back to POOL_CREATOR.
     address public poolFeeRecipient;
-    uint256[29] private __gap;
+    /// @notice Protector commission dust reserved until it becomes share-distributable.
+    uint256 public pendingProtectorRewardDust;
+    uint256[28] private __gap;
 }
