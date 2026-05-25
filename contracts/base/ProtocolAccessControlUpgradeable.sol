@@ -73,7 +73,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @notice Starts a two-step governance transfer by setting the pending governance address
     /// @param newGovernance The address of the proposed new governance timelock
     function setGovernanceTimelock(address newGovernance) public virtual onlyGovernance {
-        _validateGovernanceTimelock(newGovernance, _governanceTimelockImplementationHash());
+        _validateGovernanceTimelock(newGovernance, bytes32(0));
         _validateGovernanceTimelockOperationalRolesMatch(newGovernance, _governanceTimelock);
         _validateKnownDefaultAdminCleared(newGovernance, owner());
         _validateKnownDefaultAdminCleared(newGovernance, _governanceTimelock);
@@ -86,7 +86,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     function acceptGovernanceTimelock() public virtual {
         if (_pendingGovernanceTimelock == address(0)) revert NoPendingGovernance();
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
-        _validateGovernanceTimelock(_pendingGovernanceTimelock, _governanceTimelockImplementationHash());
+        _validateGovernanceTimelock(_pendingGovernanceTimelock, bytes32(0));
         _validateGovernanceTimelockOperationalRolesMatch(_pendingGovernanceTimelock, _governanceTimelock);
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);

@@ -200,6 +200,14 @@ contract MutableGovernanceTimelock {
     }
 }
 
+contract AlternateMutableGovernanceTimelock is MutableGovernanceTimelock {
+    constructor(uint256 minDelay, address[] memory extraAdmins) MutableGovernanceTimelock(minDelay, extraAdmins) { }
+
+    function alternateImplementationMarker() external pure returns (bool) {
+        return true;
+    }
+}
+
 contract ProtocolAccessControlHarness is ProtocolAccessControlUpgradeable {
     function initializeHarness(address initialOwner, address governanceTimelock_) external initializer {
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
@@ -517,10 +525,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
-                address(ysToken),
-                address(timelock).codehash,
-                address(ysToken).codehash
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(ysToken)
             )
         );
         vm.prank(address(timelock));
@@ -534,10 +539,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
-                address(fakeTimelock),
-                address(timelock).codehash,
-                address(fakeTimelock).codehash
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(fakeTimelock)
             )
         );
         vm.prank(address(timelock));
@@ -551,10 +553,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
-                address(fakeTimelock),
-                address(timelock).codehash,
-                address(fakeTimelock).codehash
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, address(fakeTimelock)
             )
         );
         vm.prank(address(timelock));
@@ -755,6 +754,25 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 }
 
 contract ProtocolAccessControlUpgradeableTest is Test {
+    function test_GovernanceTimelockRotationAllowsDifferentValidatedImplementation() public {
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        AlternateMutableGovernanceTimelock replacementGovernance =
+            new AlternateMutableGovernanceTimelock(2 days, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        assertNotEq(address(currentGovernance).codehash, address(replacementGovernance).codehash);
+
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+
+        vm.prank(address(replacementGovernance));
+        harness.acceptGovernanceTimelock();
+
+        assertEq(harness.governanceTimelock(), address(replacementGovernance));
+    }
+
     function test_AcceptGovernanceTimelock_RevalidatesPendingDelayOnPublicChains() public {
         vm.chainId(421614);
 
