@@ -1417,15 +1417,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
     /// @dev Ends the current share epoch when shield activation wipes all backing assets.
     ///      Before a fresh backing deposit, callers may also expire a no-shield-value
-    ///      below-minimum dust epoch so new shares do not inherit loss-amplified precision.
+    ///      below-minimum dust epoch after sweeping the residual backing so new shares
+    ///      cannot inherit old claims.
     function _expireProtectorShareEpochIfDrained(bool includeUnprotectedDust) internal {
-        if (
-            totalProtectorShares != 0
-                && (totalProtectorTokens == 0
-                    || (includeUnprotectedDust
-                        && totalValueAtDeposit == 0
-                        && totalProtectorTokens < poolConfig.backingMinDepositAmount))
-        ) {
+        uint256 currentProtectorTokens = totalProtectorTokens;
+        bool sweepUnprotectedDust = includeUnprotectedDust && totalValueAtDeposit == 0 && currentProtectorTokens != 0
+            && currentProtectorTokens < poolConfig.backingMinDepositAmount;
+
+        if (totalProtectorShares != 0 && (currentProtectorTokens == 0 || sweepUnprotectedDust)) {
             uint256 expiredEpoch = protectorShareEpoch;
             protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
             protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
@@ -1437,6 +1436,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
+
+            if (sweepUnprotectedDust) {
+                totalProtectorTokens = 0;
+                poolState.totalBackingTokenBalance -= currentProtectorTokens;
+                uint256 received =
+                    _transferOutAndGetReceived(BACKING_TOKEN, poolConfig.protocolFeeRecipient, currentProtectorTokens);
+                emit EventsLib.ProtectorResidualBackingSwept(poolConfig.protocolFeeRecipient, BACKING_TOKEN, received);
+            }
         }
     }
 

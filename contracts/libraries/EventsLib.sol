@@ -71,6 +71,7 @@ library EventsLib {
     );
     event CommissionClaimed(address indexed recipient, uint256 indexed tokenId, uint256 amount);
     event NoCommissionToClaim(address indexed recipient, uint256 indexed tokenId);
+    event ProtectorResidualBackingSwept(address indexed recipient, address indexed asset, uint256 amount);
 
     // SplitRiskPoolFactory events
     event PoolCreated(

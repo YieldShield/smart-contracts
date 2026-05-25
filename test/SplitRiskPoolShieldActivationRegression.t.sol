@@ -479,7 +479,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingPoolBalance, 0, "tracked backing balance should be cleared");
     }
 
-    function test_backingDustEpochExpiresBeforeFutureDeposits() public {
+    function test_backingDustEpochSweepsResidualBeforeFutureDeposits() public {
         _disableTvlCapAndUseHighPrecisionPrices();
 
         vm.prank(protector1);
@@ -497,15 +497,20 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(pool.totalProtectorTokens(), 1, "activation should leave one wei backing dust");
         assertGt(pool.totalProtectorShares(), 0, "dust remains claimable until a fresh deposit resets the epoch");
 
+        address protocolFeeRecipient = address(0xdead);
+        uint256 protocolBalanceBefore = backingToken.balanceOf(protocolFeeRecipient);
+
         vm.prank(protector1);
         uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
 
         assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId1), 0, "old position 1 should stay wiped");
         assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId2), 0, "old position 2 should stay wiped");
-        assertEq(
-            pool.getProtectorPositionAmount(newProtectorTokenId), 100e18 + 1, "new depositor inherits backing dust"
-        );
+        assertEq(pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "new depositor should not inherit dust");
+        assertEq(backingToken.balanceOf(protocolFeeRecipient) - protocolBalanceBefore, 1, "residual should be swept");
+        assertEq(pool.totalProtectorTokens(), 100e18, "pool should track only the fresh deposit");
         assertEq(pool.totalProtectorShares(), 100e18, "fresh deposit should reset active share supply");
+        (, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, 100e18, "tracked backing balance should exclude swept dust");
     }
 
     function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {
