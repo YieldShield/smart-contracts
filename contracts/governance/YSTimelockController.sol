@@ -18,6 +18,9 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
     error DefaultAdminMustBeTimelock(address account);
     error TimelockDefaultAdminCannotBeRevoked();
     error TimelockOperationalRoleFrozen(bytes32 role, address account);
+    error GovernanceControllerRotationInvalid(address oldController, address newController);
+
+    event GovernanceControllerRotated(address indexed oldController, address indexed newController);
 
     constructor(uint256 minDelay, address[] memory proposers, address[] memory executors, address admin)
         TimelockController(minDelay, proposers, executors, admin)
@@ -47,6 +50,29 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
     function updateDelay(uint256 newDelay) public virtual override {
         _validatePublicDelay(newDelay);
         super.updateDelay(newDelay);
+    }
+
+    function rotateGovernanceController(address newController) external {
+        if (msg.sender != address(this) || newController == address(0)) {
+            revert GovernanceControllerRotationInvalid(address(0), newController);
+        }
+
+        address oldController = _soleRoleMemberOrZero(PROPOSER_ROLE);
+        if (
+            oldController == address(0) || _soleRoleMemberOrZero(EXECUTOR_ROLE) != oldController
+                || _soleRoleMemberOrZero(CANCELLER_ROLE) != oldController
+        ) {
+            revert GovernanceControllerRotationInvalid(oldController, newController);
+        }
+
+        _revokeRole(PROPOSER_ROLE, oldController);
+        _revokeRole(EXECUTOR_ROLE, oldController);
+        _revokeRole(CANCELLER_ROLE, oldController);
+        _grantRole(PROPOSER_ROLE, newController);
+        _grantRole(EXECUTOR_ROLE, newController);
+        _grantRole(CANCELLER_ROLE, newController);
+
+        emit GovernanceControllerRotated(oldController, newController);
     }
 
     function _grantRole(bytes32 role, address account)

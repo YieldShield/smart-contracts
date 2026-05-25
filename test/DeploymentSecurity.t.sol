@@ -212,6 +212,22 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         timelock.renounceRole(proposerRole, address(governor));
     }
 
+    function test_TimelockCanRotateGovernanceControllerAtomically() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+        address newGovernor = address(0xA11CE);
+
+        vm.prank(address(timelock));
+        ysTimelock.rotateGovernanceController(newGovernor);
+
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
+        assertFalse(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(governor)));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), newGovernor));
+        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), newGovernor));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), newGovernor));
+    }
+
     function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
