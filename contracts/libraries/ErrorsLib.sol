@@ -103,6 +103,8 @@ library ErrorsLib {
     error EtherTransferNotAllowed();
     /// @notice Thrown when a forfeiture or reward cannot be fully reserved
     error RewardAccumulationIncomplete(uint256 expected, uint256 accumulated, uint256 redirected);
+    /// @notice Thrown when old protector backing must be claimed before a fresh epoch can launch
+    error ResidualProtectorBackingPending(uint256 amount);
 
     // ============ Unsupported/Not Allowed Errors ============
     /// @notice Thrown when asset is not supported by the pool
