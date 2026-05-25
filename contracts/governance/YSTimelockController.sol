@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { AccessControlEnumerable } from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -53,9 +54,10 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
     }
 
     function rotateGovernanceController(address newController) external {
-        if (msg.sender != address(this) || newController == address(0)) {
+        if (msg.sender != address(this) || newController == address(0) || newController.code.length == 0) {
             revert GovernanceControllerRotationInvalid(address(0), newController);
         }
+        _validateNewGovernanceController(newController);
 
         address oldController = _soleRoleMemberOrZero(PROPOSER_ROLE);
         if (
@@ -73,6 +75,21 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
         _grantRole(CANCELLER_ROLE, newController);
 
         emit GovernanceControllerRotated(oldController, newController);
+    }
+
+    function _validateNewGovernanceController(address newController) internal view {
+        try IERC165(newController).supportsInterface(type(IGovernor).interfaceId) returns (bool supported) {
+            if (!supported) {
+                revert GovernanceControllerRotationInvalid(address(0), newController);
+            }
+        } catch {
+            revert GovernanceControllerRotationInvalid(address(0), newController);
+        }
+
+        (bool success, bytes memory data) = newController.staticcall(abi.encodeWithSignature("timelock()"));
+        if (!success || data.length < 32 || abi.decode(data, (address)) != address(this)) {
+            revert GovernanceControllerRotationInvalid(address(0), newController);
+        }
     }
 
     function _grantRole(bytes32 role, address account)

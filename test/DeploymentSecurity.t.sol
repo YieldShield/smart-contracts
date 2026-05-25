@@ -213,19 +213,67 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     }
 
     function test_TimelockCanRotateGovernanceControllerAtomically() public {
-        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
-        address newGovernor = address(0xA11CE);
+        YSGovernor newGovernor = new YSGovernor(IVotes(address(ysToken)), timelock);
 
         vm.prank(address(timelock));
-        ysTimelock.rotateGovernanceController(newGovernor);
+        ysTimelock.rotateGovernanceController(address(newGovernor));
 
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
         assertFalse(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(governor)));
         assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(governor)));
-        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), newGovernor));
-        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), newGovernor));
-        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), newGovernor));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(newGovernor)));
+        assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(newGovernor)));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(newGovernor)));
+    }
+
+    function test_TimelockControllerRotationRejectsEOA() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+        address eoaController = address(0xA11CE);
+
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSTimelockController.GovernanceControllerRotationInvalid.selector, address(0), eoaController
+            )
+        );
+        ysTimelock.rotateGovernanceController(eoaController);
+
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
+    }
+
+    function test_TimelockControllerRotationRejectsNonGovernorContract() public {
+        (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSTimelockController.GovernanceControllerRotationInvalid.selector, address(0), address(ysToken)
+            )
+        );
+        ysTimelock.rotateGovernanceController(address(ysToken));
+
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
+    }
+
+    function test_TimelockControllerRotationRejectsGovernorForDifferentTimelock() public {
+        (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        (, TimelockController otherTimelock,) = _deployGovernance();
+        YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
+        YSGovernor wrongGovernor = new YSGovernor(IVotes(address(ysToken)), otherTimelock);
+
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSTimelockController.GovernanceControllerRotationInvalid.selector, address(0), address(wrongGovernor)
+            )
+        );
+        ysTimelock.rotateGovernanceController(address(wrongGovernor));
+
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
     }
 
     function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
