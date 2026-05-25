@@ -25,6 +25,7 @@ require("dotenv").config({ path: join(__dirname, "..", ".env") });
 const DEFAULT_KEYSTORE_ACCOUNT = "scaffold-eth-default";
 const KEYSTORE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
+const DEFAULT_EVENT_SCAN_CHUNK_SIZE = 50_000;
 
 /**
  * Get Oracle address from the deployment file for the active chain
@@ -175,7 +176,39 @@ function registryByAddress(registryTokens) {
     return byAddress;
 }
 
-async function collectTokenCandidates({ factoryContract, oracleContract, registryTokens }) {
+async function queryPythTokenEvents(oracleContract) {
+    const filters = [
+        oracleContract.filters.TokenPriceFeedSet(),
+        oracleContract.filters.TokenCompositePriceFeedSet(),
+    ];
+    const provider = oracleContract.runner?.provider || oracleContract.provider;
+    const latestBlock = provider?.getBlockNumber
+        ? await provider.getBlockNumber()
+        : null;
+    const chunkSize = Number(process.env.PYTH_EVENT_SCAN_CHUNK_SIZE || DEFAULT_EVENT_SCAN_CHUNK_SIZE);
+    const events = [];
+
+    for (const filter of filters) {
+        if (!latestBlock || latestBlock <= chunkSize) {
+            events.push(...(await oracleContract.queryFilter(filter, 0, "latest")));
+            continue;
+        }
+
+        for (let fromBlock = 0; fromBlock <= latestBlock; fromBlock += chunkSize + 1) {
+            const toBlock = Math.min(fromBlock + chunkSize, latestBlock);
+            events.push(...(await oracleContract.queryFilter(filter, fromBlock, toBlock)));
+        }
+    }
+
+    return events;
+}
+
+async function collectTokenCandidates({
+    factoryContract,
+    oracleContract,
+    registryTokens,
+    requireCompleteDiscovery = false,
+}) {
     const candidates = new Map();
     const addCandidate = (address, source) => {
         if (!address || isZeroAddress(address)) return;
@@ -192,8 +225,12 @@ async function collectTokenCandidates({ factoryContract, oracleContract, registr
             const whitelistedTokens = await factoryContract.getWhitelistedTokens();
             whitelistedTokens.forEach((address) => addCandidate(address, "factory"));
         } catch (error) {
-            console.warn(`  ⚠ Could not read factory whitelist: ${error.message}`);
+            const message = `Could not read factory whitelist: ${error.message}`;
+            if (requireCompleteDiscovery) throw new Error(message);
+            console.warn(`  ⚠ ${message}`);
         }
+    } else if (requireCompleteDiscovery) {
+        throw new Error("Strict Pyth updates require a factory address for whitelist discovery");
     }
 
     for (const token of registryTokens) {
@@ -201,32 +238,29 @@ async function collectTokenCandidates({ factoryContract, oracleContract, registr
     }
 
     try {
-        const priceFeedEvents = await oracleContract.queryFilter(
-            oracleContract.filters.TokenPriceFeedSet(),
-            0,
-            "latest",
-        );
-        priceFeedEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
-
-        const compositeEvents = await oracleContract.queryFilter(
-            oracleContract.filters.TokenCompositePriceFeedSet(),
-            0,
-            "latest",
-        );
-        compositeEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
+        const pythEvents = await queryPythTokenEvents(oracleContract);
+        pythEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
     } catch (error) {
-        console.warn(`  ⚠ Could not scan Pyth token events: ${error.message}`);
+        const message = `Could not scan Pyth token events: ${error.message}`;
+        if (requireCompleteDiscovery) throw new Error(message);
+        console.warn(`  ⚠ ${message}`);
     }
 
     return [...candidates.values()];
 }
 
-async function discoverConfiguredPythTokens({ oracleContract, factoryContract, registryTokens }) {
+async function discoverConfiguredPythTokens({
+    oracleContract,
+    factoryContract,
+    registryTokens,
+    requireCompleteDiscovery = false,
+}) {
     const registryLookup = registryByAddress(registryTokens);
     const candidates = await collectTokenCandidates({
         factoryContract,
         oracleContract,
         registryTokens,
+        requireCompleteDiscovery,
     });
 
     const configuredTokens = [];
@@ -288,6 +322,56 @@ async function discoverConfiguredPythTokens({ oracleContract, factoryContract, r
     }
 
     return { configuredTokens, missingConfigs };
+}
+
+async function verifyPythTokenFreshness({
+    oracleContract,
+    configuredTokens,
+    refreshedTokens,
+    requireAllPriceUpdates,
+}) {
+    const requiredAddresses = new Set(
+        (requireAllPriceUpdates ? configuredTokens : refreshedTokens).map((token) =>
+            token.address.toLowerCase()
+        ),
+    );
+    const requiredFailures = [];
+    const optionalFailures = [];
+
+    for (const token of configuredTokens) {
+        try {
+            const [isStale, publishTime] = await oracleContract.isPriceStale(token.address);
+            const failure = { token, publishTime: Number(publishTime), reason: "stale" };
+            if (isStale) {
+                if (requiredAddresses.has(token.address.toLowerCase())) {
+                    requiredFailures.push(failure);
+                } else {
+                    optionalFailures.push(failure);
+                }
+            }
+        } catch (error) {
+            const failure = { token, reason: error.message };
+            if (requiredAddresses.has(token.address.toLowerCase())) {
+                requiredFailures.push(failure);
+            } else {
+                optionalFailures.push(failure);
+            }
+        }
+    }
+
+    if (optionalFailures.length > 0) {
+        console.warn("\nConfigured Pyth tokens still stale or unreadable after partial update:");
+        optionalFailures.forEach(({ token, reason }) => {
+            console.warn(`  - ${token.name}: ${reason}`);
+        });
+    }
+
+    if (requiredFailures.length > 0) {
+        const names = requiredFailures.map(({ token, reason }) => `${token.name} (${reason})`).join(", ");
+        throw new Error(`Pyth price freshness verification failed for: ${names}`);
+    }
+
+    return { staleTokens: optionalFailures };
 }
 
 // Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
@@ -771,6 +855,7 @@ async function main() {
     const oracleAbi = [
         "function updatePriceFeeds(bytes[] calldata priceUpdateData) external payable",
         "function getUpdateFee(bytes[] calldata priceUpdateData) external view returns (uint256 fee)",
+        "function isPriceStale(address) external view returns (bool,uint64)",
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
         "function tokenToQuotePriceFeedId(address) external view returns (bytes32)",
@@ -787,6 +872,9 @@ async function main() {
         chainId,
         cliFactory: config.factory,
     });
+    if (requireAllPriceUpdates && !factoryAddress) {
+        throw new Error("Strict Pyth updates require a factory address for whitelist discovery");
+    }
     let factoryContract = null;
     let oracleAddress = config.oracle || null;
     if (factoryAddress) {
@@ -835,6 +923,7 @@ async function main() {
         oracleContract,
         factoryContract,
         registryTokens,
+        requireCompleteDiscovery: requireAllPriceUpdates,
     });
     configuredTokens.forEach((token) => {
         console.log(`  ✓ ${token.name} (${token.address}): configured`);
@@ -865,6 +954,9 @@ async function main() {
         console.warn(
             "  configured through governance after this updater's token discovery sources.\n",
         );
+        if (requireAllPriceUpdates) {
+            throw new Error(`${missingConfigs.length} discovered token(s) are missing Pyth oracle configuration`);
+        }
     } else {
         console.log("\n✓ All tokens are properly configured\n");
     }
@@ -910,13 +1002,20 @@ async function main() {
         console.log("\nUpdating prices on-chain...");
         await updatePriceFeeds(oracleContract, priceUpdateData, signer);
 
-        console.log("\n✅ Price feeds updated successfully!");
         const { refreshedTokens, skippedTokens } =
             classifyConfiguredTokenRefreshes({
                 configuredTokens,
                 updates,
                 failures,
             });
+        await verifyPythTokenFreshness({
+            oracleContract,
+            configuredTokens,
+            refreshedTokens,
+            requireAllPriceUpdates,
+        });
+
+        console.log("\n✅ Price feeds updated successfully!");
         console.log("\nRefreshed Pyth feeds for:");
         if (refreshedTokens.length === 0) {
             console.log("  (none)");
@@ -960,6 +1059,8 @@ module.exports = {
     fetchPriceUpdateDataBestEffort,
     getFactoryAddress,
     parseCliArgs,
+    queryPythTokenEvents,
     shouldRequireAllPriceUpdates,
     updatePriceFeeds,
+    verifyPythTokenFreshness,
 };

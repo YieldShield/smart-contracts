@@ -5,22 +5,29 @@ const {
     discoverConfiguredPythTokens,
     parseCliArgs,
     shouldRequireAllPriceUpdates,
+    verifyPythTokenFreshness,
 } = require("../update-pyth-prices.cjs");
 
 const ZERO_HASH =
     "0x0000000000000000000000000000000000000000000000000000000000000000";
 
-function makeOracleMock({ configured = {}, eventTokens = [] } = {}) {
+function makeOracleMock({ configured = {}, eventTokens = [], queryFails = false, stale = {} } = {}) {
     return {
         filters: {
             TokenPriceFeedSet: () => "TokenPriceFeedSet",
             TokenCompositePriceFeedSet: () => "TokenCompositePriceFeedSet",
         },
         async queryFilter(filterName) {
+            if (queryFails) throw new Error("log range too large");
             if (filterName === "TokenPriceFeedSet") {
                 return eventTokens.map((token) => ({ args: { token } }));
             }
             return [];
+        },
+        async isPriceStale(address) {
+            const entry = stale[address.toLowerCase()] || {};
+            if (entry.throws) throw new Error(entry.throws);
+            return [Boolean(entry.isStale), BigInt(entry.publishTime || 123)];
         },
         async isTokenSupported(address) {
             return Boolean(configured[address.toLowerCase()]?.supported);
@@ -37,6 +44,7 @@ function makeOracleMock({ configured = {}, eventTokens = [] } = {}) {
 function makeFactoryMock(tokens) {
     return {
         async getWhitelistedTokens() {
+            if (tokens instanceof Error) throw tokens;
             return tokens;
         },
     };
@@ -194,4 +202,86 @@ test("discoverConfiguredPythTokens reports unsupported registry tokens as missin
     assert.equal(configuredTokens.length, 0);
     assert.equal(missingConfigs.length, 1);
     assert.equal(missingConfigs[0].name, "MISSING");
+});
+
+test("discoverConfiguredPythTokens fails closed on strict factory discovery errors", async () => {
+    const oracleContract = makeOracleMock();
+    const factoryContract = makeFactoryMock(new Error("rpc unavailable"));
+
+    await assert.rejects(
+        () =>
+            discoverConfiguredPythTokens({
+                oracleContract,
+                factoryContract,
+                registryTokens: [],
+                requireCompleteDiscovery: true,
+            }),
+        /Could not read factory whitelist/u,
+    );
+});
+
+test("discoverConfiguredPythTokens allows relaxed event scan warnings", async () => {
+    const token = "0x00000000000000000000000000000000000000dd";
+    const feedId =
+        "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const oracleContract = makeOracleMock({
+        queryFails: true,
+        configured: {
+            [token]: { supported: true, feedId },
+        },
+    });
+
+    const { configuredTokens } = await discoverConfiguredPythTokens({
+        oracleContract,
+        factoryContract: null,
+        registryTokens: [{ name: "REG", address: token, feedId }],
+        requireCompleteDiscovery: false,
+    });
+
+    assert.equal(configuredTokens.length, 1);
+});
+
+test("verifyPythTokenFreshness rejects refreshed tokens that remain stale", async () => {
+    const token = "0x00000000000000000000000000000000000000ee";
+    const configuredTokens = [{ name: "STALE", address: token }];
+    const oracleContract = makeOracleMock({
+        stale: {
+            [token]: { isStale: true, publishTime: 42 },
+        },
+    });
+
+    await assert.rejects(
+        () =>
+            verifyPythTokenFreshness({
+                oracleContract,
+                configuredTokens,
+                refreshedTokens: configuredTokens,
+                requireAllPriceUpdates: false,
+            }),
+        /Pyth price freshness verification failed/u,
+    );
+});
+
+test("verifyPythTokenFreshness only warns for skipped stale tokens in partial mode", async () => {
+    const refreshed = "0x00000000000000000000000000000000000000f1";
+    const skipped = "0x00000000000000000000000000000000000000f2";
+    const configuredTokens = [
+        { name: "FRESH", address: refreshed },
+        { name: "SKIPPED", address: skipped },
+    ];
+    const oracleContract = makeOracleMock({
+        stale: {
+            [skipped]: { isStale: true, publishTime: 42 },
+        },
+    });
+
+    const { staleTokens } = await verifyPythTokenFreshness({
+        oracleContract,
+        configuredTokens,
+        refreshedTokens: [configuredTokens[0]],
+        requireAllPriceUpdates: false,
+    });
+
+    assert.equal(staleTokens.length, 1);
+    assert.equal(staleTokens[0].token.name, "SKIPPED");
 });
