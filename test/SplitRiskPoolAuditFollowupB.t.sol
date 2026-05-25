@@ -237,11 +237,42 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         pool.claimCommission(protectorTokenId);
 
         uint256 received = shieldedToken.balanceOf(protector) - balanceBefore;
-        assertEq(pool.pendingProtectorRewardDust(), 0, "dust must flush once distributable");
+        uint256 pendingRemainder = pool.pendingProtectorRewardDust();
         assertGt(pool.rewardPerShareAccumulated(), rewardPerShareBefore, "reward accumulator must advance");
         assertGt(received, 0, "protector receives carried dust");
         assertLe(received, carriedDust, "protector cannot receive more than carried dust");
-        assertEq(pool.accumulatedCommissions(), carriedDust - received, "rounding remainder stays reserved");
+        assertEq(pendingRemainder, carriedDust - received, "reward-per-share remainder stays pending");
+        assertEq(pool.accumulatedCommissions(), pendingRemainder, "rounding remainder stays reserved");
+    }
+
+    function test_B4_depositBackingRedirectsPendingDustBeforeMintingNewShares() public {
+        (, uint256 shieldTokenId) = _seedPositions();
+
+        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(type(uint128).max);
+        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
+        backupOracle.setPrice(address(shieldedToken), 1.1e8);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shielded);
+        pool.claimRewards(shieldTokenId);
+
+        uint256 carriedDust = pool.pendingProtectorRewardDust();
+        assertGt(carriedDust, 0, "test setup must create pending dust");
+
+        address newProtector = address(0xCAFE);
+        backingToken.mintShares(newProtector, 100e18);
+        vm.prank(newProtector);
+        backingToken.approve(address(pool), type(uint256).max);
+
+        uint256 protocolFeeBefore = pool.accumulatedProtocolFee();
+        uint256 commissionsBefore = pool.accumulatedCommissions();
+
+        vm.prank(newProtector);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        assertEq(pool.pendingProtectorRewardDust(), 0, "pending dust must be cleared before share mint");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore + carriedDust, "dust redirects to protocol");
+        assertEq(pool.accumulatedCommissions(), commissionsBefore - carriedDust, "dust is no longer protector-reserved");
     }
 
     function test_B4_claimRewards_RevertsWhenNoProtectorRedirectCannotFitProtocolBucket() public {

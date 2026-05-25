@@ -965,8 +965,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
+        uint256 representedReward = (rewardPerShareIncrement * totalProtectorShares) / ConstantsLib.REWARD_PRECISION;
         rewardPerShareAccumulated += rewardPerShareIncrement;
+        pendingProtectorRewardDust = pendingDust > representedReward ? pendingDust - representedReward : 0;
+    }
+
+    function _redirectPendingProtectorRewardDust(uint256 maxSafeAccumulation) internal returns (uint256 redirectedAmount) {
+        redirectedAmount = pendingProtectorRewardDust;
+        if (redirectedAmount == 0) {
+            return 0;
+        }
+        if (accumulatedProtocolFee + redirectedAmount > maxSafeAccumulation) {
+            revert ErrorsLib.RewardAccumulationIncomplete(redirectedAmount, accumulatedProtocolFee, 0);
+        }
+
         pendingProtectorRewardDust = 0;
+        accumulatedCommissions =
+            redirectedAmount >= accumulatedCommissions ? 0 : accumulatedCommissions - redirectedAmount;
+        currentEpochCommissionReserve =
+            redirectedAmount >= currentEpochCommissionReserve ? 0 : currentEpochCommissionReserve - redirectedAmount;
+        accumulatedProtocolFee += redirectedAmount;
     }
 
     function _accumulateProtectorReward(uint256 rewardAmount, uint256 maxSafeAccumulation)
@@ -1010,8 +1028,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (rewardAmount, 0);
         }
 
+        uint256 representedReward = (rewardPerShareIncrement * currentTotalShares) / ConstantsLib.REWARD_PRECISION;
         rewardPerShareAccumulated += rewardPerShareIncrement;
-        pendingProtectorRewardDust = 0;
+        pendingProtectorRewardDust =
+            distributableReward > representedReward ? distributableReward - representedReward : 0;
         accumulatedCommissions += rewardAmount;
         currentEpochCommissionReserve += rewardAmount;
         totalCommissionsEverAccumulated += rewardAmount;
@@ -1374,12 +1394,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             uint256 expiredEpoch = protectorShareEpoch;
             protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
             protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
+            _redirectPendingProtectorRewardDust(ConstantsLib.MAX_SAFE_ACCUMULATION);
             if (currentEpochCommissionReserve != 0) {
                 protectorEpochRemainingReserve[expiredEpoch] += currentEpochCommissionReserve;
                 historicalCommissionReserve += currentEpochCommissionReserve;
                 currentEpochCommissionReserve = 0;
             }
-            pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
         }
@@ -1545,6 +1565,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _markPoolLaunched();
 
         _expireProtectorShareEpochIfDrained(true);
+        _redirectPendingProtectorRewardDust(ConstantsLib.MAX_SAFE_ACCUMULATION);
 
         uint256 currentTotalShares = totalProtectorShares;
         uint256 sharesMinted = currentTotalShares == 0 || totalProtectorTokens == 0
@@ -2064,6 +2085,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.InvalidTokenId();
         }
+        _redirectPendingProtectorRewardDust(ConstantsLib.MAX_SAFE_ACCUMULATION);
 
         if (newShares == 0) {
             // Full withdrawal - burn NFT and clean up mappings
