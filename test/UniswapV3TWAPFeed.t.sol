@@ -239,6 +239,7 @@ contract UniswapV3TWAPFeedTest is Test {
 
         harness.scheduleQuoteTokenOracleFailover(address(newQuoteOracle));
         uint256 executableAt = block.timestamp + harness.QUOTE_ORACLE_FAILOVER_DELAY();
+        assertEq(harness.scheduledQuoteTokenOraclePrice(), 1e8);
 
         vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.QuoteOracleFailoverTooEarly.selector, executableAt));
         harness.executeQuoteTokenOracleFailover();
@@ -247,7 +248,28 @@ contract UniswapV3TWAPFeedTest is Test {
         harness.executeQuoteTokenOracleFailover();
 
         assertEq(address(harness.quoteTokenOracle()), address(newQuoteOracle));
+        assertEq(harness.scheduledQuoteTokenOraclePrice(), 0);
         assertEq(harness.getPrice(address(token)), 1e8);
+    }
+
+    function test_quoteTokenOracleFailover_RevertsWhenScheduledOraclePriceDrifts() public {
+        MockOracle newQuoteOracle = new MockOracle();
+        newQuoteOracle.setPrice(address(quoteToken), 1e8);
+
+        harness.scheduleQuoteTokenOracleFailover(address(newQuoteOracle));
+        uint256 executableAt = block.timestamp + harness.QUOTE_ORACLE_FAILOVER_DELAY();
+
+        newQuoteOracle.setPrice(address(quoteToken), 2e8);
+        vm.warp(executableAt);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TWAPFeed.QuoteOracleSwapDeviationTooHigh.selector, 1e8, 2e8, 10000)
+        );
+        harness.executeQuoteTokenOracleFailover();
+
+        assertEq(address(harness.quoteTokenOracle()), address(quoteOracle));
+        assertEq(address(harness.scheduledQuoteTokenOracle()), address(newQuoteOracle));
+        assertEq(harness.scheduledQuoteTokenOraclePrice(), 1e8);
     }
 
     function test_isPriceStale_ReflectsObserveAndLiquidityFailures() public {

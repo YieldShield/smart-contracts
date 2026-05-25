@@ -73,6 +73,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     address public scheduledQuoteTokenOracle;
     uint256 public scheduledQuoteTokenOracleTime;
+    uint256 public scheduledQuoteTokenOraclePrice;
 
     /// @notice ERC20 scale for the quote token
     uint256 public immutable quoteTokenScale;
@@ -280,6 +281,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
         scheduledQuoteTokenOracle = address(0);
         scheduledQuoteTokenOracleTime = 0;
+        scheduledQuoteTokenOraclePrice = 0;
         emit QuoteTokenOracleUpdated(oldOracle, _quoteTokenOracle);
     }
 
@@ -290,6 +292,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         scheduledQuoteTokenOracle = _quoteTokenOracle;
         scheduledQuoteTokenOracleTime = block.timestamp + QUOTE_ORACLE_FAILOVER_DELAY;
+        scheduledQuoteTokenOraclePrice = newPrice;
         emit QuoteTokenOracleFailoverScheduled(_quoteTokenOracle, scheduledQuoteTokenOracleTime);
     }
 
@@ -297,6 +300,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         address scheduled = scheduledQuoteTokenOracle;
         scheduledQuoteTokenOracle = address(0);
         scheduledQuoteTokenOracleTime = 0;
+        scheduledQuoteTokenOraclePrice = 0;
         emit QuoteTokenOracleFailoverCancelled(scheduled);
     }
 
@@ -310,11 +314,18 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         uint256 newPrice = IOracleFeed(newOracle).getPrice(quoteToken);
         if (newPrice == 0) revert PriceTruncatedToZero(quoteToken);
+        uint256 scheduledPrice = scheduledQuoteTokenOraclePrice;
+        uint256 deviationBps = _absoluteDeviationBps(scheduledPrice, newPrice);
+        if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
+            revert QuoteOracleSwapDeviationTooHigh(scheduledPrice, newPrice, deviationBps);
+        }
 
         address oldOracle = address(quoteTokenOracle);
         quoteTokenOracle = IOracleFeed(newOracle);
         scheduledQuoteTokenOracle = address(0);
         scheduledQuoteTokenOracleTime = 0;
+        scheduledQuoteTokenOraclePrice = 0;
+        emit QuoteTokenOracleSwapPrices(scheduledPrice, newPrice, deviationBps);
         emit QuoteTokenOracleUpdated(oldOracle, newOracle);
     }
 
