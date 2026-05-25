@@ -10,7 +10,8 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { format } from "prettier";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const generatedContractComment = `
 /**
@@ -485,6 +486,52 @@ function updatePonderConfig(
     }
 }
 
+function deploymentJsonAddressFor(deploymentData, contractName) {
+    if (!deploymentData) return null;
+
+    let address = null;
+    for (const [key, value] of Object.entries(deploymentData)) {
+        if (key.startsWith("0x") && value === contractName) {
+            address = key;
+        }
+    }
+
+    return address;
+}
+
+function generatedContractAddressFor(chainContracts, contractName) {
+    return chainContracts?.[contractName]?.address || null;
+}
+
+function generatedContractBlockFor(chainContracts, contractName) {
+    return chainContracts?.[contractName]?.deployedOnBlock;
+}
+
+function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
+    for (const chainId of chainIds) {
+        const chainContracts = allGeneratedContracts[chainId] || {};
+        const factoryAddress =
+            generatedContractAddressFor(chainContracts, "SplitRiskPoolFactory") ||
+            deploymentJsonAddressFor(deployments[chainId], "SplitRiskPoolFactory");
+        const governorAddress =
+            generatedContractAddressFor(chainContracts, "YSGovernor") ||
+            deploymentJsonAddressFor(deployments[chainId], "YSGovernor");
+
+        if (!factoryAddress || !governorAddress) {
+            continue;
+        }
+
+        return {
+            chainId,
+            factoryAddress,
+            governorAddress,
+            governorBlock: generatedContractBlockFor(chainContracts, "YSGovernor"),
+        };
+    }
+
+    return null;
+}
+
 async function main() {
     const current_path_to_broadcast = join(__dirname, "..", "broadcast");
     const current_path_to_deployments = join(__dirname, "..", "deployments");
@@ -624,80 +671,35 @@ async function main() {
         explicitTargetChainId,
     );
 
-    let factoryAddress, governorAddress, governorBlock;
+    const ponderDeployment = selectPonderDeployment(chainIds, allGeneratedContracts, deployments);
 
-    // Try to find addresses from allGeneratedContracts first (most reliable)
-    for (const chainId of chainIds) {
-        if (
-            !factoryAddress &&
-            allGeneratedContracts[chainId]?.["SplitRiskPoolFactory"]
-        ) {
-            factoryAddress =
-                allGeneratedContracts[chainId]["SplitRiskPoolFactory"].address;
-        }
-        if (
-            !governorAddress &&
-            allGeneratedContracts[chainId]?.["YSGovernor"]
-        ) {
-            governorAddress =
-                allGeneratedContracts[chainId]["YSGovernor"].address;
-            governorBlock =
-                allGeneratedContracts[chainId]["YSGovernor"].deployedOnBlock;
-        }
-        // If we found both, we can break
-        if (factoryAddress && governorAddress) break;
-    }
-
-    // Fallback to deployments JSON file if not found in allGeneratedContracts
-    for (const chainId of chainIds) {
-        if (!factoryAddress && deployments[chainId]) {
-            // deployments[chainId] is { address: name } mapping (may also have "networkName" key)
-            // Find the address that maps to "SplitRiskPoolFactory"
-            for (const [key, value] of Object.entries(deployments[chainId])) {
-                // Skip non-address keys like "networkName"
-                if (key.startsWith("0x") && value === "SplitRiskPoolFactory") {
-                    factoryAddress = key;
-                    break;
-                }
-            }
-        }
-        if (!governorAddress && deployments[chainId]) {
-            for (const [key, value] of Object.entries(deployments[chainId])) {
-                if (key.startsWith("0x") && value === "YSGovernor") {
-                    governorAddress = key;
-                    // Try to get block from allGeneratedContracts
-                    governorBlock =
-                        allGeneratedContracts[chainId]?.["YSGovernor"]
-                            ?.deployedOnBlock;
-                    break;
-                }
-            }
-        }
-        if (factoryAddress && governorAddress) break;
-    }
-
-    if (factoryAddress || governorAddress) {
-        updatePonderConfig(factoryAddress, governorAddress, governorBlock);
-        if (factoryAddress) {
-            console.log(
-                `✅ Updated Ponder config with factory address: ${factoryAddress}`,
-            );
-        }
-        if (governorAddress) {
-            console.log(
-                `✅ Updated Ponder config with YSGovernor address: ${governorAddress}${
-                    governorBlock ? ` (block ${governorBlock})` : ""
-                }`,
-            );
-        }
+    if (ponderDeployment) {
+        updatePonderConfig(
+            ponderDeployment.factoryAddress,
+            ponderDeployment.governorAddress,
+            ponderDeployment.governorBlock,
+            ponderDeployment.chainId,
+        );
+        console.log(
+            `✅ Updated Ponder config with chain ${ponderDeployment.chainId} factory address: ${ponderDeployment.factoryAddress}`,
+        );
+        console.log(
+            `✅ Updated Ponder config with chain ${ponderDeployment.chainId} YSGovernor address: ${
+                ponderDeployment.governorAddress
+            }${ponderDeployment.governorBlock ? ` (block ${ponderDeployment.governorBlock})` : ""}`,
+        );
     } else {
         console.warn(
-            `⚠️  SplitRiskPoolFactory and YSGovernor not found in deployments`,
+            `⚠️  SplitRiskPoolFactory and YSGovernor not found on the same deployment chain`,
         );
     }
 }
 
-main().catch((error) => {
-    console.error("Error:", error);
-    process.exitCode = 1;
-});
+if (process.argv[1] === __filename) {
+    main().catch((error) => {
+        console.error("Error:", error);
+        process.exitCode = 1;
+    });
+}
+
+export { selectPonderDeployment, sortChainIdsForSelection };
