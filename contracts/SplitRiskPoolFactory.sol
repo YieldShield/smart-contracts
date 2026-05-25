@@ -79,6 +79,8 @@ contract SplitRiskPoolFactory is
 {
     using SafeERC20 for IERC20;
 
+    error CompositeOracleAuthorizationClosed();
+
     // Governance-controlled protocol parameters
     address public splitRiskPoolImplementation;
     address public compositeOracle;
@@ -119,6 +121,10 @@ contract SplitRiskPoolFactory is
     mapping(address => ISplitRiskPoolFactory.CreationBond) public creationBonds;
     uint256 public minimumCreationBondUsd;
     bool public bootstrapModeEnabled;
+
+    address[] private _trackedCompositeOracleAuthorizedCallers;
+    mapping(address => bool) private _compositeOracleAuthorizedCallerSeen;
+    mapping(address => bool) private _compositeOracleAuthorizedCallerActive;
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
     event BootstrapModeFinalized(address indexed caller);
@@ -306,7 +312,9 @@ contract SplitRiskPoolFactory is
     function setCompositeOracleAuthorizedCaller(address caller, bool authorized) external {
         _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
         _requireManagedOracleConfigured(compositeOracle);
-        ICompositeOracleAdmin(compositeOracle).setAuthorizedCaller(caller, authorized);
+        if (caller == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        if (authorized && !_bootstrapOwnerActionsAllowed()) revert CompositeOracleAuthorizationClosed();
+        _setCompositeOracleAuthorizedCaller(caller, authorized);
     }
 
     function setCompositeOracleDeviationThreshold(uint256 newThresholdBps) external onlyGovernance {
@@ -485,6 +493,7 @@ contract SplitRiskPoolFactory is
             return;
         }
 
+        _clearCompositeOracleAuthorizedCallers();
         bootstrapModeEnabled = false;
         emit BootstrapModeFinalized(msg.sender);
     }
@@ -1096,6 +1105,38 @@ contract SplitRiskPoolFactory is
         return ICompositeOracleAdmin(compositeOracle);
     }
 
+    function _setCompositeOracleAuthorizedCaller(address caller, bool authorized) internal {
+        if (authorized && !_compositeOracleAuthorizedCallerSeen[caller]) {
+            _compositeOracleAuthorizedCallerSeen[caller] = true;
+            _trackedCompositeOracleAuthorizedCallers.push(caller);
+        }
+
+        if (_compositeOracleAuthorizedCallerSeen[caller]) {
+            _compositeOracleAuthorizedCallerActive[caller] = authorized;
+        }
+
+        ICompositeOracleAdmin(compositeOracle).setAuthorizedCaller(caller, authorized);
+    }
+
+    function _clearCompositeOracleAuthorizedCallers() internal {
+        if (compositeOracle == address(0)) {
+            return;
+        }
+
+        ICompositeOracleAdmin oracleAdmin = ICompositeOracleAdmin(compositeOracle);
+        uint256 callerCount = _trackedCompositeOracleAuthorizedCallers.length;
+        for (uint256 i = 0; i < callerCount;) {
+            address caller = _trackedCompositeOracleAuthorizedCallers[i];
+            if (_compositeOracleAuthorizedCallerActive[caller]) {
+                _compositeOracleAuthorizedCallerActive[caller] = false;
+                oracleAdmin.setAuthorizedCaller(caller, false);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _pythOracleAdmin() internal view returns (IPythOracleAdmin) {
         _requireManagedOracleConfigured(pythOracle);
         return IPythOracleAdmin(pythOracle);
@@ -1232,5 +1273,5 @@ contract SplitRiskPoolFactory is
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[42] private __gap;
+    uint256[39] private __gap;
 }

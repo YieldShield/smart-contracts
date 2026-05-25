@@ -841,13 +841,23 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20 tokenC = new MockERC20("Token C", "TKNC");
         oracle.setPrice(address(tokenC), 1e8);
 
+        assertTrue(compositeOracle.authorizedCallers(address(this)), "test harness starts as temporary oracle admin");
         factory.finalizeBootstrap();
 
         assertFalse(factory.bootstrapModeEnabled(), "Bootstrap mode should be disabled");
+        assertFalse(compositeOracle.authorizedCallers(address(this)), "finalize must revoke temporary oracle admins");
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
         );
         factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+    }
+
+    function testCannotAuthorizeCompositeOracleCallerAfterBootstrapFinalization() public {
+        factory.finalizeBootstrap();
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(SplitRiskPoolFactory.CompositeOracleAuthorizationClosed.selector);
+        factory.setCompositeOracleAuthorizedCaller(user1, true);
     }
 
     function testGovernanceCanStillAddTokenAfterBootstrapFinalization() public {
