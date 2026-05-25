@@ -388,7 +388,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
 
     function test_expiredEpochCommissionDustRedirectsAfterHistoricalClaims() public {
         uint256 backingAmount1 = 2e18;
-        uint256 backingAmount2 = 2e18 - 1e10;
+        uint256 backingAmount2 = 2e18 - 2e10;
         uint256 shieldAmount = backingAmount1 + backingAmount2;
 
         vm.prank(protector1);

@@ -275,6 +275,28 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         assertEq(pool.accumulatedCommissions(), commissionsBefore - carriedDust, "dust is no longer protector-reserved");
     }
 
+    function test_B4_pendingDustRedirectDoesNotCreateUnbackedProtocolFees() public {
+        _seedPositions();
+
+        stdstore.target(address(pool)).sig("pendingProtectorRewardDust()").checked_write(uint256(1));
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(uint256(0));
+        stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(0));
+
+        address newProtector = address(0xCAFE);
+        backingToken.mintShares(newProtector, 100e18);
+        vm.prank(newProtector);
+        backingToken.approve(address(pool), type(uint256).max);
+
+        uint256 protocolFeeBefore = pool.accumulatedProtocolFee();
+
+        vm.prank(newProtector);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        assertEq(pool.pendingProtectorRewardDust(), 0, "stale dust must be cleared before share mint");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore, "unbacked dust cannot become protocol fees");
+        assertEq(pool.accumulatedCommissions(), 0, "commission reserve must stay flat");
+    }
+
     function test_B4_claimRewards_RevertsWhenNoProtectorRedirectCannotFitProtocolBucket() public {
         (, uint256 shieldTokenId) = _seedPositions();
         _updateConfig(0, protocolFeeRecipient);

@@ -972,20 +972,34 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         pendingProtectorRewardDust = pendingDust > representedReward ? pendingDust - representedReward : 0;
     }
 
-    function _redirectPendingProtectorRewardDust(uint256 maxSafeAccumulation) internal returns (uint256 redirectedAmount) {
-        redirectedAmount = pendingProtectorRewardDust;
+    function _redirectPendingProtectorRewardDust(uint256 maxSafeAccumulation)
+        internal
+        returns (uint256 redirectedAmount)
+    {
+        uint256 pendingDust = pendingProtectorRewardDust;
+        if (pendingDust == 0) {
+            return 0;
+        }
+
+        pendingProtectorRewardDust = 0;
+
+        redirectedAmount = pendingDust;
+        if (redirectedAmount > accumulatedCommissions) {
+            redirectedAmount = accumulatedCommissions;
+        }
+        if (redirectedAmount > currentEpochCommissionReserve) {
+            redirectedAmount = currentEpochCommissionReserve;
+        }
         if (redirectedAmount == 0) {
             return 0;
         }
+
         if (accumulatedProtocolFee + redirectedAmount > maxSafeAccumulation) {
             revert ErrorsLib.RewardAccumulationIncomplete(redirectedAmount, accumulatedProtocolFee, 0);
         }
 
-        pendingProtectorRewardDust = 0;
-        accumulatedCommissions =
-            redirectedAmount >= accumulatedCommissions ? 0 : accumulatedCommissions - redirectedAmount;
-        currentEpochCommissionReserve =
-            redirectedAmount >= currentEpochCommissionReserve ? 0 : currentEpochCommissionReserve - redirectedAmount;
+        accumulatedCommissions -= redirectedAmount;
+        currentEpochCommissionReserve -= redirectedAmount;
         accumulatedProtocolFee += redirectedAmount;
     }
 
@@ -1396,12 +1410,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             uint256 expiredEpoch = protectorShareEpoch;
             protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
             protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
-            _redirectPendingProtectorRewardDust(ConstantsLib.MAX_SAFE_ACCUMULATION);
             if (currentEpochCommissionReserve != 0) {
                 protectorEpochRemainingReserve[expiredEpoch] += currentEpochCommissionReserve;
                 historicalCommissionReserve += currentEpochCommissionReserve;
                 currentEpochCommissionReserve = 0;
             }
+            pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
         }
