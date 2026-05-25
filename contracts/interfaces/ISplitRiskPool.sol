@@ -129,6 +129,7 @@ interface ISplitRiskPool {
     function accessControl() external view returns (address);
     function setAccessControl(address newAccessControl) external;
     function pause() external;
+    function sweepInactiveProtectorBackingDustFromFactory() external returns (uint256 sweptAmount);
     function paused() external view returns (bool);
 
     // Governance Functions

@@ -2467,6 +2467,51 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _pause();
     }
 
+    /// @notice Lets the factory clear a dust-only protector side before governance deactivates the pool.
+    /// @dev This is intentionally narrower than normal withdrawals: it only applies when there
+    ///      are no shielded liabilities, no reserved fees, and backing is at or below the pool
+    ///      minimum deposit amount. The residual is swept to the protocol fee recipient and
+    ///      the creation bond can then be forfeited by the factory.
+    function sweepInactiveProtectorBackingDustFromFactory()
+        external
+        nonReentrant
+        whenPaused
+        returns (uint256 sweptAmount)
+    {
+        if (msg.sender != _poolFactoryController()) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "sweepInactiveProtectorBackingDustFromFactory");
+        }
+        if (
+            totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0
+                || getReservedFees() != 0 || poolState.shieldedTokenBalance != 0
+                || poolState.totalBackingTokenBalance != totalProtectorTokens
+        ) {
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
+        }
+
+        sweptAmount = totalProtectorTokens;
+        if (sweptAmount == 0) {
+            return 0;
+        }
+        if (sweptAmount > poolConfig.backingMinDepositAmount) {
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
+        }
+
+        if (totalProtectorShares != 0) {
+            uint256 expiredEpoch = protectorShareEpoch;
+            protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
+            protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
+            pendingProtectorRewardDust = 0;
+            totalProtectorShares = 0;
+            protectorShareEpoch += 1;
+        }
+
+        totalProtectorTokens = 0;
+        poolState.totalBackingTokenBalance = 0;
+        uint256 received = _transferOutAndGetReceived(BACKING_TOKEN, poolConfig.protocolFeeRecipient, sweptAmount);
+        emit EventsLib.ProtectorResidualBackingSwept(poolConfig.protocolFeeRecipient, BACKING_TOKEN, received);
+    }
+
     /// @notice Unpauses the pool, resuming normal operations
     /// @dev Only callable by governance
     function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernance {

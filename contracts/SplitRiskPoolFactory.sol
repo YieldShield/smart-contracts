@@ -891,6 +891,25 @@ contract SplitRiskPoolFactory is
         emit EventsLib.PoolDeactivated(pool);
     }
 
+    /// @notice Deactivates a dust-only pool and frees its active slot.
+    /// @dev Governance-only escape hatch for pool-cap griefing. The pool itself enforces
+    ///      that no shielded liabilities or reserved fees remain and that protector backing
+    ///      is at or below its configured minimum deposit amount before sweeping it.
+    function deactivateDustPool(address pool) external onlyGovernance nonReentrant {
+        if (_poolInfo[pool].shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
+        if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
+
+        ISplitRiskPool targetPool = ISplitRiskPool(pool);
+        if (!targetPool.paused()) {
+            SplitRiskPool(payable(pool)).pauseFromFactory();
+        }
+        targetPool.sweepInactiveProtectorBackingDustFromFactory();
+        _pauseAndRequirePoolEmpty(pool);
+        _removeActivePool(pool);
+        _forfeitCreationBond(pool);
+        emit EventsLib.PoolDeactivated(pool);
+    }
+
     /**
      * @notice Closes an empty pool and returns the active-slot stake to the creator
      * @param pool Address of the pool to close

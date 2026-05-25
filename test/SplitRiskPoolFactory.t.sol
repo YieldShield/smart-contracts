@@ -1204,6 +1204,62 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
     }
 
+    function testDeactivateDustPoolSweepsMinimumBackingAndFreesActiveSlot() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        (,, uint256 backingMinDepositAmount,,,,,,,) = pool.poolConfig();
+
+        tokenB.mint(user1, backingMinDepositAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, backingMinDepositAmount);
+        pool.depositBackingAsset(address(tokenB), backingMinDepositAmount, 0);
+        vm.stopPrank();
+
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        vm.prank(governanceTimelock);
+        factory.deactivateDustPool(poolAddress);
+
+        assertEq(factory.activePoolCount(), 0, "Dust deactivation should free the active slot");
+        assertFalse(factory.isPoolActive(poolAddress), "Dust pool should no longer be active");
+        assertEq(pool.totalProtectorTokens(), 0, "Protector dust should be swept");
+        assertEq(pool.totalProtectorShares(), 0, "Protector shares should be expired");
+        (, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, 0, "Tracked backing balance should be cleared");
+        assertEq(
+            tokenB.balanceOf(user2) - recipientBalanceBefore,
+            expectedBondAmount + backingMinDepositAmount,
+            "Protocol recipient should receive bond plus swept dust"
+        );
+
+        address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
+        assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
+        assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testDeactivateDustPoolRevertsForMaterialBacking() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        (,, uint256 backingMinDepositAmount,,,,,,,) = pool.poolConfig();
+        uint256 materialAmount = backingMinDepositAmount + 1;
+
+        tokenB.mint(user1, materialAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, materialAmount);
+        pool.depositBackingAsset(address(tokenB), materialAmount, 0);
+        vm.stopPrank();
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.deactivateDustPool(poolAddress);
+
+        assertTrue(factory.isPoolActive(poolAddress), "Material pool should remain active");
+        assertFalse(pool.paused(), "Reverted dust deactivation should not leave pool paused");
+    }
+
     // ============ INFO-6 FIX: Multi-Pool Interaction Tests ============
 
     function testMultiPool_UserCanDepositInMultiplePools() public {
