@@ -2,6 +2,9 @@ const { existsSync, readFileSync, readdirSync, statSync } = require("fs");
 const { join } = require("path");
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
+const PUBLIC_BROADCAST_SCRIPTS = new Set(["DeployYieldShieldProduction.s.sol"]);
+const LOCAL_BROADCAST_SCRIPTS = new Set(["DeployYieldShield.s.sol", "Deploy.s.sol", "DeployYieldShieldProduction.s.sol"]);
 
 const PYTH_TOKEN_CONFIGS = [
     {
@@ -115,6 +118,19 @@ function normalizeChainId(chainId) {
     return String(chainId);
 }
 
+function isLocalChain(chainId) {
+    return LOCAL_CHAIN_IDS.has(String(chainId));
+}
+
+function isValidNonZeroAddress(address) {
+    return /^0x[a-fA-F0-9]{40}$/u.test(String(address || "")) && address.toLowerCase() !== ZERO_ADDRESS;
+}
+
+function allowsBroadcastFallback(chainId, env = process.env, explicitAllow) {
+    if (explicitAllow !== undefined) return Boolean(explicitAllow);
+    return isLocalChain(chainId) || env.YS_ALLOW_BROADCAST_FALLBACK === "1";
+}
+
 function getDeploymentFilePath(rootDir, chainId) {
     const normalizedChainId = normalizeChainId(chainId);
     if (!normalizedChainId) {
@@ -156,7 +172,10 @@ function listLatestBroadcastRecords(rootDir, chainId) {
         return [];
     }
 
+    const allowedScripts = isLocalChain(normalizedChainId) ? LOCAL_BROADCAST_SCRIPTS : PUBLIC_BROADCAST_SCRIPTS;
+
     return readdirSync(broadcastDir)
+        .filter((scriptName) => allowedScripts.has(scriptName))
         .map((scriptName) =>
             readJsonFileRecord(
                 join(
@@ -216,18 +235,52 @@ function getBroadcastAddresses(broadcast, contractName) {
 
     const seen = new Set();
     const addresses = [];
-    for (const transaction of broadcast.transactions) {
-        if (
-            transaction.contractName !== contractName ||
-            !transaction.contractAddress
-        )
-            continue;
-        const normalized = transaction.contractAddress.toLowerCase();
-        if (normalized === ZERO_ADDRESS || seen.has(normalized)) continue;
+    const addAddress = (address) => {
+        if (!isValidNonZeroAddress(address)) return;
+        const normalized = address.toLowerCase();
+        if (seen.has(normalized)) return;
         seen.add(normalized);
-        addresses.push(transaction.contractAddress);
+        addresses.push(address);
+    };
+
+    for (const transaction of broadcast.transactions) {
+        if (transaction.transactionType !== "CREATE") continue;
+
+        if (transaction.contractName === contractName) {
+            addAddress(transaction.contractAddress);
+        }
+
+        const additionalContracts = Array.isArray(transaction.additionalContracts)
+            ? transaction.additionalContracts
+            : [];
+        const proxyWrapsTarget =
+            transaction.contractName === "ERC1967Proxy" &&
+            additionalContracts.some((entry) => (entry.name || entry.contractName) === contractName);
+        if (proxyWrapsTarget) {
+            addAddress(transaction.contractAddress);
+        }
+
+        for (const entry of additionalContracts) {
+            if ((entry.name || entry.contractName) !== contractName) continue;
+            if (entry.transactionType && entry.transactionType !== "CREATE") continue;
+            addAddress(entry.address || entry.contractAddress);
+        }
     }
     return addresses;
+}
+
+function getLatestBroadcastAddress(rootDir, chainId, contractName) {
+    for (const record of listLatestBroadcastRecords(rootDir, chainId)) {
+        const addresses = getBroadcastAddresses(record.data, contractName);
+        if (addresses.length > 0) {
+            return {
+                address: addresses[addresses.length - 1],
+                record,
+            };
+        }
+    }
+
+    return { address: null, record: null };
 }
 
 function getLatestDeploymentRecord(rootDir) {
@@ -334,6 +387,7 @@ function resolveContractAddress({
     chainId,
     contractName,
     env = process.env,
+    allowBroadcastFallback,
 } = {}) {
     if (!rootDir || !contractName) {
         return null;
@@ -353,56 +407,46 @@ function resolveContractAddress({
     const latestDeploymentAddress =
         deploymentAddresses[deploymentAddresses.length - 1] || null;
 
-    const broadcastRecord = readLatestBroadcastRecord(rootDir, resolvedChainId);
-    const broadcast = broadcastRecord?.data || null;
-    const broadcastAddresses = getBroadcastAddresses(broadcast, contractName);
-    const latestBroadcastAddress =
-        broadcastAddresses[broadcastAddresses.length - 1] || null;
-
-    if (latestBroadcastAddress && latestDeploymentAddress) {
-        return broadcastRecord.mtimeMs >= deploymentRecord.mtimeMs
-            ? latestBroadcastAddress
-            : latestDeploymentAddress;
+    if (latestDeploymentAddress) {
+        return latestDeploymentAddress;
     }
 
-    return latestBroadcastAddress || latestDeploymentAddress || null;
+    if (!allowsBroadcastFallback(resolvedChainId, env, allowBroadcastFallback)) {
+        return null;
+    }
+
+    return getLatestBroadcastAddress(rootDir, resolvedChainId, contractName).address;
 }
 
-function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
+function resolvePythTokenConfigs({ rootDir, chainId, env = process.env, allowBroadcastFallback } = {}) {
     const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
     const deploymentRecord =
         rootDir && resolvedChainId
             ? readDeploymentRecord(rootDir, resolvedChainId)
             : null;
     const deploymentData = deploymentRecord?.data || null;
-    const broadcastRecord =
-        rootDir && resolvedChainId
-            ? readLatestBroadcastRecord(rootDir, resolvedChainId)
-            : null;
-    const broadcast = broadcastRecord?.data || null;
-    const preferDeployment =
-        deploymentRecord &&
-        (!broadcastRecord ||
-            deploymentRecord.mtimeMs > broadcastRecord.mtimeMs);
+    const useBroadcastFallback = allowsBroadcastFallback(resolvedChainId, env, allowBroadcastFallback);
 
     return PYTH_TOKEN_CONFIGS.map((config) => {
         const deploymentAddress = getDeploymentAddresses(
             deploymentData,
             config.contractName,
         )[config.broadcastIndex];
-        const broadcastAddress = getBroadcastAddresses(
-            broadcast,
-            config.contractName,
-        )[config.broadcastIndex];
+        let broadcastAddress = null;
+        if (useBroadcastFallback) {
+            const broadcastRecord = getLatestBroadcastAddress(rootDir, resolvedChainId, config.contractName).record;
+            broadcastAddress = broadcastRecord
+                ? getBroadcastAddresses(broadcastRecord.data, config.contractName)[config.broadcastIndex]
+                : null;
+        }
         const envAddress = env[config.env] || null;
         return {
             ...config,
             chainId: resolvedChainId,
             address:
                 envAddress ||
-                (preferDeployment
-                    ? deploymentAddress || broadcastAddress
-                    : broadcastAddress || deploymentAddress) ||
+                deploymentAddress ||
+                broadcastAddress ||
                 null,
         };
     });
@@ -410,6 +454,7 @@ function resolvePythTokenConfigs({ rootDir, chainId, env = process.env } = {}) {
 
 module.exports = {
     PYTH_TOKEN_CONFIGS,
+    getBroadcastAddresses,
     getDeploymentAddresses,
     getDeploymentFilePath,
     getLatestBroadcastChainId,

@@ -188,12 +188,12 @@ contract DeploymentMetadataTest is Test {
         assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), factory);
     }
 
-    function test_selectFreshestAddress_PrefersNewerBroadcastWhenBothSourcesExist() public {
+    function test_selectFreshestAddress_PrefersDeploymentMetadataWhenBothSourcesExist() public {
         (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID);
         address deploymentAddr = address(0x1001);
         address broadcastAddr = address(0x1002);
 
-        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 100, broadcastAddr, 200), broadcastAddr);
+        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 100, broadcastAddr, 200), deploymentAddr);
     }
 
     function test_selectFreshestAddress_PrefersNewerDeploymentWhenBroadcastIsOlder() public {
@@ -222,6 +222,28 @@ contract DeploymentMetadataTest is Test {
         assertEq(resolved.length, 2);
         assertEq(resolved[0], mockA);
         assertEq(resolved[1], mockB);
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+        _removeBroadcastFileIfPresent(broadcastPath);
+    }
+
+    function test_resolveDeploymentAddresses_IgnoresBroadcastCallTransactions() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 3);
+        address mockA = address(0x5001);
+        string memory broadcastPath = _broadcastPathForChain(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 3);
+
+        _writeBroadcastJson(
+            broadcastPath,
+            string.concat(
+                '{"transactions":[{"transactionType":"CALL","contractName":"MockERC20","contractAddress":"',
+                vm.toString(mockA),
+                '"}],"receipts":[]}'
+            )
+        );
+
+        address[] memory resolved = deployHelpers.resolveDeploymentAddressesHarness("MockERC20");
+        assertEq(resolved.length, 0);
 
         _removeDeploymentFileIfPresent(deploymentPath);
         _removeBroadcastFileIfPresent(broadcastPath);

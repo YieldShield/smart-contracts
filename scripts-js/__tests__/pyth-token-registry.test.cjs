@@ -4,6 +4,7 @@ const { mkdtempSync, mkdirSync, writeFileSync, utimesSync } = require("fs");
 const { tmpdir } = require("os");
 const { dirname, join } = require("path");
 const {
+    getBroadcastAddresses,
     readLatestBroadcast,
     resolveContractAddress,
     resolveDeploymentChainId,
@@ -124,7 +125,7 @@ test("resolveContractAddress returns the newest deployment address when no newer
     );
 });
 
-test("resolveContractAddress prefers a newer broadcast over an older deployment file", () => {
+test("resolveContractAddress keeps deployment metadata authoritative over newer broadcasts", () => {
     const rootDir = makeTempRoot();
     const older = Date.now() - 20_000;
     const newer = Date.now() - 10_000;
@@ -164,8 +165,94 @@ test("resolveContractAddress prefers a newer broadcast over an older deployment 
             contractName: "PythOracle",
             env: {},
         }),
-        "0x00000000000000000000000000000000000000b2",
+        "0x00000000000000000000000000000000000000b1",
     );
+});
+
+test("resolveContractAddress requires explicit broadcast fallback on public chains", () => {
+    const rootDir = makeTempRoot();
+
+    writeJson(
+        join(
+            rootDir,
+            "broadcast",
+            "DeployYieldShieldProduction.s.sol",
+            "421614",
+            "run-latest.json",
+        ),
+        {
+            transactions: [
+                {
+                    transactionType: "CREATE",
+                    contractName: "PythOracle",
+                    contractAddress:
+                        "0x00000000000000000000000000000000000000b3",
+                },
+            ],
+        },
+    );
+
+    assert.equal(
+        resolveContractAddress({
+            rootDir,
+            chainId: "421614",
+            contractName: "PythOracle",
+            env: {},
+        }),
+        null,
+    );
+    assert.equal(
+        resolveContractAddress({
+            rootDir,
+            chainId: "421614",
+            contractName: "PythOracle",
+            env: { YS_ALLOW_BROADCAST_FALLBACK: "1" },
+        }),
+        "0x00000000000000000000000000000000000000b3",
+    );
+});
+
+test("getBroadcastAddresses ignores calls and invalid addresses", () => {
+    const broadcast = {
+        transactions: [
+            {
+                transactionType: "CALL",
+                contractName: "PythOracle",
+                contractAddress: "0x00000000000000000000000000000000000000c1",
+            },
+            {
+                transactionType: "CREATE",
+                contractName: "PythOracle",
+                contractAddress: "not-an-address",
+            },
+            {
+                transactionType: "CREATE",
+                contractName: "PythOracle",
+                contractAddress: "0x00000000000000000000000000000000000000c2",
+            },
+        ],
+    };
+
+    assert.deepEqual(getBroadcastAddresses(broadcast, "PythOracle"), [
+        "0x00000000000000000000000000000000000000c2",
+    ]);
+});
+
+test("getBroadcastAddresses resolves proxy addresses through additionalContracts", () => {
+    const broadcast = {
+        transactions: [
+            {
+                transactionType: "CREATE",
+                contractName: "ERC1967Proxy",
+                contractAddress: "0x00000000000000000000000000000000000000d1",
+                additionalContracts: [{ name: "SplitRiskPoolFactory" }],
+            },
+        ],
+    };
+
+    assert.deepEqual(getBroadcastAddresses(broadcast, "SplitRiskPoolFactory"), [
+        "0x00000000000000000000000000000000000000d1",
+    ]);
 });
 
 test("resolvePythTokenConfigs prefers explicit env overrides over local broadcast addresses", () => {

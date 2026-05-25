@@ -266,8 +266,11 @@ contract ScaffoldETHDeploy is Script {
         address broadcastAddr,
         uint256 broadcastModifiedAt
     ) internal pure returns (address) {
+        deploymentModifiedAt;
+        broadcastModifiedAt;
+
         if (deploymentAddr != address(0) && broadcastAddr != address(0)) {
-            return broadcastModifiedAt >= deploymentModifiedAt ? broadcastAddr : deploymentAddr;
+            return deploymentAddr;
         }
 
         if (deploymentAddr != address(0)) {
@@ -283,8 +286,11 @@ contract ScaffoldETHDeploy is Script {
         address[] memory broadcastAddresses,
         uint256 broadcastModifiedAt
     ) internal pure returns (address[] memory) {
+        deploymentModifiedAt;
+        broadcastModifiedAt;
+
         if (deploymentAddresses.length > 0 && broadcastAddresses.length > 0) {
-            return broadcastModifiedAt >= deploymentModifiedAt ? broadcastAddresses : deploymentAddresses;
+            return deploymentAddresses;
         }
 
         if (deploymentAddresses.length > 0) {
@@ -303,6 +309,10 @@ contract ScaffoldETHDeploy is Script {
         uint256 transactionCount = _broadcastTransactionCount(content);
 
         for (uint256 idx = 0; idx < transactionCount; idx++) {
+            if (!_broadcastTransactionIsCreate(content, idx)) {
+                continue;
+            }
+
             string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
             string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
 
@@ -332,6 +342,10 @@ contract ScaffoldETHDeploy is Script {
         uint256 transactionCount = _broadcastTransactionCount(content);
 
         for (uint256 idx = 0; idx < transactionCount && count < 20; idx++) {
+            if (!_broadcastTransactionIsCreate(content, idx)) {
+                continue;
+            }
+
             string memory namePath = string.concat(".transactions[", vm.toString(idx), "].contractName");
             string memory addrPath = string.concat(".transactions[", vm.toString(idx), "].contractAddress");
 
@@ -365,6 +379,16 @@ contract ScaffoldETHDeploy is Script {
             result[i] = found[i];
         }
         return result;
+    }
+
+    function _broadcastTransactionIsCreate(string memory content, uint256 idx) internal pure returns (bool) {
+        string memory txTypePath = string.concat(".transactions[", vm.toString(idx), "].transactionType");
+        try vm.parseJson(content, txTypePath) returns (bytes memory typeBytes) {
+            (bool validType, string memory transactionType) = _tryDecodeJsonString(typeBytes);
+            return validType && keccak256(bytes(transactionType)) == keccak256(bytes("CREATE"));
+        } catch {
+            return false;
+        }
     }
 
     function _broadcastTransactionCount(string memory content) internal pure returns (uint256) {
