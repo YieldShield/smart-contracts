@@ -26,6 +26,7 @@ contract MockUniswapV3Pool {
     int24 public tick;
     uint128 public averageLiquidity;
     bool public shouldRevertObserve;
+    bool public shouldReturnDescendingLiquidityCumulatives;
 
     constructor(address token0_, address token1_, int24 tick_, uint128 averageLiquidity_) {
         token0 = token0_;
@@ -42,6 +43,10 @@ contract MockUniswapV3Pool {
         shouldRevertObserve = shouldRevertObserve_;
     }
 
+    function setShouldReturnDescendingLiquidityCumulatives(bool enabled) external {
+        shouldReturnDescendingLiquidityCumulatives = enabled;
+    }
+
     function observe(uint32[] calldata secondsAgos)
         external
         view
@@ -55,6 +60,11 @@ contract MockUniswapV3Pool {
         tickCumulatives[1] = int56(tick) * int56(uint56(period));
 
         secondsPerLiquidityCumulativeX128s = new uint160[](2);
+        if (shouldReturnDescendingLiquidityCumulatives) {
+            secondsPerLiquidityCumulativeX128s[0] = 2;
+            secondsPerLiquidityCumulativeX128s[1] = 1;
+            return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
+        }
         secondsPerLiquidityCumulativeX128s[0] = 0;
         secondsPerLiquidityCumulativeX128s[1] =
             averageLiquidity == 0 ? type(uint160).max : uint160((uint256(period) << 128) / averageLiquidity);
@@ -272,6 +282,24 @@ contract UniswapV3TWAPFeedTest is Test {
         assertEq(harness.scheduledQuoteTokenOraclePrice(), 1e8);
     }
 
+    function test_quoteTokenOracleFailover_RevertsWhenOldOracleStillDisagrees() public {
+        MockOracle newQuoteOracle = new MockOracle();
+        newQuoteOracle.setPrice(address(quoteToken), 2e8);
+
+        harness.scheduleQuoteTokenOracleFailover(address(newQuoteOracle));
+        uint256 executableAt = block.timestamp + harness.QUOTE_ORACLE_FAILOVER_DELAY();
+        vm.warp(executableAt);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TWAPFeed.QuoteOracleSwapDeviationTooHigh.selector, 1e8, 2e8, 10000)
+        );
+        harness.executeQuoteTokenOracleFailover();
+
+        assertEq(address(harness.quoteTokenOracle()), address(quoteOracle));
+        assertEq(address(harness.scheduledQuoteTokenOracle()), address(newQuoteOracle));
+        assertEq(harness.scheduledQuoteTokenOraclePrice(), 2e8);
+    }
+
     function test_isPriceStale_ReflectsObserveAndLiquidityFailures() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         MockUniswapV3Pool pool =
@@ -289,6 +317,12 @@ contract UniswapV3TWAPFeedTest is Test {
 
         pool.setAverageLiquidity(harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
         pool.setShouldRevertObserve(true);
+        (isStale, publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+
+        pool.setShouldRevertObserve(false);
+        pool.setShouldReturnDescendingLiquidityCumulatives(true);
         (isStale, publishTime) = harness.isPriceStale(address(token));
         assertTrue(isStale);
         assertEq(publishTime, 0);

@@ -321,6 +321,15 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         }
 
         address oldOracle = address(quoteTokenOracle);
+        if (oldOracle != address(0)) {
+            try IOracleFeed(oldOracle).getPrice(quoteToken) returns (uint256 oldPrice) {
+                uint256 oldDeviationBps = _absoluteDeviationBps(oldPrice, newPrice);
+                if (oldDeviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
+                    revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, oldDeviationBps);
+                }
+                emit QuoteTokenOracleSwapPrices(oldPrice, newPrice, oldDeviationBps);
+            } catch { }
+        }
         quoteTokenOracle = IOracleFeed(newOracle);
         scheduledQuoteTokenOracle = address(0);
         scheduledQuoteTokenOracleTime = 0;
@@ -507,6 +516,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     }
 
     function _getAverageLiquidity(uint160[] memory secondsPerLiquidityCumulativeX128s) internal view returns (uint128) {
+        if (secondsPerLiquidityCumulativeX128s[1] <= secondsPerLiquidityCumulativeX128s[0]) {
+            return 0;
+        }
         uint160 delta = secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
         if (delta == 0) {
             // Fail closed: a zero delta means no liquidity-weighted activity was
