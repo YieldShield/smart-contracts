@@ -162,6 +162,31 @@ contract DeploymentMetadataTest is Test {
         assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), currentFactory);
     }
 
+    function test_findAddressByName_IgnoresSubstringContractNameMatches() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID + 2);
+        string memory jsonObjectKey = "find-exact";
+        address implementation = address(0xAAAA);
+        address factory = address(0xBBBB);
+
+        vm.serializeString(jsonObjectKey, vm.toString(implementation), "SplitRiskPoolFactoryImplementation");
+        string memory json = vm.serializeString(jsonObjectKey, vm.toString(factory), "SplitRiskPoolFactory");
+
+        assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), factory);
+    }
+
+    function test_findAddressByName_IgnoresSubstringMatchesWhenImplementationSerializedLast() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID + 3);
+        string memory jsonObjectKey = "find-exact-reversed";
+        address factory = address(0xBBBB);
+        address implementation = address(0xAAAA);
+
+        vm.serializeString(jsonObjectKey, vm.toString(factory), "SplitRiskPoolFactory");
+        string memory json =
+            vm.serializeString(jsonObjectKey, vm.toString(implementation), "SplitRiskPoolFactoryImplementation");
+
+        assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), factory);
+    }
+
     function test_selectFreshestAddress_PrefersNewerBroadcastWhenBothSourcesExist() public {
         (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID);
         address deploymentAddr = address(0x1001);

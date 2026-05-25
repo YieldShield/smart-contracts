@@ -422,45 +422,35 @@ contract ScaffoldETHDeploy is Script {
     {
         address[] memory found = new address[](20);
         uint256 count = 0;
+        bytes32 targetNameHash = keccak256(bytes(contractName));
 
-        bytes memory jsonBytes = bytes(json);
-        bytes memory nameBytes = bytes(contractName);
-
-        uint256 searchIndex = 0;
-        while (searchIndex < jsonBytes.length && count < 20) {
-            uint256 nameIndex = _indexOfFrom(jsonBytes, nameBytes, searchIndex);
-            if (nameIndex == type(uint256).max) {
-                break;
-            }
-
-            uint256 lowerBound = nameIndex > 100 ? nameIndex - 100 : 0;
-            for (uint256 i = nameIndex; i > lowerBound; i--) {
-                if (jsonBytes[i] == '"' && i >= 42) {
-                    if (jsonBytes[i - 42] == "0" && jsonBytes[i - 41] == "x") {
-                        bytes memory addrBytes = new bytes(42);
-                        for (uint256 j = 0; j < 42; j++) {
-                            addrBytes[j] = jsonBytes[i - 42 + j];
-                        }
-                        address addr = vm.parseAddress(string(addrBytes));
-
-                        bool exists = false;
-                        for (uint256 k = 0; k < count; k++) {
-                            if (found[k] == addr) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            found[count] = addr;
-                            count++;
-                        }
-                        break;
-                    }
+        try vm.parseJsonKeys(json, ".") returns (string[] memory keys) {
+            for (uint256 i = 0; i < keys.length && count < 20; i++) {
+                if (!_isAddressJsonKey(keys[i])) {
+                    continue;
                 }
-            }
 
-            searchIndex = nameIndex + nameBytes.length;
-        }
+                string memory jsonPath = string.concat(".", keys[i]);
+                try vm.parseJsonString(json, jsonPath) returns (string memory name) {
+                    if (keccak256(bytes(name)) != targetNameHash) {
+                        continue;
+                    }
+
+                    address addr = vm.parseAddress(keys[i]);
+                    bool exists = false;
+                    for (uint256 k = 0; k < count; k++) {
+                        if (found[k] == addr) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
+                        found[count] = addr;
+                        count++;
+                    }
+                } catch { }
+            }
+        } catch { }
 
         address[] memory result = new address[](count);
         for (uint256 i = 0; i < count; i++) {
