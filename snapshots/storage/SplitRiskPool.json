@@ -275,6 +275,13 @@
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "governanceAccessControlInstalled",
+      "offset": 1,
+      "slot": "92",
+      "type": "t_bool"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "currentEpochCommissionReserve",
       "offset": 0,
       "slot": "93",
@@ -338,10 +345,24 @@
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
-      "label": "__gap",
+      "label": "pendingProtectorRewardDust",
       "offset": 0,
       "slot": "100",
-      "type": "t_array(t_uint256)30_storage"
+      "type": "t_uint256"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "shieldedTokenTransferIntegrityBroken",
+      "offset": 0,
+      "slot": "101",
+      "type": "t_bool"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "102",
+      "type": "t_array(t_uint256)27_storage"
     }
   ],
   "types": {
@@ -350,10 +371,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)30_storage": {
+    "t_array(t_uint256)27_storage": {
       "encoding": "inplace",
-      "label": "uint256[30]",
-      "numberOfBytes": "960",
+      "label": "uint256[27]",
+      "numberOfBytes": "864",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {

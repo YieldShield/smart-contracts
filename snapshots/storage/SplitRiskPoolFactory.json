@@ -149,10 +149,31 @@
     },
     {
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
-      "label": "__gap",
+      "label": "_trackedCompositeOracleAuthorizedCallers",
       "offset": 0,
       "slot": "67",
-      "type": "t_array(t_uint256)42_storage"
+      "type": "t_array(t_address)dyn_storage"
+    },
+    {
+      "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
+      "label": "_compositeOracleAuthorizedCallerSeen",
+      "offset": 0,
+      "slot": "68",
+      "type": "t_mapping(t_address,t_bool)"
+    },
+    {
+      "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
+      "label": "_compositeOracleAuthorizedCallerActive",
+      "offset": 0,
+      "slot": "69",
+      "type": "t_mapping(t_address,t_bool)"
+    },
+    {
+      "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "70",
+      "type": "t_array(t_uint256)39_storage"
     }
   ],
   "types": {
@@ -167,10 +188,10 @@
       "numberOfBytes": "32",
       "base": "t_address"
     },
-    "t_array(t_uint256)42_storage": {
+    "t_array(t_uint256)39_storage": {
       "encoding": "inplace",
-      "label": "uint256[42]",
-      "numberOfBytes": "1344",
+      "label": "uint256[39]",
+      "numberOfBytes": "1248",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {
