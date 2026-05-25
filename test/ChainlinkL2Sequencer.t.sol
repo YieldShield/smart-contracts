@@ -211,6 +211,15 @@ contract ChainlinkL2SequencerTest is Test {
         assertEq(timeSinceUp, 1800);
     }
 
+    function test_IsPriceStale_ReturnsTrueInSequencerGracePeriod() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, 0);
+    }
+
     // ============ Sequencer Down ============
 
     function test_GetPrice_RevertsWhenSequencerDown() public {
@@ -234,6 +243,17 @@ contract ChainlinkL2SequencerTest is Test {
         (bool isUp, bool gracePeriodPassed,) = chainlinkFeed.getSequencerStatus();
         assertFalse(isUp);
         assertTrue(gracePeriodPassed);
+    }
+
+    function test_IsPriceStale_ReturnsTrueWhenSequencerDown() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        mockSequencerFeed.setSequencerUp(false);
+        vm.warp(block.timestamp + 7200);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, 0);
     }
 
     // ============ Sequencer Recovery Scenarios ============
@@ -269,6 +289,17 @@ contract ChainlinkL2SequencerTest is Test {
         assertEq(price, uint256(ETH_PRICE));
     }
 
+    function test_IsPriceStale_ReturnsTrueForFutureSequencerStartedAt() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        vm.warp(block.timestamp + 3601);
+        mockSequencerFeed.setStartedAt(block.timestamp + 1);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, 0);
+    }
+
     // ============ GRACE_PERIOD_TIME Constant ============
 
     function test_GracePeriodTimeConstant() public view {
@@ -297,5 +328,16 @@ contract ChainlinkL2SequencerTest is Test {
 
         uint256 price = chainlinkFeed.getPrice(testToken);
         assertEq(price, 2500e8);
+    }
+
+    function test_IsPriceStale_ReturnsFeedFreshnessAfterSequencerGracePeriod() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        vm.warp(block.timestamp + 3601);
+        mockPriceFeed.setPrice(2500e8);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertFalse(isStale);
+        assertEq(updatedAt, block.timestamp);
     }
 }

@@ -456,6 +456,10 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             return (true, 0);
         }
 
+        if (_isSequencerUnavailableForStaleness()) {
+            return (true, 0);
+        }
+
         AggregatorV3Interface feed = tokenFeeds[token];
         (,,, uint256 _updatedAt,) = feed.latestRoundData();
         updatedAt = _updatedAt;
@@ -484,6 +488,28 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         }
         timeSinceUp = block.timestamp - startedAt;
         gracePeriodPassed = timeSinceUp > GRACE_PERIOD_TIME;
+    }
+
+    function _isSequencerUnavailableForStaleness() internal view returns (bool) {
+        if (address(sequencerUptimeFeed) == address(0)) {
+            return false;
+        }
+
+        try sequencerUptimeFeed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
+            if (startedAt == 0) {
+                return true;
+            }
+            if (answer != 0) {
+                return true;
+            }
+            if (startedAt > block.timestamp) {
+                return true;
+            }
+
+            return block.timestamp - startedAt <= GRACE_PERIOD_TIME;
+        } catch {
+            return true;
+        }
     }
 
     /// @notice Check if L2 sequencer is up and grace period has passed
