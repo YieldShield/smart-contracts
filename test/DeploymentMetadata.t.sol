@@ -50,6 +50,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
     uint256 internal constant FRESHEST_RESOLUTION_TEST_CHAIN_ID = 777_777_782;
     uint256 internal constant EMPTY_EXPORT_TEST_CHAIN_ID = 777_777_783;
+    uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_784;
 
     function test_exportDeployments_PreservesExistingEntriesNotSupersededByCurrentRun() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);
@@ -163,7 +164,7 @@ contract DeploymentMetadataTest is Test {
     }
 
     function test_findAddressByName_IgnoresSubstringContractNameMatches() public {
-        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID + 2);
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(EXACT_MATCH_TEST_CHAIN_ID);
         string memory jsonObjectKey = "find-exact";
         address implementation = address(0xAAAA);
         address factory = address(0xBBBB);
@@ -175,7 +176,7 @@ contract DeploymentMetadataTest is Test {
     }
 
     function test_findAddressByName_IgnoresSubstringMatchesWhenImplementationSerializedLast() public {
-        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(CURRENT_RUN_DEDUPE_TEST_CHAIN_ID + 3);
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(EXACT_MATCH_TEST_CHAIN_ID + 1);
         string memory jsonObjectKey = "find-exact-reversed";
         address factory = address(0xBBBB);
         address implementation = address(0xAAAA);
