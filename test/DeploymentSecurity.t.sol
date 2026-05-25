@@ -19,15 +19,21 @@ import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 
 contract ProductionDeployHarness is DeployYieldShieldProduction {
     function validateProductionBootstrapHolder(address holder) external view {
-        _validateProductionBootstrapHolder(holder, holder.codehash, _readMasterCopy(holder));
+        _validateProductionBootstrapHolder(
+            holder, holder.codehash, _readMasterCopy(holder), _readThreshold(holder), _readOwnersHash(holder)
+        );
     }
 
     function validateProductionBootstrapHolderPinned(
         address holder,
         bytes32 expectedCodehash,
-        address expectedSingleton
+        address expectedSingleton,
+        uint256 expectedThreshold,
+        bytes32 expectedOwnersHash
     ) external view {
-        _validateProductionBootstrapHolder(holder, expectedCodehash, expectedSingleton);
+        _validateProductionBootstrapHolder(
+            holder, expectedCodehash, expectedSingleton, expectedThreshold, expectedOwnersHash
+        );
     }
 
     function validateProductionPythConfig(address pythAddress, uint256 maxPriceAge, bool updaterConfirmed)
@@ -41,6 +47,20 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("masterCopy()"));
         if (success && data.length >= 32) {
             singleton = abi.decode(data, (address));
+        }
+    }
+
+    function _readThreshold(address holder) internal view returns (uint256 threshold) {
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("getThreshold()"));
+        if (success && data.length >= 32) {
+            threshold = abi.decode(data, (uint256));
+        }
+    }
+
+    function _readOwnersHash(address holder) internal view returns (bytes32 ownersHash) {
+        (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("getOwners()"));
+        if (success && data.length >= 64) {
+            ownersHash = keccak256(abi.encode(abi.decode(data, (address[]))));
         }
     }
 }
@@ -245,7 +265,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
                 wrongCodehash
             )
         );
-        harness.validateProductionBootstrapHolderPinned(address(contractHolder), wrongCodehash, expectedSingleton);
+        harness.validateProductionBootstrapHolderPinned(
+            address(contractHolder), wrongCodehash, expectedSingleton, 2, keccak256(abi.encode(owners))
+        );
     }
 
     function test_ProductionBootstrap_RejectsWrongBootstrapHolderSingleton() public {
@@ -264,7 +286,50 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         harness.validateProductionBootstrapHolderPinned(
-            address(contractHolder), address(contractHolder).codehash, address(0xBAD)
+            address(contractHolder), address(contractHolder).codehash, address(0xBAD), 2, keccak256(abi.encode(owners))
+        );
+    }
+
+    function test_ProductionBootstrap_RejectsWrongBootstrapHolderThreshold() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address expectedSingleton = contractHolder.masterCopy();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderThreshold.selector,
+                address(contractHolder),
+                2,
+                3
+            )
+        );
+        harness.validateProductionBootstrapHolderPinned(
+            address(contractHolder), address(contractHolder).codehash, expectedSingleton, 3, keccak256(abi.encode(owners))
+        );
+    }
+
+    function test_ProductionBootstrap_RejectsWrongBootstrapHolderOwnersHash() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address expectedSingleton = contractHolder.masterCopy();
+        bytes32 wrongOwnersHash = keccak256("wrong owners hash");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderOwnersHash.selector,
+                address(contractHolder),
+                keccak256(abi.encode(owners)),
+                wrongOwnersHash
+            )
+        );
+        harness.validateProductionBootstrapHolderPinned(
+            address(contractHolder), address(contractHolder).codehash, expectedSingleton, 2, wrongOwnersHash
         );
     }
 

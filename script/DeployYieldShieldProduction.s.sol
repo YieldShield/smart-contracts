@@ -41,6 +41,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolder(address holder);
     error InvalidProductionBootstrapHolderCodehash(address holder, bytes32 actualCodehash, bytes32 expectedCodehash);
     error InvalidProductionBootstrapHolderSingleton(address holder, address actualSingleton, address expectedSingleton);
+    error InvalidProductionBootstrapHolderThreshold(address holder, uint256 actualThreshold, uint256 expectedThreshold);
+    error InvalidProductionBootstrapHolderOwnersHash(address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash);
     error InvalidProductionPythContract(address pythAddress);
     error ProductionPythUpdaterNotConfirmed(uint256 chainId, uint256 maxPriceAge);
 
@@ -76,8 +78,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         bootstrapHolder = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER");
         bytes32 expectedBootstrapHolderCodehash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH");
         address expectedBootstrapHolderSingleton = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON");
+        uint256 expectedBootstrapHolderThreshold = vm.envUint("YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD");
+        bytes32 expectedBootstrapHolderOwnersHash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH");
         _validateProductionBootstrapHolder(
-            bootstrapHolder, expectedBootstrapHolderCodehash, expectedBootstrapHolderSingleton
+            bootstrapHolder,
+            expectedBootstrapHolderCodehash,
+            expectedBootstrapHolderSingleton,
+            expectedBootstrapHolderThreshold,
+            expectedBootstrapHolderOwnersHash
         );
 
         address[] memory emptyAccounts = new address[](0);
@@ -225,11 +233,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ///      copy. Gnosis Safe bytecode differs across chains and versions, so
     ///      expected values are supplied per deployment via
     ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH and
-    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON.
-    function _validateProductionBootstrapHolder(address holder, bytes32 expectedCodehash, address expectedSingleton)
-        internal
-        view
-    {
+    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON. Owners and threshold are
+    ///      pinned through YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH and
+    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD.
+    function _validateProductionBootstrapHolder(
+        address holder,
+        bytes32 expectedCodehash,
+        address expectedSingleton,
+        uint256 expectedThreshold,
+        bytes32 expectedOwnersHash
+    ) internal view {
         if (holder == address(0) || holder.code.length == 0) {
             revert InvalidProductionBootstrapHolder(holder);
         }
@@ -281,6 +294,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 || threshold > owners.length
         ) {
             revert InvalidProductionBootstrapHolder(holder);
+        }
+        if (expectedThreshold == 0 || threshold != expectedThreshold) {
+            revert InvalidProductionBootstrapHolderThreshold(holder, threshold, expectedThreshold);
+        }
+
+        bytes32 actualOwnersHash = keccak256(abi.encode(owners));
+        if (expectedOwnersHash == bytes32(0) || actualOwnersHash != expectedOwnersHash) {
+            revert InvalidProductionBootstrapHolderOwnersHash(holder, actualOwnersHash, expectedOwnersHash);
         }
 
         for (uint256 i = 0; i < owners.length; i++) {
