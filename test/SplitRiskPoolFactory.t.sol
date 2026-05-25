@@ -334,6 +334,16 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factory.getActivePools().length, 1, "Active pool count should be 1");
     }
 
+    function testCreatePoolFinalizesBootstrapBeforeRecordingFirstPool() public {
+        assertTrue(factory.bootstrapModeEnabled(), "test starts in bootstrap mode");
+        assertTrue(compositeOracle.authorizedCallers(address(this)), "test harness starts as temporary oracle admin");
+
+        createPoolAs(user1, address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        assertFalse(factory.bootstrapModeEnabled(), "first pool creation should finalize bootstrap");
+        assertFalse(compositeOracle.authorizedCallers(address(this)), "temporary oracle admin should be revoked");
+    }
+
     function testCreatePoolWithAccessControlInstallsGateAtomically() public {
         AccessControlExample accessControl = new AccessControlExample(address(this));
         accessControl.setWhitelisted(user1, true);

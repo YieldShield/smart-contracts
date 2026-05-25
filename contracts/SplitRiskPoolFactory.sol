@@ -489,10 +489,11 @@ contract SplitRiskPoolFactory is
      */
     function finalizeBootstrap() external {
         _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
-        if (!bootstrapModeEnabled) {
-            return;
-        }
+        _finalizeBootstrapMode();
+    }
 
+    function _finalizeBootstrapMode() internal {
+        if (!bootstrapModeEnabled) return;
         _clearCompositeOracleAuthorizedCallers();
         bootstrapModeEnabled = false;
         emit BootstrapModeFinalized(msg.sender);
@@ -580,6 +581,8 @@ contract SplitRiskPoolFactory is
         if (activePools.length >= MAX_POOLS) {
             revert ErrorsLib.MaxPoolsExceeded(activePools.length, MAX_POOLS);
         }
+
+        _finalizeBootstrapMode();
 
         // Validate that composite oracle and protocol fee recipient are set
         if (compositeOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
