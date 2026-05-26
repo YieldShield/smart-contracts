@@ -198,7 +198,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint256 shareUnit = _getScaleFactor(vault, shareDecimals);
         uint256 minimumSupply = _getMinimumVaultSupply(vault, shareDecimals, shareUnit);
         _requireMinimumVaultSupply(vault, minimumSupply);
-        uint256 referenceAssetsPerShare = IERC4626(vault).convertToAssets(shareUnit);
+        uint256 referenceAssetsPerShare = _conservativeAssetsPerShare(vault, shareUnit);
 
         vaultToUnderlying[vault] = underlying;
         vaultConfigs[vault] = VaultConfig({
@@ -220,7 +220,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         VaultConfig storage config = _getVaultConfigStorage(vault);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
 
-        uint256 scheduledReference = IERC4626(vault).convertToAssets(config.shareUnit);
+        uint256 scheduledReference = _conservativeAssetsPerShare(vault, config.shareUnit);
         _requireAssetsPerShareWithinReference(
             vault, scheduledReference, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
         );
@@ -256,7 +256,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         ScheduledReferenceRefresh memory scheduled = _consumeScheduledVaultSharePriceReferenceRefresh(vault);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
 
-        uint256 currentAssetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
+        uint256 currentAssetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
         _requireAssetsPerShareWithinReference(
             vault,
             currentAssetsPerShare,
@@ -460,7 +460,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
 
-        uint256 assetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
+        uint256 assetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
         // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
         // the vault's unsafe getter forwards useCircuitBreaker=false so the
@@ -472,6 +472,12 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
+    }
+
+    function _conservativeAssetsPerShare(address vault, uint256 shareUnit) internal view returns (uint256) {
+        uint256 convertAssets = IERC4626(vault).convertToAssets(shareUnit);
+        uint256 redeemAssets = IERC4626(vault).previewRedeem(shareUnit);
+        return redeemAssets < convertAssets ? redeemAssets : convertAssets;
     }
 
     function _requireAssetsPerShareWithinReference(

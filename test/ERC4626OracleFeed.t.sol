@@ -43,6 +43,25 @@ contract CompositeOracleWithDecimals is CompositeOracle {
     }
 }
 
+contract MockERC4626WithRedeemFee is MockERC4626 {
+    uint256 public redeemFeeBps;
+
+    constructor(IERC20 asset, string memory name, string memory symbol, uint256 redeemFeeBps_)
+        MockERC4626(asset, name, symbol)
+    {
+        redeemFeeBps = redeemFeeBps_;
+    }
+
+    function setRedeemFeeBps(uint256 redeemFeeBps_) external {
+        redeemFeeBps = redeemFeeBps_;
+    }
+
+    function previewRedeem(uint256 shares) public view override returns (uint256) {
+        uint256 assets = super.previewRedeem(shares);
+        return assets - ((assets * redeemFeeBps) / 10_000);
+    }
+}
+
 contract ERC4626OracleFeedTest is Test {
     ERC4626OracleFeed public erc4626Feed;
     MockOracle public underlyingOracle;
@@ -140,6 +159,19 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.registerVault(address(newVault), address(newAsset));
 
         assertEq(erc4626Feed.vaultToUnderlying(address(newVault)), address(newAsset));
+    }
+
+    function test_GetPrice_UsesPreviewRedeemWhenVaultChargesRedeemFee() public {
+        MockERC20 feeAsset = new MockERC20("Fee Asset", "FEE");
+        MockERC4626WithRedeemFee feeVault =
+            new MockERC4626WithRedeemFee(IERC20(address(feeAsset)), "Fee Vault", "fVLT", 100);
+        underlyingOracle.setPrice(address(feeAsset), 1e8);
+
+        _seedAndRegister(IERC20(address(feeAsset)), IERC4626(address(feeVault)));
+
+        assertEq(feeVault.convertToAssets(1e18), 1e18, "precondition: accounting share price is one asset");
+        assertEq(feeVault.previewRedeem(1e18), 0.99e18, "precondition: redeem preview includes fee");
+        assertEq(erc4626Feed.getPrice(address(feeVault)), 99_000_000, "oracle should price redeemable assets");
     }
 
     function test_RegisterVault_RevertsOnInvalidVault() public {
