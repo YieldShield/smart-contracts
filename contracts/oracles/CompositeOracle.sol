@@ -601,6 +601,27 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         bool primarySupportsCircuitBreaker = _supportsCircuitBreaker(config.primaryFeed, token);
         bool backupSupportsCircuitBreaker = _supportsCircuitBreaker(config.backupFeed, token);
+
+        if (config.isBackupActive) {
+            (bool activePrimarySuccess, uint256 activePrimaryPrice) =
+                _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+            bool activePrimaryProtectedAvailable = activePrimarySuccess && primarySupportsCircuitBreaker;
+            if (!activePrimaryProtectedAvailable) {
+                return false;
+            }
+
+            if (!backupSupportsCircuitBreaker) {
+                return true;
+            }
+
+            (bool activeBackupSuccess, uint256 activeBackupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+            if (!activeBackupSuccess) {
+                return true;
+            }
+
+            return OracleValidationLib.calculateDeviation(activePrimaryPrice, activeBackupPrice) > deviationThresholdBps;
+        }
+
         if (!backupSupportsCircuitBreaker) {
             // A backup that no longer advertises the protected/unsafe split cannot
             // be used as a dispute signal. If the primary has its own circuit
@@ -615,10 +636,6 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             // breaker. If the primary has its own CB, defer to it; otherwise
             // fail closed until the backup recovers.
             return !primarySupportsCircuitBreaker;
-        }
-
-        if (config.isBackupActive) {
-            return false;
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
@@ -764,23 +781,22 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
-        if (!primarySuccess || !backupSuccess) {
-            revert RevertNotPossible(token, "Oracle unavailable");
+        bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
+        if (!primaryProtectedAvailable) {
+            revert RevertNotPossible(token, "Primary oracle unavailable");
         }
 
-        bool primaryProtectedAvailable = _supportsCircuitBreaker(config.primaryFeed, token);
-        uint256 currentDeviation = primaryProtectedAvailable
-            ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
-            : type(uint256).max;
-
-        if (currentDeviation > deviationThresholdBps) {
+        uint256 currentDeviation =
+            backupSuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
+        if (backupSuccess && currentDeviation > deviationThresholdBps) {
             revert RevertNotPossible(token, "Deviation still exceeds threshold");
         }
 
         config.isBackupActive = false;
         config.lastChallengeTime = block.timestamp;
 
-        emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, "reverted_to_primary");
+        string memory reason = backupSuccess ? "reverted_to_primary" : "reverted_to_primary_backup_unavailable";
+        emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, reason);
         emit RevertedToPrimary(token, msg.sender, currentDeviation);
         emit OracleSwitched(token, false);
     }
