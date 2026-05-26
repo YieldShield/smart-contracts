@@ -576,19 +576,19 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @inheritdoc ISplitRiskPool
-    /// @dev H-5: prefer the snapshot pinned at initialize over the runtime factory
-    ///      lookup, so a future factory regression cannot silently downgrade strict
-    ///      pricing. Legacy pools upgraded from a version before the snapshot existed
-    ///      fall back to the runtime lookup; governance can call
-    ///      refreshStrictProtectedBackingPriceFlag() to opt back into strict-mode.
+    /// @dev H-5: prefer any pinned strict snapshot over the runtime factory lookup,
+    ///      so a future factory regression cannot silently downgrade strict pricing.
+    ///      A current factory policy can still tighten pinned-false pools when
+    ///      governance enables strict mode for an already-active backing token.
+    ///      Governance must explicitly refresh a pool to adopt a factory false.
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
-        if (_strictProtectedBackingPricePinned) {
-            return _strictProtectedBackingPriceAtInit;
+        if (_strictProtectedBackingPricePinned && _strictProtectedBackingPriceAtInit) {
+            return true;
         }
 
         address factory = _poolFactoryController();
         if (factory == address(0) || factory.code.length == 0) {
-            return false;
+            return _strictProtectedBackingPriceAtInit;
         }
 
         (bool success, bytes memory data) = factory.staticcall(
@@ -596,7 +596,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         );
 
         if (!success || data.length < 32) {
-            return false;
+            return _strictProtectedBackingPriceAtInit;
         }
 
         return abi.decode(data, (bool));

@@ -191,14 +191,14 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
     }
 
-    function testPoolStrictProtectedPriceRequirementRequiresExplicitRefresh() public {
-        // H-5: the pool snapshots the strict-pricing flag at init and does NOT
-        // auto-update from runtime factory changes. Adopting a new factory
-        // policy is an explicit governance action.
+    function testPoolStrictProtectedPriceRequirementAutoAdoptsFactoryEnable() public {
+        // H-5 follow-up: a pinned-false pool may auto-tighten when governance
+        // enables strict pricing for its backing token, but factory policy alone
+        // cannot auto-downgrade a pinned strict pool.
         assertFalse(pool.requiresStrictProtectedBackingPrice());
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
-        assertFalse(pool.requiresStrictProtectedBackingPrice(), "pinned snapshot should not auto-update");
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "factory enable should tighten existing pools");
 
         vm.prank(governance);
         pool.refreshStrictProtectedBackingPriceFlag();
@@ -234,6 +234,7 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
 
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), false);
+        assertTrue(pool.requiresStrictProtectedBackingPrice(), "factory false should not auto-downgrade pinned strict");
 
         vm.prank(governance);
         pool.refreshStrictProtectedBackingPriceFlag();
