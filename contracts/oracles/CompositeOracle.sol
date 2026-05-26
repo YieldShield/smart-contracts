@@ -548,14 +548,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return !_supportsCircuitBreaker(config.primaryFeed, token);
         }
 
-        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
         if (config.isBackupActive) {
-            if (!primarySuccess || !_supportsCircuitBreaker(config.primaryFeed, token)) {
-                return false;
-            }
-            return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) > deviationThresholdBps;
+            return false;
         }
 
+        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
         bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
         uint256 deviation = primaryProtectedAvailable
             ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)

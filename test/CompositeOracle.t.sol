@@ -524,14 +524,13 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
     }
 
-    function test_ActiveBackupDeviationBlocksProtectedPricingWhenPrimaryReadable() public {
+    function test_ActiveBackupServesProtectedPricingWhenPrimaryStillDisagrees() public {
         _challengeAndFinalize();
 
-        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
 
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPrice(address(token));
+        assertEq(compositeOracle.getPrice(address(token)), (PRIMARY_PRICE * 10076) / 10000);
     }
 
     function test_Challenge_RevertsWhenNotDualFeed() public {
@@ -864,12 +863,11 @@ contract CompositeOracleDualFeedTest is Test {
         // 5. Timelock elapses
         vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
 
-        // 6. Finalize switches to backup, but safe reads stay closed while both feeds
-        //    remain readable and materially disagree.
+        // 6. Finalize switches to backup; protected reads now use the promoted feed
+        //    even while the disabled primary still materially disagrees.
         compositeOracle.finalizeChallenge(address(token));
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPrice(address(token));
+        assertEq(compositeOracle.getPrice(address(token)), deviatedPrice);
     }
 
     function test_FullRecoveryFlow() public {
@@ -969,7 +967,7 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
     }
 
-    function test_StrictDualFeed_FinalizedBackupFailsClosedWhilePrimaryDisagrees() public {
+    function test_StrictDualFeed_FinalizedBackupServesWhenPrimaryDisagrees() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
         compositeOracle.setStrictCircuitBreakerRequired(address(token), true);
 
@@ -981,8 +979,8 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.finalizeChallenge(address(token));
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
+        assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), deviatedPrice);
     }
 
     function test_StrictDualFeed_FinalizeChallengeSucceedsWhenPrimaryProtectedPriceReverts() public {
@@ -999,6 +997,16 @@ contract CompositeOracleDualFeedTest is Test {
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(token)), deviatedPrice);
+    }
+
+    function test_ActiveBackupFallbackDoesNotUseInactivePrimaryWhenBackupFails() public {
+        _challengeAndFinalize();
+        backupOracle.setShouldRevertOnCircuitBreaker(true);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+
+        assertEq(value, 0, "fallback must not use inactive primary after failover");
+        assertFalse(isReliable);
     }
 
     function test_Challenge_RevertsWhenBackupLacksCircuitBreaker() public {
@@ -1265,18 +1273,17 @@ contract CompositeOracleDualFeedTest is Test {
         assertEq(value, 0, "must not silently fall back to the disabled primary");
         assertFalse(isReliable);
 
-        // Once the backup recovers it still cannot serve while the disabled primary is
-        // readable and materially disagrees.
+        // Once the backup recovers it serves as the active source, even while the
+        // disabled primary is still readable and materially disagrees.
         backupOracle.setPrice(address(token), backupPrice);
-        (value, isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
-        assertEq(value, 0, "backup must stay disputed until feeds converge or governance resets");
-        assertFalse(isReliable);
-
-        // After the feeds converge, the active backup is no longer disputed.
-        primaryOracle.setPrice(address(token), backupPrice);
         (value, isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
         assertEq(value, backupPrice);
         assertTrue(isReliable);
+
+        // Convergence still allows an explicit return to primary.
+        primaryOracle.setPrice(address(token), backupPrice);
+        compositeOracle.revertToPrimary(address(token));
+        assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
     }
 
     /// @notice H-3: `getValueWithFallback` skips the inactive feed when the dual feeds disagree
