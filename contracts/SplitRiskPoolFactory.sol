@@ -159,6 +159,7 @@ contract SplitRiskPoolFactory is
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
         splitRiskPoolImplementation = poolImplementation_;
         minimumCreationBondUsd = DEFAULT_MINIMUM_CREATION_BOND_USD;
+        maxActivePools = MAX_POOLS;
         bootstrapModeEnabled = true;
     }
 
@@ -625,8 +626,9 @@ contract SplitRiskPoolFactory is
         uint256 _creationBondAmount,
         address initialAccessControl
     ) internal returns (address poolAddress) {
-        if (activePools.length >= MAX_POOLS) {
-            revert ErrorsLib.MaxPoolsExceeded(activePools.length, MAX_POOLS);
+        uint256 activePoolLimit = _activePoolLimit();
+        if (activePools.length >= activePoolLimit) {
+            revert ErrorsLib.MaxPoolsExceeded(activePools.length, activePoolLimit);
         }
 
         _finalizeBootstrapMode();
@@ -924,6 +926,23 @@ contract SplitRiskPoolFactory is
     }
 
     /**
+     * @notice Updates the active pool cap.
+     * @dev Allows governance to raise capacity if active slots are economically occupied.
+     *      The cap cannot be lowered below the number of pools currently active.
+     * @param newMaxActivePools New active pool cap
+     */
+    function setMaxActivePools(uint256 newMaxActivePools) external onlyGovernance {
+        uint256 activePoolLength = activePools.length;
+        if (newMaxActivePools == 0 || newMaxActivePools < activePoolLength) {
+            revert ErrorsLib.MaxPoolsExceeded(activePoolLength, newMaxActivePools);
+        }
+
+        uint256 previousValue = _activePoolLimit();
+        maxActivePools = newMaxActivePools;
+        emit EventsLib.MaxActivePoolsUpdated(previousValue, newMaxActivePools);
+    }
+
+    /**
      * @notice Deactivates an empty pool and frees its active slot
      * @dev Historical pool records remain intact in `pools`.
      * @param pool Address of the pool to deactivate
@@ -1081,6 +1100,11 @@ contract SplitRiskPoolFactory is
                 ++i;
             }
         }
+    }
+
+    function _activePoolLimit() internal view returns (uint256) {
+        uint256 configuredLimit = maxActivePools;
+        return configuredLimit == 0 ? MAX_POOLS : configuredLimit;
     }
 
     /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for
@@ -1390,10 +1414,13 @@ contract SplitRiskPoolFactory is
 
     function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
 
+    /// @notice Governance-configurable active pool cap. Zero falls back to MAX_POOLS for legacy upgrades.
+    uint256 public maxActivePools;
+
     /**
      * @dev Storage gap for future upgrades.
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[39] private __gap;
+    uint256[38] private __gap;
 }

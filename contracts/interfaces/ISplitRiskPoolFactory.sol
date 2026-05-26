@@ -52,6 +52,7 @@ interface ISplitRiskPoolFactory {
     function isPoolActive(address pool) external view returns (bool);
     function creationBonds(address pool) external view returns (address creator, address token, uint256 amount);
     function minimumCreationBondUsd() external view returns (uint256);
+    function maxActivePools() external view returns (uint256);
     function bootstrapModeEnabled() external view returns (bool);
     function poolCount() external view returns (uint256);
     function getPoolInfo(address pool) external view returns (ISplitRiskPoolFactory.PoolInfo memory);
@@ -92,6 +93,7 @@ interface ISplitRiskPoolFactory {
     function deactivateProtectorOnlyPool(address pool) external;
     function closePool(address pool) external;
     function setMinimumCreationBondUsd(uint256 newMinUsd) external;
+    function setMaxActivePools(uint256 newMaxActivePools) external;
     function setPoolImplementation(address newImplementation) external;
     function removeToken(address token) external;
     function addToken(

@@ -1064,6 +1064,27 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     function testMaxPoolsConstant() public view {
         // Verify the MAX_POOLS constant is set correctly
         assertEq(factory.MAX_POOLS(), 1000, "MAX_POOLS should be 1000");
+        assertEq(factory.maxActivePools(), 1000, "maxActivePools should default to MAX_POOLS");
+    }
+
+    function testGovernanceCanRaiseMaxActivePools() public {
+        vm.prank(governanceTimelock);
+        factory.setMaxActivePools(1_500);
+
+        assertEq(factory.maxActivePools(), 1_500, "governance should be able to raise active pool cap");
+    }
+
+    function testGovernanceCannotSetMaxActivePoolsBelowActiveCount() public {
+        createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.MaxPoolsExceeded.selector, 1, 0));
+        factory.setMaxActivePools(0);
+
+        vm.prank(governanceTimelock);
+        factory.setMaxActivePools(1);
+
+        assertEq(factory.maxActivePools(), 1, "cap may equal current active count");
     }
 
     function testRevertWhenMaxPoolsExceeded() public {

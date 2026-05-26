@@ -103,6 +103,7 @@ library EventsLib {
         address indexed pool, address indexed token, uint256 recordedAmount, uint256 paidAmount
     );
     event MinimumCreationBondUsdUpdated(uint256 oldValue, uint256 newValue);
+    event MaxActivePoolsUpdated(uint256 oldValue, uint256 newValue);
 
     // Fee overflow events
     event FeeDropped(string feeType, uint256 droppedAmount, uint256 currentAccumulated);

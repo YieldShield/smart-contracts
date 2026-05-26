@@ -170,10 +170,17 @@
     },
     {
       "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
-      "label": "__gap",
+      "label": "maxActivePools",
       "offset": 0,
       "slot": "70",
-      "type": "t_array(t_uint256)39_storage"
+      "type": "t_uint256"
+    },
+    {
+      "contract": "contracts/SplitRiskPoolFactory.sol:SplitRiskPoolFactory",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "71",
+      "type": "t_array(t_uint256)38_storage"
     }
   ],
   "types": {
@@ -188,10 +195,10 @@
       "numberOfBytes": "32",
       "base": "t_address"
     },
-    "t_array(t_uint256)39_storage": {
+    "t_array(t_uint256)38_storage": {
       "encoding": "inplace",
-      "label": "uint256[39]",
-      "numberOfBytes": "1248",
+      "label": "uint256[38]",
+      "numberOfBytes": "1216",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {
