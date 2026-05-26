@@ -48,6 +48,7 @@ contract YSGovernor is
     error GovernorProposalThresholdOutOfRange(uint256 provided, uint256 minimum, uint256 maximum);
     error GovernorInvalidTimelock(address candidate);
     error GovernorTimelockDelayTooShort(address candidate, uint256 provided, uint256 minimum);
+    error GovernorTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
     error GovernorTimelockInvalidRole(
         address candidate, bytes32 role, address expectedMember, address actualMember, uint256 memberCount
     );
@@ -161,6 +162,10 @@ contract YSGovernor is
     function _validateReplacementTimelock(TimelockController newTimelock) internal view {
         address candidate = address(newTimelock);
         if (candidate == address(0) || candidate.code.length == 0) revert GovernorInvalidTimelock(candidate);
+        bytes32 expectedCodehash = address(timelock()).codehash;
+        if (expectedCodehash != bytes32(0) && candidate.codehash != expectedCodehash) {
+            revert GovernorTimelockImplementationMismatch(candidate, expectedCodehash, candidate.codehash);
+        }
 
         (bool success, bytes memory data) = candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
         if (!success || data.length < 32) revert GovernorInvalidTimelock(candidate);

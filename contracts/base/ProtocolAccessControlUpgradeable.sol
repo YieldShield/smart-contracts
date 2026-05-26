@@ -73,7 +73,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     /// @notice Starts a two-step governance transfer by setting the pending governance address
     /// @param newGovernance The address of the proposed new governance timelock
     function setGovernanceTimelock(address newGovernance) public virtual onlyGovernance {
-        _validateGovernanceTimelock(newGovernance, bytes32(0));
+        _validateGovernanceTimelock(newGovernance, _governanceTimelockImplementationHash());
         _validateGovernanceTimelockOperationalRolesMatch(newGovernance, _governanceTimelock);
         _validateKnownDefaultAdminCleared(newGovernance, owner());
         _validateKnownDefaultAdminCleared(newGovernance, _governanceTimelock);
@@ -86,7 +86,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     function acceptGovernanceTimelock() public virtual {
         if (_pendingGovernanceTimelock == address(0)) revert NoPendingGovernance();
         if (msg.sender != _pendingGovernanceTimelock) revert UnauthorizedPendingGovernance(msg.sender);
-        _validateGovernanceTimelock(_pendingGovernanceTimelock, bytes32(0));
+        _validateGovernanceTimelock(_pendingGovernanceTimelock, _governanceTimelockImplementationHash());
         _validateGovernanceTimelockOperationalRolesMatch(_pendingGovernanceTimelock, _governanceTimelock);
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);
@@ -114,9 +114,6 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (candidate == address(0)) revert GovernanceZeroAddress();
         if (candidate.code.length == 0) revert InvalidGovernanceTimelock(candidate);
         candidateCodehash = candidate.codehash;
-        if (expectedCodehash != bytes32(0) && candidateCodehash != expectedCodehash) {
-            revert GovernanceTimelockImplementationMismatch(candidate, expectedCodehash, candidateCodehash);
-        }
 
         (bool success, bytes memory data) = candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
         if (!success || data.length < 32) revert InvalidGovernanceTimelock(candidate);
@@ -154,6 +151,9 @@ abstract contract ProtocolAccessControlUpgradeable is
         }
 
         _validateGovernanceTimelockOperationalRoleShape(candidate);
+        if (expectedCodehash != bytes32(0) && candidateCodehash != expectedCodehash) {
+            revert GovernanceTimelockImplementationMismatch(candidate, expectedCodehash, candidateCodehash);
+        }
     }
 
     function _validateGovernanceTimelockOperationalRoleShape(address candidate)

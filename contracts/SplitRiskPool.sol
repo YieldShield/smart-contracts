@@ -2615,7 +2615,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert InvalidGovernanceTimelock(newGovernanceTimelock);
         }
 
-        _validateGovernanceTimelock(newGovernanceTimelock, bytes32(0));
+        _validateGovernanceTimelock(newGovernanceTimelock, _governanceTimelockImplementationHash());
         _validateGovernanceTimelockOperationalRolesMatch(newGovernanceTimelock, _governanceTimelock);
         _validateKnownDefaultAdminCleared(newGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(newGovernanceTimelock, _governanceTimelock);
@@ -2647,7 +2647,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert InvalidGovernanceTimelock(expectedGovernanceTimelock);
         }
 
-        _validateGovernanceTimelock(_pendingGovernanceTimelock, bytes32(0));
+        _validateGovernanceTimelock(_pendingGovernanceTimelock, _governanceTimelockImplementationHash());
         _validateGovernanceTimelockOperationalRolesMatch(_pendingGovernanceTimelock, _governanceTimelock);
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(_pendingGovernanceTimelock, _governanceTimelock);

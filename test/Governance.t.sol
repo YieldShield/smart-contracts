@@ -423,6 +423,29 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         governor.execute(targets, values, calldatas, descriptionHash);
     }
 
+    function test_UpdateTimelockRejectsShapeCompatibleDifferentImplementation() public {
+        address[] memory noExtraAdmins = new address[](0);
+        vm.prank(address(governor));
+        MutableGovernanceTimelock fakeTimelock = new MutableGovernanceTimelock(TIMELOCK_DELAY, noExtraAdmins);
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(
+                YSGovernor.updateTimelock.selector, TimelockController(payable(address(fakeTimelock)))
+            ),
+            "Reject fake timelock implementation"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorTimelockImplementationMismatch.selector,
+                address(fakeTimelock),
+                address(timelock).codehash,
+                address(fakeTimelock).codehash
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+    }
+
     function test_QuorumPercent() public view {
         // 4% of 1M total supply = 40,000 tokens
         assertEq(governor.quorum(block.timestamp - 1), 40_000e18);
@@ -854,7 +877,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 }
 
 contract ProtocolAccessControlUpgradeableTest is Test {
-    function test_GovernanceTimelockRotationAllowsDifferentValidatedImplementation() public {
+    function test_GovernanceTimelockRotationRejectsDifferentImplementation() public {
         address[] memory noExtraAdmins = new address[](0);
         MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
         AlternateMutableGovernanceTimelock replacementGovernance =
@@ -864,6 +887,27 @@ contract ProtocolAccessControlUpgradeableTest is Test {
 
         assertNotEq(address(currentGovernance).codehash, address(replacementGovernance).codehash);
 
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
+                address(replacementGovernance),
+                address(currentGovernance).codehash,
+                address(replacementGovernance).codehash
+            )
+        );
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+    }
+
+    function test_GovernanceTimelockRotationAllowsSameImplementation() public {
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        assertEq(address(currentGovernance).codehash, address(replacementGovernance).codehash);
+
         vm.prank(address(currentGovernance));
         harness.setGovernanceTimelock(address(replacementGovernance));
 
@@ -871,6 +915,32 @@ contract ProtocolAccessControlUpgradeableTest is Test {
         harness.acceptGovernanceTimelock();
 
         assertEq(harness.governanceTimelock(), address(replacementGovernance));
+    }
+
+    function test_AcceptGovernanceTimelock_RevalidatesPendingImplementation() public {
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        AlternateMutableGovernanceTimelock alternateImplementation =
+            new AlternateMutableGovernanceTimelock(2 days, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+
+        vm.etch(address(replacementGovernance), address(alternateImplementation).code);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockImplementationMismatch.selector,
+                address(replacementGovernance),
+                address(currentGovernance).codehash,
+                address(replacementGovernance).codehash
+            )
+        );
+        vm.prank(address(replacementGovernance));
+        harness.acceptGovernanceTimelock();
     }
 
     function test_AcceptGovernanceTimelock_RevalidatesPendingDelayOnPublicChains() public {
