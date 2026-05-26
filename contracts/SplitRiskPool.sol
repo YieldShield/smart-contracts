@@ -2191,6 +2191,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.InvalidTokenId();
         }
+        if (!dustExit) {
+            _requireNoOraclePendingChallenge(BACKING_TOKEN);
+            uint256 refreshedAvailable = getAvailableForWithdrawal(tokenId);
+            if (amount > refreshedAvailable) {
+                revert ErrorsLib.InsufficientUnlockedTokens();
+            }
+        }
         _redirectPendingProtectorRewardDust(ConstantsLib.MAX_SAFE_ACCUMULATION);
 
         if (newShares == 0) {

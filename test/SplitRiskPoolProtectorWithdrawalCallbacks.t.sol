@@ -56,19 +56,25 @@ contract HookedERC20 is ERC20 {
 contract ProtectorReceiptCallbackSeller is IERC721Receiver, IHookedTokenReceiver {
     SplitRiskPool public immutable pool;
     MockERC20 public immutable backingToken;
+    MockOracle public immutable oracle;
     ProtectorReceiptNFT public immutable protectorReceiptNFT;
     address public immutable buyer;
     uint256 public tokenId;
     bool public callbackAttempted;
+    bool public transferReceiptOnHook = true;
+    bool public dropBackingPriceOnHook;
+    uint256 public hookBackingPrice;
 
     constructor(
         SplitRiskPool pool_,
         MockERC20 backingToken_,
+        MockOracle oracle_,
         ProtectorReceiptNFT protectorReceiptNFT_,
         address buyer_
     ) {
         pool = pool_;
         backingToken = backingToken_;
+        oracle = oracle_;
         protectorReceiptNFT = protectorReceiptNFT_;
         buyer = buyer_;
     }
@@ -87,9 +93,23 @@ contract ProtectorReceiptCallbackSeller is IERC721Receiver, IHookedTokenReceiver
         pool.protectorWithdraw(tokenId, amount, address(backingToken), 0);
     }
 
+    function setTransferReceiptOnHook(bool enabled) external {
+        transferReceiptOnHook = enabled;
+    }
+
+    function setBackingPriceDropOnHook(uint256 newPrice) external {
+        dropBackingPriceOnHook = true;
+        hookBackingPrice = newPrice;
+    }
+
     function onHookedTokenTransfer(address, uint256) external {
         callbackAttempted = true;
-        protectorReceiptNFT.transferFrom(address(this), buyer, tokenId);
+        if (dropBackingPriceOnHook) {
+            oracle.setPrice(address(backingToken), hookBackingPrice);
+        }
+        if (transferReceiptOnHook) {
+            protectorReceiptNFT.transferFrom(address(this), buyer, tokenId);
+        }
     }
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
@@ -160,7 +180,7 @@ contract SplitRiskPoolProtectorWithdrawalCallbacksTest is Test, TestTimelockHelp
         shieldReceiptNFT.transferOwnership(address(pool));
         protectorReceiptNFT.transferOwnership(address(pool));
 
-        seller = new ProtectorReceiptCallbackSeller(pool, backingToken, protectorReceiptNFT, buyer);
+        seller = new ProtectorReceiptCallbackSeller(pool, backingToken, oracle, protectorReceiptNFT, buyer);
         backingToken.mint(address(seller), 1_000e18);
         shieldedToken.mint(shielded, 1_000e18);
 
@@ -194,6 +214,29 @@ contract SplitRiskPoolProtectorWithdrawalCallbacksTest is Test, TestTimelockHelp
         seller.withdraw(100e18);
 
         assertEq(protectorReceiptNFT.ownerOf(tokenId), address(seller), "receipt owner should be restored");
+        assertEq(pool.getProtectorPositionAmount(tokenId), 1_000e18, "position amount should be unchanged");
+        assertEq(pool.protectorShares(tokenId), sharesBefore, "shares should be unchanged");
+        assertEq(pool.rewardDebt(tokenId), rewardDebtBefore, "reward debt should be unchanged");
+        assertEq(pool.commissionsClaimed(tokenId), claimedBefore, "claimed amount should be unchanged");
+        assertEq(pool.getClaimableCommission(tokenId), claimableBefore, "claimable commission should be unchanged");
+    }
+
+    function testProtectorWithdrawRevalidatesAvailabilityAfterCommissionCallback() public {
+        uint256 tokenId = _createPositionWithClaimableCommission();
+        uint256 sharesBefore = pool.protectorShares(tokenId);
+        uint256 rewardDebtBefore = pool.rewardDebt(tokenId);
+        uint256 claimedBefore = pool.commissionsClaimed(tokenId);
+        uint256 claimableBefore = pool.getClaimableCommission(tokenId);
+
+        seller.setTransferReceiptOnHook(false);
+        seller.setBackingPriceDropOnHook(0);
+        oracle.transferOwnership(address(seller));
+
+        vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
+        seller.withdraw(100e18);
+
+        assertEq(oracle.getPrice(address(backingToken)), 1e8, "reverted withdrawal should roll back oracle mutation");
+        assertEq(protectorReceiptNFT.ownerOf(tokenId), address(seller), "receipt owner should be unchanged");
         assertEq(pool.getProtectorPositionAmount(tokenId), 1_000e18, "position amount should be unchanged");
         assertEq(pool.protectorShares(tokenId), sharesBefore, "shares should be unchanged");
         assertEq(pool.rewardDebt(tokenId), rewardDebtBefore, "reward debt should be unchanged");
