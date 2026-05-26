@@ -1118,6 +1118,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (activeFeedDisputed) {
             return (0, false);
         }
+        if (!_supportsCircuitBreaker(activeFeed, token)) {
+            return (0, false);
+        }
 
         // Try active feed first
         try IOracleFeed(activeFeed).getPrice(token) returns (uint256 price) {
@@ -1135,7 +1138,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // an unresolved deviation exists, both feeds are mutually suspect — fail closed.
         bool inactiveFeedDisputed = config.isBackupActive || unresolvedDualFeedDeviation;
 
-        if (inactiveFeed != address(0) && !inactiveFeedDisputed) {
+        if (inactiveFeed != address(0) && !inactiveFeedDisputed && _supportsCircuitBreaker(inactiveFeed, token)) {
             try IOracleFeed(inactiveFeed).getPrice(token) returns (uint256 price) {
                 if (price > 0) {
                     uint8 feedDecimals = IOracleFeed(inactiveFeed).decimals();

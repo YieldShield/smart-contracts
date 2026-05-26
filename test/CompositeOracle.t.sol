@@ -325,6 +325,50 @@ contract MockFeedWithoutCircuitBreaker is IOracleFeed {
     }
 }
 
+contract MutableCircuitBreakerSelectorFeed is IOracleFeed {
+    bytes4 private constant GET_PRICE_UNSAFE_SELECTOR = bytes4(keccak256("getPriceUnsafe(address)"));
+    mapping(address => uint256) internal prices;
+    bool public unsafeSelectorEnabled = true;
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+    }
+
+    function setUnsafeSelectorEnabled(bool enabled) external {
+        unsafeSelectorEnabled = enabled;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        uint256 price = prices[token];
+        return price == 0 ? 1e8 : price;
+    }
+
+    fallback() external {
+        if (msg.sig != GET_PRICE_UNSAFE_SELECTOR || !unsafeSelectorEnabled) {
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        address token = abi.decode(msg.data[4:], (address));
+        uint256 price = prices[token];
+        if (price == 0) {
+            price = 1e8;
+        }
+        assembly ("memory-safe") {
+            mstore(0, price)
+            return(0, 32)
+        }
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Mutable Circuit Breaker Selector Feed";
+    }
+}
+
 contract MockStalenessOracleFeed is IOracleFeed {
     mapping(address => uint256) internal prices;
     mapping(address => bool) internal stale;
@@ -1328,6 +1372,31 @@ contract CompositeOracleDualFeedTest is Test {
 
         // The explicit unsafe getter is unaffected by the feed-level circuit breaker.
         assertEq(compositeOracle.getPriceUnsafe(address(token)), PRIMARY_PRICE);
+    }
+
+    function test_FallbackRejectsActiveFeedWhenCircuitBreakerSupportRemoved() public {
+        MutableCircuitBreakerSelectorFeed mutableFeed = new MutableCircuitBreakerSelectorFeed();
+        mutableFeed.setPrice(address(token), PRIMARY_PRICE);
+        compositeOracle.setTokenOracleFeed(address(token), address(mutableFeed));
+
+        mutableFeed.setUnsafeSelectorEnabled(false);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, 0, "fallback must not serve active feed after marker removal");
+        assertFalse(isReliable);
+    }
+
+    function test_FallbackRejectsInactiveFeedWhenCircuitBreakerSupportRemoved() public {
+        MockRevertingPriceFeed activeFailingFeed = new MockRevertingPriceFeed();
+        MutableCircuitBreakerSelectorFeed mutableBackup = new MutableCircuitBreakerSelectorFeed();
+        mutableBackup.setPrice(address(token), PRIMARY_PRICE);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(activeFailingFeed), address(mutableBackup));
+
+        mutableBackup.setUnsafeSelectorEnabled(false);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, 0, "fallback must not serve inactive feed after marker removal");
+        assertFalse(isReliable);
     }
 
     // ============ Helper Functions ============
