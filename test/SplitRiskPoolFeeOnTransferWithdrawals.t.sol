@@ -16,6 +16,36 @@ import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
+contract SenderPaidFeeMockERC20 is MockERC20 {
+    uint256 public senderPaidFeeBps;
+
+    constructor(string memory name, string memory symbol) MockERC20(name, symbol) { }
+
+    function setSenderPaidFee(uint256 feeBps) external onlyOwner {
+        require(feeBps <= 1000, "fee too high");
+        senderPaidFeeBps = feeBps;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        uint256 fee = (amount * senderPaidFeeBps) / 10_000;
+        _transfer(msg.sender, to, amount);
+        if (fee != 0) {
+            _transfer(msg.sender, owner(), fee);
+        }
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        uint256 fee = (amount * senderPaidFeeBps) / 10_000;
+        _spendAllowance(from, msg.sender, amount + fee);
+        _transfer(from, to, amount);
+        if (fee != 0) {
+            _transfer(from, owner(), fee);
+        }
+        return true;
+    }
+}
+
 contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
@@ -209,6 +239,139 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             expectedReceived,
             "protector withdrawal should enforce actual wallet receipt"
         );
+    }
+
+    function test_protectorWithdraw_RevertsWhenBackingTokenDebitsExtraSenderFee() public {
+        SenderPaidFeeMockERC20 senderPaidBacking = new SenderPaidFeeMockERC20("Sender Paid Backing", "SPB");
+        backingToken = senderPaidBacking;
+        oracle.setPrice(address(backingToken), 1e8);
+
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Shielded Token",
+            symbol: "SHT",
+            token: address(shieldedToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Sender Paid Backing",
+            symbol: "SPB",
+            token: address(backingToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+
+        SplitRiskPool implementation = new SplitRiskPool();
+        shieldNFT = new ShieldReceiptNFT("sSHT", "sSHT");
+        protectorNFT = new ProtectorReceiptNFT("pSPB", "pSPB");
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPool.initialize.selector,
+            shieldedTokenInfo,
+            backingTokenInfo,
+            1000,
+            500,
+            address(this),
+            15000,
+            governanceTimelock,
+            address(oracle),
+            address(0xdead),
+            address(shieldNFT),
+            address(protectorNFT),
+            address(this)
+        );
+        pool = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
+        shieldNFT.setPool(address(pool));
+        protectorNFT.setPool(address(pool));
+        shieldNFT.transferOwnership(address(pool));
+        protectorNFT.transferOwnership(address(pool));
+
+        backingToken.mint(protector, 1_000e18);
+        vm.startPrank(protector);
+        backingToken.approve(address(pool), 500e18);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 500e18, 0);
+        pool.startUnlockProcess(protectorTokenId);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 28 days + 1);
+        senderPaidBacking.setSenderPaidFee(500);
+
+        vm.prank(protector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.UnexpectedOutboundTransferAmount.selector, address(backingToken), 40e18, 42e18
+            )
+        );
+        pool.protectorWithdraw(protectorTokenId, 40e18, address(backingToken), 0);
+    }
+
+    function test_shieldedWithdraw_RevertsWhenShieldedTokenDebitsExtraSenderFee() public {
+        SenderPaidFeeMockERC20 senderPaidShielded = new SenderPaidFeeMockERC20("Sender Paid Shielded", "SPS");
+        shieldedToken = senderPaidShielded;
+        oracle.setPrice(address(shieldedToken), 1e8);
+
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Sender Paid Shielded",
+            symbol: "SPS",
+            token: address(shieldedToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Backing Token",
+            symbol: "BACK",
+            token: address(backingToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+
+        SplitRiskPool implementation = new SplitRiskPool();
+        shieldNFT = new ShieldReceiptNFT("sSPS", "sSPS");
+        protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPool.initialize.selector,
+            shieldedTokenInfo,
+            backingTokenInfo,
+            1000,
+            500,
+            address(this),
+            15000,
+            governanceTimelock,
+            address(oracle),
+            address(0xdead),
+            address(shieldNFT),
+            address(protectorNFT),
+            address(this)
+        );
+        pool = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
+        shieldNFT.setPool(address(pool));
+        protectorNFT.setPool(address(pool));
+        shieldNFT.transferOwnership(address(pool));
+        protectorNFT.transferOwnership(address(pool));
+
+        shieldedToken.mint(shieldedUser, 1_000e18);
+        backingToken.mint(protector, 1_000e18);
+        vm.startPrank(protector);
+        backingToken.approve(address(pool), 500e18);
+        pool.depositBackingAsset(address(backingToken), 500e18, 0);
+        vm.stopPrank();
+
+        uint256 tokenId = _depositShielded(100e18);
+        shieldedToken.mint(address(pool), 10e18);
+        senderPaidShielded.setSenderPaidFee(500);
+
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.UnexpectedOutboundTransferAmount.selector, address(shieldedToken), 100e18, 105e18
+            )
+        );
+        pool.shieldedWithdraw(tokenId, address(shieldedToken), 0);
     }
 
     function test_payPoolFee_EmitsAndPaysActualReceivedWithTransferFee() public {

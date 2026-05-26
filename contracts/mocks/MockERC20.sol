@@ -43,7 +43,7 @@ contract MockERC20 is ERC20, Ownable {
     /// @notice Override transfer to implement fee-on-transfer
     /// @param to The address to transfer to
     /// @param amount The amount to transfer
-    function transfer(address to, uint256 amount) public override returns (bool) {
+    function transfer(address to, uint256 amount) public virtual override returns (bool) {
         if (transferFee > 0) {
             uint256 fee = (amount * transferFee) / 10000;
             uint256 transferAmount = amount - fee;
@@ -62,7 +62,7 @@ contract MockERC20 is ERC20, Ownable {
     /// @param from The address to transfer from
     /// @param to The address to transfer to
     /// @param amount The amount to transfer
-    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) public virtual override returns (bool) {
         if (transferFee > 0) {
             uint256 fee = (amount * transferFee) / 10000;
             uint256 transferAmount = amount - fee;

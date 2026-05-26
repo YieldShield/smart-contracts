@@ -439,7 +439,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return Math.mulDiv(shieldedValueUsd, COLLATERAL_RATIO, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
     }
 
-    function _getBackingAmountFromUsdFloor(uint256 valueUsd, uint256 backingPrice) internal view returns (uint256 amount) {
+    function _getBackingAmountFromUsdFloor(uint256 valueUsd, uint256 backingPrice)
+        internal
+        view
+        returns (uint256 amount)
+    {
         if (valueUsd == 0) return 0;
         amount = Math.mulDiv(valueUsd, backingTokenScale, backingPrice);
         if (amount == 0) revert ErrorsLib.InvalidOraclePrice();
@@ -934,9 +938,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 received)
     {
-        uint256 beforeBal = IERC20(asset).balanceOf(recipient);
+        uint256 poolBalanceBefore = IERC20(asset).balanceOf(address(this));
+        uint256 beforeBal = recipient == address(this) ? poolBalanceBefore : IERC20(asset).balanceOf(recipient);
         SafeERC20.safeTransfer(IERC20(asset), recipient, transferAmount);
-        uint256 afterBal = IERC20(asset).balanceOf(recipient);
+        uint256 poolBalanceAfter = IERC20(asset).balanceOf(address(this));
+        if (poolBalanceAfter > poolBalanceBefore) {
+            revert ErrorsLib.UnexpectedOutboundTransferAmount(asset, transferAmount, 0);
+        }
+        uint256 debited = poolBalanceBefore - poolBalanceAfter;
+        if (debited != transferAmount) {
+            revert ErrorsLib.UnexpectedOutboundTransferAmount(asset, transferAmount, debited);
+        }
+        uint256 afterBal = recipient == address(this) ? poolBalanceAfter : IERC20(asset).balanceOf(recipient);
         received = afterBal - beforeBal;
     }
 
@@ -1460,7 +1473,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
-
         }
 
         if (sweepUnprotectedDust) {

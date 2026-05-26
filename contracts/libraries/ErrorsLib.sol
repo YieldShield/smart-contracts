@@ -107,6 +107,8 @@ library ErrorsLib {
     error ResidualProtectorBackingPending(uint256 amount);
     /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token
     error IncompatibleShieldedTokenForCrossAssetWithdrawal(address token);
+    /// @notice Thrown when an outbound transfer debits more or less than the amount removed from accounting
+    error UnexpectedOutboundTransferAmount(address token, uint256 expectedDebited, uint256 actualDebited);
 
     // ============ Unsupported/Not Allowed Errors ============
     /// @notice Thrown when asset is not supported by the pool
