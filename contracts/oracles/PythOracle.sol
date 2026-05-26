@@ -386,6 +386,11 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return _getPythPrice(token, false);
     }
 
+    /// @notice Whether this feed exposes protected `getPrice` and explicit unsafe pricing for `token`.
+    function supportsCircuitBreaker(address token) external view returns (bool) {
+        return isTokenSupported[token];
+    }
+
     /// @notice Calculate the protected USD value of an amount of tokens
     /// @dev Uses the same circuit-breaker-validated price as `getPrice`.
     function getValue(address token, uint256 amount) external view override returns (uint256) {

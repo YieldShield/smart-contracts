@@ -276,6 +276,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return _getValidatedPrice(vault, false);
     }
 
+    /// @notice Whether this feed exposes protected `getPrice` and explicit unsafe pricing for `vault`.
+    function supportsCircuitBreaker(address vault) external view returns (bool) {
+        return vaultConfigs[vault].underlying != address(0);
+    }
+
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
 

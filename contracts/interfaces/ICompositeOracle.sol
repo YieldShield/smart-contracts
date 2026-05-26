@@ -133,6 +133,11 @@ interface ICompositeOracle is IPriceOracle {
     /// @return price The price in USD with 8 decimals
     function getPriceWithStrictCircuitBreaker(address token) external view returns (uint256);
 
+    /// @notice Returns whether this oracle exposes protected and unsafe pricing for a token.
+    /// @param token The token address
+    /// @return supported True if this oracle advertises circuit-breaker pricing support
+    function supportsCircuitBreaker(address token) external view returns (bool supported);
+
     /// @notice Returns whether the active feed explicitly supports strict protected pricing.
     /// @param token The token address
     /// @return supported True if the active feed advertises strict protected pricing support

@@ -353,6 +353,13 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         return _getPrice(token);
     }
 
+    /// @notice Whether this feed exposes a protected price path for `token`.
+    /// @dev Chainlink does not have a weaker raw path here; `getPriceUnsafe` aliases the
+    ///      same stale-round, bounds, and sequencer-checked read so consumers can detect support.
+    function supportsCircuitBreaker(address token) external view returns (bool) {
+        return isTokenSupported[token];
+    }
+
     /// @notice Whether this token feed satisfies the stricter protected-collateral policy.
     /// @dev Non-strict consumers may accept Chainlink feeds without retrievable aggregator
     ///      bounds. Strict backing collateral must have fresh usable bounds so pinned

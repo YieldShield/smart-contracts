@@ -222,6 +222,18 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(noCircuitBreakerFeed));
     }
 
+    function testSetTokenOracleFeed_RevertsForFallbackRevertDataWithoutUnsafeSelector() public {
+        FallbackRevertDataFeed fallbackFeed = new FallbackRevertDataFeed();
+        fallbackFeed.setPrice(address(tokenA), 2e8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenA), address(fallbackFeed)
+            )
+        );
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(fallbackFeed));
+    }
+
     function testPriceWithStrictCircuitBreaker() public {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
 
@@ -322,6 +334,33 @@ contract MockFeedWithoutCircuitBreaker is IOracleFeed {
 
     function description() external pure returns (string memory) {
         return "Mock Feed Without Circuit Breaker";
+    }
+}
+
+contract FallbackRevertDataFeed is IOracleFeed {
+    error UnsupportedSelector(bytes4 selector);
+
+    mapping(address => uint256) internal prices;
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        uint256 price = prices[token];
+        return price == 0 ? 1e8 : price;
+    }
+
+    fallback() external {
+        revert UnsupportedSelector(msg.sig);
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Fallback Revert Data Feed";
     }
 }
 
@@ -986,6 +1025,18 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(noCircuitBreakerFeed));
     }
 
+    function test_SetDualFeed_RevertsForFallbackRevertDataWithoutUnsafeSelector() public {
+        FallbackRevertDataFeed fallbackFeed = new FallbackRevertDataFeed();
+        fallbackFeed.setPrice(address(token), PRIMARY_PRICE);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(fallbackFeed)
+            )
+        );
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(fallbackFeed));
+    }
+
     function test_SetStrictCircuitBreakerRequired_AllowsSupportedFeedWhenProtectedPriceReverts() public {
         primaryOracle.setShouldRevertOnCircuitBreaker(true);
         compositeOracle.setTokenOracleFeed(address(token), address(primaryOracle));
@@ -1107,6 +1158,27 @@ contract CompositeOracleDualFeedTest is Test {
 
         uint256 strictPrice = compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
         assertEq(strictPrice, PRIMARY_PRICE, "strict-CB getter must still serve while backup is transiently down");
+    }
+
+    function test_MutableBackupLosingCircuitBreakerDoesNotDisputeProtectedPrimary() public {
+        MutableCircuitBreakerSelectorFeed mutableBackup = new MutableCircuitBreakerSelectorFeed();
+        mutableBackup.setPrice(address(token), PRIMARY_PRICE);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(mutableBackup));
+
+        uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
+        mutableBackup.setPrice(address(token), deviatedPrice);
+        mutableBackup.setUnsafeSelectorEnabled(false);
+
+        assertFalse(
+            compositeOracle.isTokenChallengeable(address(token)),
+            "backup marker loss should not dispute a protected primary"
+        );
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(mutableBackup))
+        );
+        compositeOracle.challengeForToken(address(token));
     }
 
     function test_SetDualFeed_RevertsWhenPrimaryLacksCircuitBreaker() public {

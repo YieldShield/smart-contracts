@@ -155,6 +155,11 @@ contract MockOracle is IPriceOracle, IOracleFeed, Ownable {
         return (false, uint64(block.timestamp));
     }
 
+    function supportsCircuitBreaker(address token) external pure returns (bool) {
+        token;
+        return true;
+    }
+
     function supportsStrictProtectedPrice(address token) external pure returns (bool) {
         token;
         return true;

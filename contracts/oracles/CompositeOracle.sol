@@ -599,12 +599,22 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return false;
         }
 
+        bool primarySupportsCircuitBreaker = _supportsCircuitBreaker(config.primaryFeed, token);
+        bool backupSupportsCircuitBreaker = _supportsCircuitBreaker(config.backupFeed, token);
+        if (!backupSupportsCircuitBreaker) {
+            // A backup that no longer advertises the protected/unsafe split cannot
+            // be used as a dispute signal. If the primary has its own circuit
+            // breaker, keep serving it; otherwise fail closed until governance
+            // repairs the dual-feed configuration.
+            return !primarySupportsCircuitBreaker;
+        }
+
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
         if (!backupSuccess) {
             // Backup is the only safety net for primaries that lack a circuit
             // breaker. If the primary has its own CB, defer to it; otherwise
             // fail closed until the backup recovers.
-            return !_supportsCircuitBreaker(config.primaryFeed, token);
+            return !primarySupportsCircuitBreaker;
         }
 
         if (config.isBackupActive) {
@@ -612,7 +622,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
+        bool primaryProtectedAvailable = primarySuccess && primarySupportsCircuitBreaker;
         uint256 deviation = primaryProtectedAvailable
             ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice)
             : type(uint256).max;
@@ -1226,6 +1236,13 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return _supportsStrictProtectedPrice(activeFeed, token);
     }
 
+    /// @notice Whether this wrapper exposes the protected/unsafe price split for `token`.
+    /// @dev Exposed as an explicit capability marker so callers do not infer support from
+    ///      arbitrary fallback revert data.
+    function supportsCircuitBreaker(address token) external view returns (bool) {
+        return _isTokenSupported[token];
+    }
+
     // ============ Internal Helper Functions ============
 
     function _getValueForPrice(address token, uint256 amount, uint256 price) internal view returns (uint256) {
@@ -1290,16 +1307,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
-    /// @dev A feed "supports the circuit breaker" if it advertises the safe/unsafe split by
-    ///      exposing `getPriceUnsafe(address)`. After the safe-default rename every feed with a real
-    ///      circuit-breaker discipline (Pyth spot/EMA, ERC4626 share-rate cap, Chainlink
-    ///      stale-round + sequencer checks, CompositeOracle dual-feed) publishes the
-    ///      `getPriceUnsafe` selector; feeds that only have a single canonical price
-    ///      (PythEMA, Uniswap V3 TWAP) deliberately do not, and are rejected by every
-    ///      strict pricing path. This helper intentionally treats a revert with data as
-    ///      evidence that the selector exists but the current unsafe read is unavailable
-    ///      (for example, below-liquidity ERC4626 state). The actual protected read still
-    ///      bubbles from the caller.
+    /// @dev A feed "supports the circuit breaker" if it explicitly advertises the
+    ///      protected/unsafe split via `supportsCircuitBreaker(address)`. Legacy feeds
+    ///      without the marker are accepted only when `getPriceUnsafe(address)` currently
+    ///      succeeds with a 32-byte return. Revert data is intentionally not treated as
+    ///      proof of support because generic fallbacks can also revert with custom errors.
     function _supportsCircuitBreaker(address feed, address token) internal view returns (bool) {
         if (feed == address(0)) {
             return false;
@@ -1310,13 +1322,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return false;
         }
 
+        (bool markerSuccess, bytes memory markerData) =
+            feed.staticcall(abi.encodeWithSignature("supportsCircuitBreaker(address)", token));
+        if (markerSuccess && markerData.length >= 32) {
+            return abi.decode(markerData, (bool));
+        }
+
         (bool unsafeSuccess, bytes memory unsafeData) =
             feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
         if (unsafeSuccess) {
             return unsafeData.length >= 32;
         }
-        return unsafeData.length != 0;
+        return false;
     }
 
     function _supportsStrictProtectedPrice(address feed, address token) internal view returns (bool) {
