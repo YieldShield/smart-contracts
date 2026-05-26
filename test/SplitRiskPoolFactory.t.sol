@@ -154,14 +154,7 @@ contract ReentrantPoolCreator is ITransferFromHook {
     function createPool(uint256 creationBondAmount) external returns (address poolAddress) {
         backingToken.approve(address(factory), creationBondAmount);
         poolAddress = factory.createPool(
-            address(shieldedToken),
-            "HSH",
-            address(backingToken),
-            "HOOK",
-            500,
-            200,
-            15000,
-            creationBondAmount
+            address(shieldedToken), "HSH", address(backingToken), "HOOK", 500, 200, 15000, creationBondAmount
         );
         pool = poolAddress;
     }
@@ -724,6 +717,27 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(removedToken, address(0), "tokenInfo should be deleted");
         assertEq(primaryOracleFeed, address(0), "primary feed should be cleared");
         assertEq(backupOracleFeed, address(0), "backup feed should be cleared");
+    }
+
+    function testFactoryCannotRemoveCompositeOracleFeedUsedByActivePool() public {
+        address poolAddress = createPoolAs(user1, address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleTokenFeedRemoval(address(tokenB));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.TokenUsedByActivePool.selector, address(tokenB), poolAddress));
+        factory.removeCompositeOracleTokenFeed(address(tokenB));
+
+        vm.prank(user1);
+        factory.closePool(poolAddress);
+
+        vm.prank(governanceTimelock);
+        factory.removeCompositeOracleTokenFeed(address(tokenB));
+
+        assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removable after pool closes");
+        assertFalse(factory.isWhitelisted(address(tokenB)), "token should be delisted after pool closes");
     }
 
     function testFactoryCanCancelCompositeOracleFeedRemovalWhenAuthorized() public {

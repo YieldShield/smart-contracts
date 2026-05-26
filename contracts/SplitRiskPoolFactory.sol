@@ -400,6 +400,7 @@ contract SplitRiskPoolFactory is
 
     function removeCompositeOracleTokenFeed(address token) external onlyGovernance {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
+        _requireTokenUnusedByActivePools(token);
         _compositeOracleAdmin().removeTokenOracleFeed(token);
         TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
         delete tokenInfo[token];
@@ -454,6 +455,7 @@ contract SplitRiskPoolFactory is
     }
 
     function removePythToken(address token) external onlyGovernance {
+        _requireTokenUnusedByActivePools(token);
         _pythOracleAdmin().removeToken(token);
         _validateWhitelistedCompositeOracleTokenFeed(token);
     }
@@ -522,6 +524,7 @@ contract SplitRiskPoolFactory is
     }
 
     function removeERC4626Vault(address vault) external onlyGovernance {
+        _requireTokenUnusedByActivePools(vault);
         _erc4626OracleFeedAdmin().removeVault(vault);
         _validateWhitelistedCompositeOracleTokenFeed(vault);
     }
@@ -1059,6 +1062,20 @@ contract SplitRiskPoolFactory is
             TokenWhitelistLib.TokenInfo memory info = tokenInfo[token];
             if (info.primaryOracleFeed == oracleFeed || info.backupOracleFeed == oracleFeed) {
                 _validateCompositeOracleTokenFeed(token);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _requireTokenUnusedByActivePools(address token) internal view {
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            address pool = activePools[i];
+            ISplitRiskPoolFactory.PoolInfo storage info = _poolInfo[pool];
+            if (info.shieldedToken == token || info.backingToken == token) {
+                revert ErrorsLib.TokenUsedByActivePool(token, pool);
             }
             unchecked {
                 ++i;

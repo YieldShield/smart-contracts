@@ -123,6 +123,8 @@ library ErrorsLib {
     error PoolAlreadyInactive();
     /// @notice Thrown when a pool is not empty enough to deactivate
     error PoolNotEmptyForDeactivation();
+    /// @notice Thrown when governance attempts to remove oracle support for a token used by an active pool
+    error TokenUsedByActivePool(address token, address pool);
     /// @notice Thrown when protector-only deactivation is attempted before the grace delay
     error PoolDeactivationTooEarly(uint256 executableAt);
 
