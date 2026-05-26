@@ -283,6 +283,67 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         assertTrue(pool.accessControlCanGateWithdrawals(), "governance-installed ACL may gate withdrawals");
     }
 
+    function testSetAccessControl_GovernanceAclWithoutTimelockAuthorityCannotGateWithdrawals() public {
+        AccessControlExample accessControl = new AccessControlExample(unauthorized);
+
+        vm.startPrank(unauthorized);
+        accessControl.setWhitelisted(protector, true);
+        accessControl.setWhitelisted(shielded, true);
+        vm.stopPrank();
+
+        vm.prank(governance);
+        pool.setAccessControl(address(accessControl));
+
+        assertEq(pool.accessControl(), address(accessControl), "governance should install ACL");
+        assertFalse(pool.accessControlCanGateWithdrawals(), "externally administered ACL should be deposit-only");
+        assertTrue(pool.governanceAccessControlInstalled(), "governance ACL install should remain sticky");
+
+        vm.prank(poolCreator);
+        vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
+        pool.setAccessControl(address(0));
+
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+
+        vm.prank(shielded);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        vm.prank(unauthorized);
+        accessControl.setWhitelisted(shielded, false);
+
+        vm.prank(shielded);
+        uint256 newTokenId = pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+        assertGt(newTokenId, tokenId, "externally administered ACL should not trap shielded withdrawals");
+    }
+
+    function testGovernanceInstalledAcl_StopsGatingWithdrawalsWhenAuthorityTransfersAway() public {
+        AccessControlExample accessControl = new AccessControlExample(governance);
+
+        vm.startPrank(governance);
+        accessControl.setWhitelisted(protector, true);
+        accessControl.setWhitelisted(shielded, true);
+        pool.setAccessControl(address(accessControl));
+        vm.stopPrank();
+
+        assertTrue(pool.accessControlCanGateWithdrawals(), "timelock-administered ACL should gate withdrawals");
+
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+
+        vm.prank(shielded);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        vm.prank(governance);
+        accessControl.setOwner(unauthorized);
+
+        vm.prank(unauthorized);
+        accessControl.setWhitelisted(shielded, false);
+
+        vm.prank(shielded);
+        uint256 newTokenId = pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+        assertGt(newTokenId, tokenId, "ACL should stop gating withdrawals after timelock loses authority");
+    }
+
     function testSetAccessControl_CreatorCannotOverrideGovernanceAclBeforeLaunch() public {
         AccessControlExample governanceAccessControl = new AccessControlExample(governance);
         AccessControlExample creatorAccessControl = new AccessControlExample(governance);

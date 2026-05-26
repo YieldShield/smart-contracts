@@ -1816,10 +1816,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.UnsupportedAsset();
         }
         _requirePoolAccountingBalancesCovered();
-        if (
-            accessControlCanGateWithdrawals && accessControl != address(0)
-                && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)
-        ) {
+        if (_withdrawalAccessControlActive() && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawShielded");
         }
 
@@ -1968,10 +1965,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
-        if (
-            accessControlCanGateWithdrawals && accessControl != address(0)
-                && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)
-        ) {
+        if (_withdrawalAccessControlActive() && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "withdrawShielded");
         }
 
@@ -2770,8 +2764,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         emit EventsLib.AccessControlUpdated(accessControl, newAccessControl);
         accessControl = newAccessControl;
-        accessControlCanGateWithdrawals = callerIsGovernance && newAccessControl != address(0);
-        if (accessControlCanGateWithdrawals) {
+        accessControlCanGateWithdrawals = callerIsGovernance && newAccessControl != address(0)
+            && _accessControlAuthorityIsGovernance(newAccessControl);
+        if (callerIsGovernance && newAccessControl != address(0)) {
             governanceAccessControlInstalled = true;
         }
     }
@@ -2807,6 +2802,38 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         abi.decode(returndata, (bool));
     }
 
+    function _withdrawalAccessControlActive() internal view returns (bool) {
+        address activeAccessControl = accessControl;
+        return accessControlCanGateWithdrawals && activeAccessControl != address(0)
+            && _accessControlAuthorityIsGovernance(activeAccessControl);
+    }
+
+    function _accessControlAuthorityIsGovernance(address candidateAccessControl) internal view returns (bool) {
+        if (candidateAccessControl == address(0)) {
+            return false;
+        }
+
+        (bool ownerCallSucceeded, bytes memory ownerData) =
+            candidateAccessControl.staticcall(abi.encodeWithSignature("owner()"));
+        if (ownerCallSucceeded && ownerData.length >= 32 && abi.decode(ownerData, (address)) == _governanceTimelock) {
+            return true;
+        }
+
+        bytes32 defaultAdminRole = bytes32(0);
+        (bool countCallSucceeded, bytes memory countData) = candidateAccessControl.staticcall(
+            abi.encodeWithSignature("getRoleMemberCount(bytes32)", defaultAdminRole)
+        );
+        if (!countCallSucceeded || countData.length < 32 || abi.decode(countData, (uint256)) != 1) {
+            return false;
+        }
+
+        (bool memberCallSucceeded, bytes memory memberData) = candidateAccessControl.staticcall(
+            abi.encodeWithSignature("getRoleMember(bytes32,uint256)", defaultAdminRole, 0)
+        );
+        return
+            memberCallSucceeded && memberData.length >= 32 && abi.decode(memberData, (address)) == _governanceTimelock;
+    }
+
     function _validateFeeRecipient(address recipient) internal view {
         if (recipient == address(0) || recipient == address(this)) {
             revert ErrorsLib.InvalidProtocolFeeRecipient();
@@ -2814,10 +2841,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     function _requireProtectorWithdrawalAllowed(address account, string memory operation) internal view {
-        if (
-            accessControlCanGateWithdrawals && accessControl != address(0)
-                && !IPoolAccessControl(accessControl).canWithdrawProtector(account)
-        ) {
+        if (_withdrawalAccessControlActive() && !IPoolAccessControl(accessControl).canWithdrawProtector(account)) {
             revert ErrorsLib.AccessControlDenied(account, operation);
         }
     }
@@ -2889,7 +2913,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorShareEpochs;
     /// @notice share generation => reward-per-share cap for historical commission claims
     mapping(uint256 => uint256) public protectorEpochFinalRewardPerShare;
-    /// @notice True when the active ACL was installed by governance and may gate withdrawals
+    /// @notice True when governance installed the active ACL as withdrawal-gating eligible.
+    /// @dev Live governance authority over the ACL is rechecked before each withdrawal gate.
     bool public accessControlCanGateWithdrawals;
     /// @notice True after governance has installed a withdrawal-gating ACL at least once.
     bool public governanceAccessControlInstalled;
