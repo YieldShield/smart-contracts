@@ -5,6 +5,7 @@ import { ScaffoldETHDeploy } from "./DeployHelpers.s.sol";
 import { console } from "forge-std/console.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockGauntletUSDCPrime } from "../contracts/mocks/MockGauntletUSDCPrime.sol";
 import { IPriceOracle } from "../contracts/interfaces/IPriceOracle.sol";
@@ -25,7 +26,11 @@ contract SetupStaging is ScaffoldETHDeploy {
     uint256 constant PROTECTOR_DEPOSIT = 20_000e18; // 20k tokens — must exceed shielded value at collateral ratio
     uint256 constant SHIELDED_DEPOSIT = 5_000e18; // 5k tokens — conservative to stay within collateral bounds
 
+    error StagingChainRequired(uint256 chainId);
+    error StagingSetupNotConfirmed();
+
     function run() external {
+        _requireStagingSetupAllowed();
         deployer = _startBroadcast();
         console.log("\n=== Staging Setup ===");
         console.log("Deployer:", deployer);
@@ -128,6 +133,20 @@ contract SetupStaging is ScaffoldETHDeploy {
     }
 
     // --- Helpers ---
+
+    function _requireStagingSetupAllowed() internal view {
+        if (block.chainid != PythConfig.ARBITRUM_SEPOLIA_CHAIN_ID) {
+            revert StagingChainRequired(block.chainid);
+        }
+        if (!_isStagingSetupConfirmed()) {
+            revert StagingSetupNotConfirmed();
+        }
+    }
+
+    function _isStagingSetupConfirmed() internal view virtual returns (bool) {
+        string memory confirmation = vm.envOr("YS_STAGING_SETUP_CONFIRMED", string(""));
+        return keccak256(bytes(confirmation)) == keccak256(bytes("true"));
+    }
 
     function _mintMockERC20(address tokenAddr, uint256 amount) internal {
         MockERC20 token = MockERC20(tokenAddr);
