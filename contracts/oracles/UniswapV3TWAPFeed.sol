@@ -269,8 +269,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         address oldOracle = address(quoteTokenOracle);
 
         if (oldOracle != address(0)) {
-            uint256 oldPrice = IOracleFeed(oldOracle).getPrice(quoteToken);
-            uint256 newPrice = IOracleFeed(_quoteTokenOracle).getPrice(quoteToken);
+            uint256 oldPrice = _getNormalizedQuoteTokenPrice(oldOracle);
+            uint256 newPrice = _getNormalizedQuoteTokenPrice(_quoteTokenOracle);
             uint256 deviationBps = _absoluteDeviationBps(oldPrice, newPrice);
             if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
                 revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, deviationBps);
@@ -287,8 +287,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     function scheduleQuoteTokenOracleFailover(address _quoteTokenOracle) external onlyOwner {
         if (_quoteTokenOracle == address(0)) revert("Invalid quote token oracle");
-        uint256 newPrice = IOracleFeed(_quoteTokenOracle).getPrice(quoteToken);
-        if (newPrice == 0) revert PriceTruncatedToZero(quoteToken);
+        uint256 newPrice = _getNormalizedQuoteTokenPrice(_quoteTokenOracle);
 
         scheduledQuoteTokenOracle = _quoteTokenOracle;
         scheduledQuoteTokenOracleTime = block.timestamp + QUOTE_ORACLE_FAILOVER_DELAY;
@@ -312,8 +311,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         uint256 expiresAt = executableAt + QUOTE_ORACLE_FAILOVER_EXPIRY;
         if (block.timestamp > expiresAt) revert QuoteOracleFailoverExpired(expiresAt);
 
-        uint256 newPrice = IOracleFeed(newOracle).getPrice(quoteToken);
-        if (newPrice == 0) revert PriceTruncatedToZero(quoteToken);
+        uint256 newPrice = _getNormalizedQuoteTokenPrice(newOracle);
         uint256 scheduledPrice = scheduledQuoteTokenOraclePrice;
         uint256 deviationBps = _absoluteDeviationBps(scheduledPrice, newPrice);
         if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
@@ -322,13 +320,11 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         address oldOracle = address(quoteTokenOracle);
         if (oldOracle != address(0)) {
-            try IOracleFeed(oldOracle).getPrice(quoteToken) returns (uint256 oldPrice) {
+            (bool oldPriceAvailable, uint256 oldPrice) = _tryGetNormalizedQuoteTokenPrice(oldOracle);
+            if (oldPriceAvailable) {
                 uint256 oldDeviationBps = _absoluteDeviationBps(oldPrice, newPrice);
-                if (oldDeviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
-                    revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, oldDeviationBps);
-                }
                 emit QuoteTokenOracleSwapPrices(oldPrice, newPrice, oldDeviationBps);
-            } catch { }
+            }
         }
         quoteTokenOracle = IOracleFeed(newOracle);
         scheduledQuoteTokenOracle = address(0);
@@ -342,7 +338,33 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         if (a == 0 || b == 0) return type(uint256).max;
         uint256 diff = a > b ? a - b : b - a;
         uint256 anchor = a > b ? b : a; // smaller value as denominator → larger bps
-        return (diff * 10_000) / anchor;
+        return FullMath.mulDiv(diff, 10_000, anchor);
+    }
+
+    function _getNormalizedQuoteTokenPrice(address oracle) internal view returns (uint256 normalizedPrice) {
+        uint256 price = IOracleFeed(oracle).getPrice(quoteToken);
+        if (price == 0) revert PriceTruncatedToZero(quoteToken);
+        normalizedPrice = price.normalize(IOracleFeed(oracle).decimals(), 18);
+        if (normalizedPrice == 0) revert PriceTruncatedToZero(quoteToken);
+    }
+
+    function _tryGetNormalizedQuoteTokenPrice(address oracle)
+        internal
+        view
+        returns (bool success, uint256 normalizedPrice)
+    {
+        try IOracleFeed(oracle).getPrice(quoteToken) returns (uint256 price) {
+            if (price == 0) return (false, 0);
+            try IOracleFeed(oracle).decimals() returns (uint8 priceDecimals) {
+                normalizedPrice = price.normalize(priceDecimals, 18);
+                if (normalizedPrice == 0) return (false, 0);
+                return (true, normalizedPrice);
+            } catch {
+                return (false, 0);
+            }
+        } catch {
+            return (false, 0);
+        }
     }
 
     /// @inheritdoc IOracleFeed
@@ -363,16 +385,11 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         // If token is token1, we need to invert
         uint256 priceInQuoteToken = _getPriceFromTick(twapTick, _isToken0, tokenScales[token], quoteTokenScale);
 
-        // Convert quote token price to USD
-        uint256 quoteTokenUSDPrice = quoteTokenOracle.getPrice(quoteToken);
-        uint8 quoteTokenDecimals = quoteTokenOracle.decimals();
-
-        // Normalize quote token price to 18 decimals
-        uint256 normalizedQuotePrice = quoteTokenUSDPrice.normalize(quoteTokenDecimals, 18);
+        uint256 normalizedQuotePrice = _getNormalizedQuoteTokenPrice(address(quoteTokenOracle));
 
         // Calculate token USD price: priceInQuoteToken * quoteTokenUSDPrice
         // priceInQuoteToken is in 18 decimals, normalizedQuotePrice is in 18 decimals
-        uint256 tokenUSDPrice = (priceInQuoteToken * normalizedQuotePrice) / 1e18;
+        uint256 tokenUSDPrice = FullMath.mulDiv(priceInQuoteToken, normalizedQuotePrice, 1e18);
 
         // Return in 8 decimals. If stacked divisions during normalization
         // truncate to zero (micro-USD-priced assets), fail closed rather than
