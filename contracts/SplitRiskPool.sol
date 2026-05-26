@@ -24,6 +24,7 @@ import { ISplitRiskPoolFactory } from "./interfaces/ISplitRiskPoolFactory.sol";
 import { SlippageLib } from "./libraries/SlippageLib.sol";
 import { ProtocolAccessControlUpgradeable } from "./base/ProtocolAccessControlUpgradeable.sol";
 import { IPoolAccessControl } from "./interfaces/IPoolAccessControl.sol";
+import { TransferIntegrityProbe } from "./TransferIntegrityProbe.sol";
 
 /// @title SplitRiskPool
 /// @author David Hawig
@@ -960,13 +961,19 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
-    function _requireUntaxedShieldedSelfTransfer(uint256 nominalAmount) internal {
+    function _requireUntaxedShieldedRoundTrip(uint256 nominalAmount) internal {
         if (nominalAmount == 0) {
             return;
         }
 
+        TransferIntegrityProbe probe = new TransferIntegrityProbe(address(this));
         uint256 beforeBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
-        SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), address(this), nominalAmount);
+        SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), address(probe), nominalAmount);
+        uint256 probeReceived = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
+        if (probeReceived != nominalAmount) {
+            revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
+        }
+        probe.returnToken(SHIELDED_TOKEN, probeReceived);
         uint256 afterBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
         if (afterBal != beforeBal) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
@@ -1860,7 +1867,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // Cross-asset withdrawal (USD-BASED): user gets backing tokens (shield activation)
             // Use stored valueAtDeposit (locked at deposit time - manipulation resistant)
             uint256 forfeitedShieldedAmount = pos.amount - totalFees;
-            _requireUntaxedShieldedSelfTransfer(forfeitedShieldedAmount);
+            _requireUntaxedShieldedRoundTrip(forfeitedShieldedAmount);
             (uint256 accumulatedReward, uint256 redirectedReward) =
                 _accumulateProtectorReward(forfeitedShieldedAmount, ConstantsLib.MAX_SAFE_ACCUMULATION);
             if (accumulatedReward + redirectedReward != forfeitedShieldedAmount) {

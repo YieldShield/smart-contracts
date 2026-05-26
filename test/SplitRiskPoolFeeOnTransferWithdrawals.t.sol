@@ -46,6 +46,40 @@ contract SenderPaidFeeMockERC20 is MockERC20 {
     }
 }
 
+contract SelfTransferExemptFeeMockERC20 is MockERC20 {
+    constructor(string memory name, string memory symbol) MockERC20(name, symbol) { }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (transferFee == 0 || msg.sender == to) {
+            _transfer(msg.sender, to, amount);
+            return true;
+        }
+
+        uint256 fee = (amount * transferFee) / 10_000;
+        _transfer(msg.sender, to, amount - fee);
+        if (fee != 0) {
+            _transfer(msg.sender, owner(), fee);
+        }
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        if (transferFee == 0 || from == to) {
+            _spendAllowance(from, msg.sender, amount);
+            _transfer(from, to, amount);
+            return true;
+        }
+
+        uint256 fee = (amount * transferFee) / 10_000;
+        _spendAllowance(from, msg.sender, amount);
+        _transfer(from, to, amount - fee);
+        if (fee != 0) {
+            _transfer(from, owner(), fee);
+        }
+        return true;
+    }
+}
+
 contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
@@ -445,6 +479,74 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
     function test_crossAssetWithdraw_RevertsIfShieldedTokenBecomesTaxedAfterDeposit() public {
         uint256 tokenId = _depositShielded(100e18);
         shieldedToken.setTransferFee(500);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
+    }
+
+    function test_crossAssetWithdraw_RevertsIfShieldedTokenTaxesThirdPartyButExemptsSelfTransfers() public {
+        SelfTransferExemptFeeMockERC20 selfExemptShielded =
+            new SelfTransferExemptFeeMockERC20("Self Exempt Shielded", "SES");
+        shieldedToken = selfExemptShielded;
+        oracle.setPrice(address(shieldedToken), 1e8);
+
+        TokenWhitelistLib.TokenInfo memory shieldedTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Self Exempt Shielded",
+            symbol: "SES",
+            token: address(shieldedToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+        TokenWhitelistLib.TokenInfo memory backingTokenInfo = TokenWhitelistLib.TokenInfo({
+            name: "Backing Token",
+            symbol: "BACK",
+            token: address(backingToken),
+            primaryOracleFeed: address(oracle),
+            backupOracleFeed: address(0),
+            minCollateralRatioBp: 10000
+        });
+
+        SplitRiskPool implementation = new SplitRiskPool();
+        shieldNFT = new ShieldReceiptNFT("sSES", "sSES");
+        protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
+        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPool.initialize.selector,
+            shieldedTokenInfo,
+            backingTokenInfo,
+            1000,
+            500,
+            address(this),
+            15000,
+            governanceTimelock,
+            address(oracle),
+            address(0xdead),
+            address(shieldNFT),
+            address(protectorNFT),
+            address(this)
+        );
+        pool = SplitRiskPool(payable(address(new ERC1967Proxy(address(implementation), initData))));
+        shieldNFT.setPool(address(pool));
+        protectorNFT.setPool(address(pool));
+        shieldNFT.transferOwnership(address(pool));
+        protectorNFT.transferOwnership(address(pool));
+
+        shieldedToken.mint(shieldedUser, 1_000e18);
+        backingToken.mint(protector, 1_000e18);
+        vm.startPrank(protector);
+        backingToken.approve(address(pool), 500e18);
+        pool.depositBackingAsset(address(backingToken), 500e18, 0);
+        vm.stopPrank();
+
+        uint256 tokenId = _depositShielded(100e18);
+        selfExemptShielded.setTransferFee(500);
 
         vm.warp(block.timestamp + 7 days + 1);
         vm.prank(shieldedUser);
