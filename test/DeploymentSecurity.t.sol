@@ -623,7 +623,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        address directOracleCaller = address(0xCA11);
 
+        compositeOracle.setAuthorizedCaller(directOracleCaller, true);
         compositeOracle.transferOwnership(address(harness));
         pythOracle.transferOwnership(address(harness));
         erc4626OracleFeed.transferOwnership(address(harness));
@@ -653,6 +655,8 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.defaultProtocolFeeRecipient(), address(timelock));
         assertEq(factory.pythOracle(), address(pythOracle));
         assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
+        assertFalse(compositeOracle.authorizedCallers(directOracleCaller));
+        assertEq(compositeOracle.authorizedCallerCount(), 0);
 
         harness.finalizeProductionProtocolBootstrapHarness(
             address(factory),
@@ -710,6 +714,49 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(pythOracle),
             address(erc4626OracleFeed),
             address(expectedTimelock)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsCompositeOracleAuthorizedCallers() public {
+        (, TimelockController timelock,) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        compositeOracle.transferOwnership(address(factory));
+        pythOracle.transferOwnership(address(factory));
+        erc4626OracleFeed.transferOwnership(address(factory));
+
+        vm.startPrank(address(harness));
+        factory.setCompositeOracle(address(compositeOracle));
+        factory.setDefaultProtocolFeeRecipient(address(timelock));
+        factory.setManagedPythOracle(address(pythOracle));
+        factory.setManagedERC4626OracleFeed(address(erc4626OracleFeed));
+        factory.finalizeBootstrap();
+        factory.transferOwnership(address(timelock));
+        vm.stopPrank();
+
+        address staleCaller = address(0xCA11);
+        vm.prank(address(factory));
+        compositeOracle.setAuthorizedCaller(staleCaller, true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAuthorizedCallersPresent.selector,
+                address(compositeOracle),
+                1
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            address(compositeOracle),
+            address(pythOracle),
+            address(erc4626OracleFeed),
+            address(timelock)
         );
     }
 

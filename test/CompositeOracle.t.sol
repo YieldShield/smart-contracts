@@ -131,11 +131,25 @@ contract CompositeOracleTest is Test {
 
     function testAuthorizedCaller() public {
         compositeOracle.setAuthorizedCaller(authorizedCaller, true);
+        assertEq(compositeOracle.authorizedCallerCount(), 1);
+        assertEq(compositeOracle.authorizedCallerAt(0), authorizedCaller);
 
         vm.prank(authorizedCaller);
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
 
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
+    }
+
+    function testClearAuthorizedCallers() public {
+        address secondCaller = address(0xCA11);
+        compositeOracle.setAuthorizedCaller(authorizedCaller, true);
+        compositeOracle.setAuthorizedCaller(secondCaller, true);
+
+        compositeOracle.clearAuthorizedCallers();
+
+        assertEq(compositeOracle.authorizedCallerCount(), 0);
+        assertFalse(compositeOracle.authorizedCallers(authorizedCaller));
+        assertFalse(compositeOracle.authorizedCallers(secondCaller));
     }
 
     function testUnauthorizedCallerReverts() public {

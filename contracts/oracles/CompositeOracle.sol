@@ -49,6 +49,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Authorized callers that can set token oracle feeds (e.g., factory)
     mapping(address => bool) public authorizedCallers;
 
+    /// @notice Enumerable active authorized callers
+    address[] private _authorizedCallerList;
+    mapping(address => uint256) private _authorizedCallerIndexPlusOne;
+
     // ============ Challenge Mechanism Configuration ============
 
     /// @notice Deviation threshold in basis points (e.g., 75 = 0.75%)
@@ -105,6 +109,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Custom error for unauthorized caller
     error UnauthorizedCaller(address caller);
 
+    /// @notice Custom error for invalid authorized caller
+    error InvalidAuthorizedCaller(address caller);
+
     /// @notice Custom error for invalid/zero price
     error InvalidPrice(address token, uint256 price);
 
@@ -151,8 +158,60 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @param caller The address to authorize/deauthorize
     /// @param authorized Whether the caller is authorized
     function setAuthorizedCaller(address caller, bool authorized) external onlyOwner {
+        if (caller == address(0)) revert InvalidAuthorizedCaller(caller);
+        bool wasAuthorized = authorizedCallers[caller];
+        if (wasAuthorized == authorized) {
+            emit AuthorizedCallerSet(caller, authorized);
+            return;
+        }
+
         authorizedCallers[caller] = authorized;
+        if (authorized) {
+            _authorizedCallerIndexPlusOne[caller] = _authorizedCallerList.length + 1;
+            _authorizedCallerList.push(caller);
+        } else {
+            _removeAuthorizedCaller(caller);
+        }
         emit AuthorizedCallerSet(caller, authorized);
+    }
+
+    /// @notice Returns the number of active authorized callers.
+    function authorizedCallerCount() external view returns (uint256) {
+        return _authorizedCallerList.length;
+    }
+
+    /// @notice Returns the active authorized caller at `index`.
+    function authorizedCallerAt(uint256 index) external view returns (address) {
+        return _authorizedCallerList[index];
+    }
+
+    /// @notice Clears every enumerable authorized caller.
+    function clearAuthorizedCallers() external onlyOwner {
+        while (_authorizedCallerList.length != 0) {
+            address caller = _authorizedCallerList[_authorizedCallerList.length - 1];
+            authorizedCallers[caller] = false;
+            _authorizedCallerList.pop();
+            delete _authorizedCallerIndexPlusOne[caller];
+            emit AuthorizedCallerSet(caller, false);
+        }
+    }
+
+    function _removeAuthorizedCaller(address caller) internal {
+        uint256 indexPlusOne = _authorizedCallerIndexPlusOne[caller];
+        if (indexPlusOne == 0) {
+            return;
+        }
+
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = _authorizedCallerList.length - 1;
+        if (index != lastIndex) {
+            address lastCaller = _authorizedCallerList[lastIndex];
+            _authorizedCallerList[index] = lastCaller;
+            _authorizedCallerIndexPlusOne[lastCaller] = index + 1;
+        }
+
+        _authorizedCallerList.pop();
+        delete _authorizedCallerIndexPlusOne[caller];
     }
 
     /// @notice Update the deviation threshold for challenge mechanism

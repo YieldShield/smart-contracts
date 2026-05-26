@@ -34,6 +34,7 @@ interface ICompositeOracleAdmin {
     function cancelScheduledRemoveTokenOracleFeed(address token) external;
     function removeTokenOracleFeed(address token) external;
     function setAuthorizedCaller(address caller, bool authorized) external;
+    function clearAuthorizedCallers() external;
     function setDeviationThreshold(uint256 newThresholdBps) external;
     function setChallengeDuration(uint256 newDurationSec) external;
     function scheduleForceResetToPrimary(address token) external;
@@ -1221,12 +1222,19 @@ contract SplitRiskPoolFactory is
         }
 
         ICompositeOracleAdmin oracleAdmin = ICompositeOracleAdmin(compositeOracle);
+        bool clearedAll;
+        try oracleAdmin.clearAuthorizedCallers() {
+            clearedAll = true;
+        } catch { }
+
         uint256 callerCount = _trackedCompositeOracleAuthorizedCallers.length;
         for (uint256 i = 0; i < callerCount;) {
             address caller = _trackedCompositeOracleAuthorizedCallers[i];
             if (_compositeOracleAuthorizedCallerActive[caller]) {
                 _compositeOracleAuthorizedCallerActive[caller] = false;
-                oracleAdmin.setAuthorizedCaller(caller, false);
+                if (!clearedAll) {
+                    oracleAdmin.setAuthorizedCaller(caller, false);
+                }
             }
             unchecked {
                 ++i;

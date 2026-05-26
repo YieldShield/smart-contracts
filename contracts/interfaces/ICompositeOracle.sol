@@ -84,6 +84,15 @@ interface ICompositeOracle is IPriceOracle {
     /// @return required True if strict support is required
     function strictCircuitBreakerRequired(address token) external view returns (bool required);
 
+    /// @notice Returns the number of active addresses authorized to administer feeds.
+    function authorizedCallerCount() external view returns (uint256);
+
+    /// @notice Returns the active authorized caller at `index`.
+    function authorizedCallerAt(uint256 index) external view returns (address);
+
+    /// @notice Clears all active authorized callers.
+    function clearAuthorizedCallers() external;
+
     /// @notice Get the dual-feed status for a token
     /// @param token The token address
     /// @return isDualFeed True if token has both primary and backup feeds

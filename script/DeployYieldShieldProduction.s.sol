@@ -20,6 +20,10 @@ interface IProductionOwnable {
     function transferOwnership(address newOwner) external;
 }
 
+interface IProductionCompositeOracle is IProductionOwnable {
+    function authorizedCallerCount() external view returns (uint256);
+}
+
 /**
  * @notice Production deployment script for public networks
  * @dev Deploys only governance and core protocol contracts. Token whitelisting and launch assets
@@ -65,6 +69,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionProtocolContract(bytes32 name, address contractAddress);
     error ProductionProtocolOwnerMismatch(bytes32 name, address actualOwner, address expectedOwner);
     error ProductionProtocolAddressMismatch(bytes32 field, address actualAddress, address expectedAddress);
+    error ProductionProtocolAuthorizedCallersPresent(address compositeOracle, uint256 count);
     error ProductionProtocolBootstrapModeOpen(address factory);
     error ProductionProtocolLaunchAssetsPresent(address factory);
 
@@ -365,6 +370,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
 
         _requireProductionOwner(NAME_COMPOSITE_ORACLE, IProductionOwnable(compositeOracleAddr).owner(), factoryAddr);
+        uint256 compositeOracleAuthorizedCallerCount =
+            IProductionCompositeOracle(compositeOracleAddr).authorizedCallerCount();
+        if (compositeOracleAuthorizedCallerCount != 0) {
+            revert ProductionProtocolAuthorizedCallersPresent(compositeOracleAddr, compositeOracleAuthorizedCallerCount);
+        }
         _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(pythOracleAddr).owner(), factoryAddr);
         _requireProductionOwner(
             NAME_ERC4626_ORACLE_FEED, IProductionOwnable(erc4626OracleFeedAddr).owner(), factoryAddr
