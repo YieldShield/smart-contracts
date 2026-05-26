@@ -132,6 +132,30 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
+    function test_ProtectorOnlyWithdrawalIgnoresBackingOracleChallengeWithoutShieldedLiabilities() public {
+        vm.prank(protector);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
+
+        vm.prank(protector);
+        pool.startUnlockProcess(protectorTokenId);
+        vm.warp(block.timestamp + 29 days);
+
+        backupOracle.setPrice(address(backingToken), 2e8);
+        compositeOracle.challengeForToken(address(backingToken));
+
+        assertEq(pool.totalShieldedTokens(), 0);
+        assertEq(pool.totalValueAtDeposit(), 0);
+        assertEq(pool.totalShieldCollateralAmount(), 0);
+        assertEq(pool.getAvailableForWithdrawal(protectorTokenId), 2_000e18);
+
+        uint256 protectorBalanceBefore = backingToken.balanceOf(protector);
+        vm.prank(protector);
+        pool.protectorWithdraw(protectorTokenId, 2_000e18, address(backingToken), 0);
+
+        assertEq(backingToken.balanceOf(protector), protectorBalanceBefore + 2_000e18);
+        assertEq(pool.totalProtectorTokens(), 0);
+    }
+
     function test_PreChallengeShieldedDeviationBlocksValueLock() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);

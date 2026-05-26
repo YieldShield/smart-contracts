@@ -507,6 +507,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    /// @dev Returns true while any shield receipt liability remains in pool accounting.
+    function _hasShieldedLiabilities() internal view returns (bool) {
+        return totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0;
+    }
+
     /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
     ///      Intentionally uses the unprotected getter — view paths must opt into the raw
     ///      active-feed value because the safe `getPrice` would otherwise revert during a
@@ -778,12 +783,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return 0;
         }
 
+        // slither-disable-next-line incorrect-equality — empty-state guard, no deposits means nothing locked
+        if (!_hasShieldedLiabilities()) return positionAmount; // No shielded deposits = nothing locked
+
         if (_hasOraclePendingChallenge(BACKING_TOKEN)) {
             return 0;
         }
-
-        // slither-disable-next-line incorrect-equality — empty-state guard, no deposits means nothing locked
-        if (totalValueAtDeposit == 0) return positionAmount; // No shielded deposits = nothing locked
 
         // Calculate required protector tokens based on USD collateral requirement using protected backing pricing.
         (bool priceSuccess, uint256 uwPrice) = _tryGetProtectedBackingPrice();
@@ -2159,7 +2164,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requirePoolAccountingBalancesCovered();
-        _requireNoOraclePendingChallenge(BACKING_TOKEN);
+        if (_hasShieldedLiabilities()) {
+            _requireNoOraclePendingChallenge(BACKING_TOKEN);
+        }
 
         _requireProtectorWithdrawalAllowed(msg.sender, "withdrawProtector");
 
@@ -2221,7 +2228,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidTokenId();
         }
         if (!dustExit) {
-            _requireNoOraclePendingChallenge(BACKING_TOKEN);
+            if (_hasShieldedLiabilities()) {
+                _requireNoOraclePendingChallenge(BACKING_TOKEN);
+            }
             uint256 refreshedAvailable = getAvailableForWithdrawal(tokenId);
             if (amount > refreshedAvailable) {
                 revert ErrorsLib.InsufficientUnlockedTokens();
