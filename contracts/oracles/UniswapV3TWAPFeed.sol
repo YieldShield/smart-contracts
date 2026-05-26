@@ -38,6 +38,9 @@ interface IUniswapV3Pool {
 /// @notice Oracle feed that calculates TWAP from Uniswap V3 pools
 /// @dev Provides manipulation-resistant pricing for tokens with liquid on-chain markets
 ///      All price outputs are normalized to 8 decimals (USD format).
+///      This feed intentionally does not expose `getPriceUnsafe` or
+///      `supportsCircuitBreaker`; protected pool paths require feeds with an
+///      explicit safe/unsafe split and should reject TWAP-only feeds.
 /// - getPrice() returns: TWAP price with 8 decimals (e.g., $1.00 = 1e8)
 /// - Uniswap V3 tick prices are converted to sqrtPriceX96 format and normalized
 /// - Quote token oracle MUST also return 8 decimal prices for proper USD conversion

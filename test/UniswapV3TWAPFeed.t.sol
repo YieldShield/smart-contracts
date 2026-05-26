@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { UniswapV3TWAPFeed } from "../contracts/oracles/UniswapV3TWAPFeed.sol";
 import { FullMath } from "../contracts/oracles/libraries/FullMath.sol";
 import { TickMath } from "../contracts/oracles/libraries/TickMath.sol";
@@ -237,6 +238,36 @@ contract UniswapV3TWAPFeedTest is Test {
         vm.warp(block.timestamp + harness.TOKEN_POOL_REMOVAL_DELAY());
         vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.TokenPoolRemovalNotScheduled.selector, address(token)));
         harness.removeTokenPool(address(token));
+    }
+
+    function test_TWAPFeedDoesNotAdvertiseCircuitBreakerSupport() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+
+        (bool success,) =
+            address(harness).staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", address(token)));
+        assertFalse(success, "TWAP feed should not expose an unsafe price selector");
+
+        (success,) =
+            address(harness).staticcall(abi.encodeWithSignature("supportsCircuitBreaker(address)", address(token)));
+        assertFalse(success, "TWAP feed should not advertise protected price support");
+    }
+
+    function test_CompositeOracleRejectsTWAPFeedForProtectedPricing() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+
+        CompositeOracle compositeOracle = new CompositeOracle();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(token), address(harness)
+            )
+        );
+        compositeOracle.setTokenOracleFeed(address(token), address(harness));
     }
 
     function test_getPrice_RevertsWhenRegisteredPoolLiquidityFallsBelowFloor() public {
