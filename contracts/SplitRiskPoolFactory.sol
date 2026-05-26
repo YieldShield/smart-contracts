@@ -60,6 +60,8 @@ interface IPythOracleAdmin {
 }
 
 interface IERC4626OracleFeedAdmin {
+    function underlyingPriceOracle() external view returns (address);
+    function vaultToUnderlying(address vault) external view returns (address);
     function setUnderlyingPriceOracle(address underlyingPriceOracle) external;
     function registerVault(address vault, address underlying) external;
     function refreshVaultSharePriceReference(address vault) external;
@@ -437,6 +439,7 @@ contract SplitRiskPoolFactory is
     function setPythTokenPriceFeed(address token, bytes32 feedId) external onlyGovernance {
         _pythOracleAdmin().setTokenPriceFeed(token, feedId);
         _validateWhitelistedCompositeOracleTokenFeed(token);
+        _validateActiveERC4626VaultsDependingOnUnderlying(token, pythOracle);
     }
 
     function setPythTokenCompositePriceFeed(address token, bytes32 baseFeedId, bytes32 quoteUsdFeedId)
@@ -445,6 +448,7 @@ contract SplitRiskPoolFactory is
     {
         _pythOracleAdmin().setTokenCompositePriceFeed(token, baseFeedId, quoteUsdFeedId);
         _validateWhitelistedCompositeOracleTokenFeed(token);
+        _validateActiveERC4626VaultsDependingOnUnderlying(token, pythOracle);
     }
 
     function schedulePythTokenRemoval(address token) external onlyGovernance {
@@ -464,36 +468,43 @@ contract SplitRiskPoolFactory is
     function setPythMaxPriceAge(uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAge(maxPriceAge);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setPythMaxPriceAgeForToken(address token, uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAgeForToken(token, maxPriceAge);
         _validateWhitelistedCompositeOracleTokenFeed(token);
+        _validateActiveERC4626VaultsDependingOnUnderlying(token, pythOracle);
     }
 
     function setPythMaxPriceAgeForFeedId(bytes32 feedId, uint256 maxPriceAge) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceAgeForFeedId(feedId, maxPriceAge);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setPythMaxCompositePublishTimeSkew(uint256 maxSkew) external onlyGovernance {
         _pythOracleAdmin().setMaxCompositePublishTimeSkew(maxSkew);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setPythMaxPriceDeviation(uint256 maxPriceDeviation) external onlyGovernance {
         _pythOracleAdmin().setMaxPriceDeviation(maxPriceDeviation);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setPythMaxConfidenceBps(uint256 maxConfidenceBps) external onlyGovernance {
         _pythOracleAdmin().setMaxConfidenceBps(maxConfidenceBps);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external onlyGovernance {
         _pythOracleAdmin().setMaxEmaConfidenceBps(maxEmaConfidenceBps);
         _validateCompositeOracleFeedsUsing(pythOracle);
+        _validateActiveERC4626VaultFeedsUsing(pythOracle);
     }
 
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external onlyGovernance {
@@ -1097,10 +1108,100 @@ contract SplitRiskPoolFactory is
             if (info.shieldedToken == token || info.backingToken == token) {
                 revert ErrorsLib.TokenUsedByActivePool(token, pool);
             }
+            _requireTokenNotActiveERC4626Underlying(token, info.shieldedToken, pool);
+            _requireTokenNotActiveERC4626Underlying(token, info.backingToken, pool);
             unchecked {
                 ++i;
             }
         }
+    }
+
+    function _requireTokenNotActiveERC4626Underlying(address token, address activeToken, address pool) internal view {
+        if (!_tokenUsesManagedERC4626Feed(activeToken)) {
+            return;
+        }
+        address underlying = _erc4626VaultUnderlying(activeToken);
+        if (underlying == address(0) || underlying == token) {
+            revert ErrorsLib.TokenUsedByActivePool(token, pool);
+        }
+    }
+
+    function _validateActiveERC4626VaultFeedsUsing(address oracleFeed) internal view {
+        if (oracleFeed == address(0) || erc4626OracleFeed == address(0)) {
+            return;
+        }
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            ISplitRiskPoolFactory.PoolInfo storage info = _poolInfo[activePools[i]];
+            _validateActiveERC4626VaultTokenUsing(info.shieldedToken, oracleFeed);
+            _validateActiveERC4626VaultTokenUsing(info.backingToken, oracleFeed);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _validateActiveERC4626VaultsDependingOnUnderlying(address underlying, address oracleFeed) internal view {
+        if (underlying == address(0) || oracleFeed == address(0) || erc4626OracleFeed == address(0)) {
+            return;
+        }
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            ISplitRiskPoolFactory.PoolInfo storage info = _poolInfo[activePools[i]];
+            _validateActiveERC4626VaultTokenDependency(info.shieldedToken, underlying);
+            _validateActiveERC4626VaultTokenDependency(info.backingToken, underlying);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _validateActiveERC4626VaultTokenUsing(address token, address oracleFeed) internal view {
+        if (!_tokenUsesManagedERC4626Feed(token)) {
+            return;
+        }
+        address underlying = _erc4626VaultUnderlying(token);
+        if (underlying == address(0) || _erc4626UnderlyingPriceOracleUses(underlying, oracleFeed)) {
+            _validateCompositeOracleTokenFeed(token);
+        }
+    }
+
+    function _validateActiveERC4626VaultTokenDependency(address token, address underlying) internal view {
+        if (!_tokenUsesManagedERC4626Feed(token)) {
+            return;
+        }
+        address vaultUnderlying = _erc4626VaultUnderlying(token);
+        if (vaultUnderlying == address(0) || vaultUnderlying == underlying) {
+            _validateCompositeOracleTokenFeed(token);
+        }
+    }
+
+    function _tokenUsesManagedERC4626Feed(address token) internal view returns (bool) {
+        if (erc4626OracleFeed == address(0)) {
+            return false;
+        }
+        TokenWhitelistLib.TokenInfo storage info = tokenInfo[token];
+        return info.primaryOracleFeed == erc4626OracleFeed || info.backupOracleFeed == erc4626OracleFeed;
+    }
+
+    function _erc4626VaultUnderlying(address vault) internal view returns (address underlying) {
+        try IERC4626OracleFeedAdmin(erc4626OracleFeed).vaultToUnderlying(vault) returns (address configuredUnderlying) {
+            underlying = configuredUnderlying;
+        } catch {
+            return address(0);
+        }
+    }
+
+    function _erc4626UnderlyingPriceOracleUses(address underlying, address oracleFeed) internal view returns (bool) {
+        address underlyingOracle = IERC4626OracleFeedAdmin(erc4626OracleFeed).underlyingPriceOracle();
+        if (underlyingOracle == oracleFeed) {
+            return true;
+        }
+        if (underlyingOracle == compositeOracle) {
+            TokenWhitelistLib.TokenInfo storage underlyingInfo = tokenInfo[underlying];
+            return underlyingInfo.primaryOracleFeed == oracleFeed || underlyingInfo.backupOracleFeed == oracleFeed;
+        }
+        return false;
     }
 
     function _activePoolLimit() internal view returns (uint256) {

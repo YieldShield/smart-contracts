@@ -86,6 +86,10 @@ contract ManagedPythOracleMock is Ownable, IOracleFeed {
         return prices[token];
     }
 
+    function isPriceStale(address token) external view returns (bool, uint64) {
+        return (prices[token] == 0, uint64(block.timestamp));
+    }
+
     function decimals() external pure returns (uint8) {
         return 8;
     }
@@ -301,6 +305,30 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         vm.prank(creator);
         IERC20(token).approve(address(factory), amount);
+    }
+
+    function _installManagedERC4626FeedForTokenA()
+        internal
+        returns (ManagedPythOracleMock managedPyth, ERC4626OracleFeed erc4626Feed)
+    {
+        managedPyth = new ManagedPythOracleMock(address(this));
+        managedPyth.setTokenPriceFeed(address(tokenB), bytes32(uint256(1)));
+
+        erc4626Feed = new ERC4626OracleFeed(address(managedPyth));
+        uint256 minimumShares = erc4626Feed.MIN_VAULT_SHARE_COUNT() * (10 ** tokenA.decimals());
+        uint256 requiredAssets = tokenA.previewMint(minimumShares);
+        tokenB.mint(address(this), requiredAssets);
+        tokenB.approve(address(tokenA), requiredAssets);
+        tokenA.mint(minimumShares, address(this));
+        erc4626Feed.registerVault(address(tokenA), address(tokenB));
+
+        managedPyth.transferOwnership(address(factory));
+        erc4626Feed.transferOwnership(address(factory));
+        factory.setManagedPythOracle(address(managedPyth));
+        factory.setManagedERC4626OracleFeed(address(erc4626Feed));
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeed(address(tokenA), address(erc4626Feed));
     }
 
     function _historicalPoolCount() internal view returns (uint256) {
@@ -1184,6 +1212,36 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.prank(governanceTimelock);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.TokenUsedByActivePool.selector, address(tokenB), poolAddress));
         factory.removeToken(address(tokenB));
+    }
+
+    function testRemovePythTokenRevertsForActiveERC4626Underlying() public {
+        _installManagedERC4626FeedForTokenA();
+        MockERC20 backingToken = new MockERC20("Backing Token C", "TKNC");
+        oracle.setPrice(address(backingToken), 1e8);
+        compositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
+        factory.addTokenInitial(address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000);
+
+        address poolAddress = createPool(address(tokenA), "TKNA", address(backingToken), "TKNC", 500, 200, 15_000);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.TokenUsedByActivePool.selector, address(tokenB), poolAddress));
+        factory.removePythToken(address(tokenB));
+    }
+
+    function testPythFeedUpdateValidatesActiveERC4626Underlying() public {
+        (ManagedPythOracleMock managedPyth,) = _installManagedERC4626FeedForTokenA();
+        MockERC20 backingToken = new MockERC20("Backing Token C", "TKNC");
+        oracle.setPrice(address(backingToken), 1e8);
+        compositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
+        factory.addTokenInitial(address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000);
+        createPool(address(tokenA), "TKNA", address(backingToken), "TKNC", 500, 200, 15_000);
+
+        bytes32 badFeedId = managedPyth.BAD_FEED_ID();
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
+        factory.setPythTokenPriceFeed(address(tokenB), badFeedId);
+
+        assertEq(managedPyth.getPrice(address(tokenB)), 1e8, "reverted update should not poison underlying price");
     }
 
     function testClosePoolReturnsCreationBondAndRecyclesActiveSlot() public {
