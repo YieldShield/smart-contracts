@@ -101,72 +101,72 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     }
 
     function testAddTokenRevertsWhenCompositeBackingFeedLacksCircuitBreaker() public {
+        MockERC20 newBackingToken = new MockERC20("New Backing Token", "NBKT");
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
-        noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);
+        noCircuitBreakerFeed.setPrice(address(newBackingToken), 1e8);
         vm.startPrank(governance);
-        factory.removeToken(address(backingToken));
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector,
-                address(backingToken),
+                address(newBackingToken),
                 address(noCircuitBreakerFeed)
             )
         );
         factory.addToken(
-            address(backingToken), "Backing Token", "BKT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newBackingToken), "New Backing Token", "NBKT", address(noCircuitBreakerFeed), address(0), 10000
         );
         vm.stopPrank();
     }
 
     function testAddTokenRevertsWhenCompositeShieldedFeedLacksCircuitBreaker() public {
+        MockERC20 newShieldedToken = new MockERC20("New Shielded Token", "NSHT");
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
-        noCircuitBreakerFeed.setPrice(address(shieldedToken), 1e8);
+        noCircuitBreakerFeed.setPrice(address(newShieldedToken), 1e8);
         vm.startPrank(governance);
-        factory.removeToken(address(shieldedToken));
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector,
-                address(shieldedToken),
+                address(newShieldedToken),
                 address(noCircuitBreakerFeed)
             )
         );
         factory.addToken(
-            address(shieldedToken), "Shielded Token", "SHT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newShieldedToken), "New Shielded Token", "NSHT", address(noCircuitBreakerFeed), address(0), 10000
         );
         vm.stopPrank();
     }
 
     function testAddTokenRevertsWhenShieldedFeedIsPythEmaOnly() public {
+        MockERC20 newShieldedToken = new MockERC20("New Shielded Token", "NSHT");
         MockPyth mockPyth = new MockPyth(60, 1e15);
         PythEMAOracleFeed emaFeed = new PythEMAOracleFeed(address(mockPyth), 60);
         emaFeed.setTokenPriceFeed(
-            address(shieldedToken), 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            address(newShieldedToken), 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         );
         vm.startPrank(governance);
-        factory.removeToken(address(shieldedToken));
         vm.expectRevert(
             abi.encodeWithSelector(
-                CompositeOracle.CircuitBreakerNotSupported.selector, address(shieldedToken), address(emaFeed)
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(newShieldedToken), address(emaFeed)
             )
         );
-        factory.addToken(address(shieldedToken), "Shielded Token", "SHT", address(emaFeed), address(0), 10000);
+        factory.addToken(address(newShieldedToken), "New Shielded Token", "NSHT", address(emaFeed), address(0), 10000);
         vm.stopPrank();
     }
 
     function testAddTokenRevertsBeforeStrictPolicyCanUseFallbackOnlyFeed() public {
+        MockERC20 newBackingToken = new MockERC20("New Backing Token", "NBKT");
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
-        noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);
+        noCircuitBreakerFeed.setPrice(address(newBackingToken), 1e8);
         vm.startPrank(governance);
-        factory.removeToken(address(backingToken));
         vm.expectRevert(
             abi.encodeWithSelector(
                 CompositeOracle.CircuitBreakerNotSupported.selector,
-                address(backingToken),
+                address(newBackingToken),
                 address(noCircuitBreakerFeed)
             )
         );
         factory.addToken(
-            address(backingToken), "Backing Token", "BKT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newBackingToken), "New Backing Token", "NBKT", address(noCircuitBreakerFeed), address(0), 10000
         );
         vm.stopPrank();
     }

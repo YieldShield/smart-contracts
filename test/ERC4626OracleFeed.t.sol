@@ -37,6 +37,12 @@ contract UnderlyingOracleWithRevertingDecimals is UnderlyingOracleWithoutDecimal
     }
 }
 
+contract CompositeOracleWithDecimals is CompositeOracle {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+}
+
 contract ERC4626OracleFeedTest is Test {
     ERC4626OracleFeed public erc4626Feed;
     MockOracle public underlyingOracle;
@@ -213,7 +219,7 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenUnderlyingChallengePending() public {
-        CompositeOracle compositeUnderlyingOracle = new CompositeOracle();
+        CompositeOracleWithDecimals compositeUnderlyingOracle = new CompositeOracleWithDecimals();
         MockOracle primary = new MockOracle();
         MockOracle backup = new MockOracle();
         primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
@@ -238,7 +244,7 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_GetPriceUnsafe_BypassesUnderlyingCompositeChallengeGate() public {
-        CompositeOracle compositeUnderlyingOracle = new CompositeOracle();
+        CompositeOracleWithDecimals compositeUnderlyingOracle = new CompositeOracleWithDecimals();
         MockOracle primary = new MockOracle();
         MockOracle backup = new MockOracle();
         primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
