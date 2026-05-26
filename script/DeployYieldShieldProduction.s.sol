@@ -55,6 +55,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
     bytes32 private constant NAME_GOVERNOR = "YSGovernor";
+    string private constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
+    string private constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
@@ -329,10 +331,20 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+        _requireOptionalProductionCodehash(
+            NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
+        );
         _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
-        _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
+        _requireOptionalProductionCodehash(
+            NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
+        );
+        _requireProductionContractCodehash(
+            NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
+        );
         _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
-        _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
+        _requireProductionContractCodehash(
+            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
+        );
         _requireProductionContract(NAME_TIMELOCK, timelockAddr);
         _requireProductionContract(NAME_GOVERNOR, governorAddr);
         _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
@@ -425,10 +437,20 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal view {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+        _requireOptionalProductionCodehash(
+            NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
+        );
         _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
-        _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
+        _requireOptionalProductionCodehash(
+            NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
+        );
+        _requireProductionContractCodehash(
+            NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
+        );
         _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
-        _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
+        _requireProductionContractCodehash(
+            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
+        );
         _requireProductionContract(NAME_TIMELOCK, timelockAddr);
         _requireProductionContract(NAME_GOVERNOR, governorAddr);
         _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
@@ -499,14 +521,36 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
     }
 
+    function _requireOptionalProductionCodehash(bytes32 name, address contractAddress, string memory envName)
+        internal
+        view
+    {
+        bytes32 expectedCodehash = vm.envOr(envName, bytes32(0));
+        if (expectedCodehash != bytes32(0)) {
+            _requireProductionCodehash(name, contractAddress, expectedCodehash);
+        }
+    }
+
+    function _requireProductionContractCodehash(bytes32 name, address contractAddress, bytes memory expectedRuntimeCode)
+        internal
+        view
+    {
+        _requireProductionContract(name, contractAddress);
+        _requireProductionCodehash(name, contractAddress, expectedRuntimeCode);
+    }
+
+    function _requireProductionCodehash(bytes32 name, address contractAddress, bytes32 expectedCodehash) internal view {
+        if (contractAddress.codehash != expectedCodehash) {
+            revert ProductionProtocolCodehashMismatch(name, contractAddress, contractAddress.codehash, expectedCodehash);
+        }
+    }
+
     function _requireProductionCodehash(bytes32 name, address contractAddress, bytes memory expectedRuntimeCode)
         internal
         view
     {
         bytes32 expectedCodehash = keccak256(expectedRuntimeCode);
-        if (contractAddress.codehash != expectedCodehash) {
-            revert ProductionProtocolCodehashMismatch(name, contractAddress, contractAddress.codehash, expectedCodehash);
-        }
+        _requireProductionCodehash(name, contractAddress, expectedCodehash);
     }
 
     function _proxyImplementation(address proxy) internal view returns (address implementation) {

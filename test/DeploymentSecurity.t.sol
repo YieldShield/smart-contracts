@@ -115,6 +115,18 @@ contract ContractBootstrapHolder { }
 
 contract CodeButNotPyth { }
 
+contract FakeProductionOwnableOracle {
+    address public owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function transferOwnership(address newOwner) external {
+        owner = newOwner;
+    }
+}
+
 contract ZeroValidTimePeriodPyth {
     function getValidTimePeriod() external pure returns (uint256) {
         return 0;
@@ -900,6 +912,50 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsUnexpectedERC4626OracleBytecode() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        FakeProductionOwnableOracle fakeERC4626OracleFeed = new FakeProductionOwnableOracle();
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        compositeOracle.transferOwnership(address(factory));
+        pythOracle.transferOwnership(address(factory));
+        fakeERC4626OracleFeed.transferOwnership(address(factory));
+
+        vm.startPrank(address(harness));
+        factory.setCompositeOracle(address(compositeOracle));
+        factory.setDefaultProtocolFeeRecipient(address(timelock));
+        factory.setManagedPythOracle(address(pythOracle));
+        factory.setManagedERC4626OracleFeed(address(fakeERC4626OracleFeed));
+        factory.finalizeBootstrap();
+        factory.transferOwnership(address(timelock));
+        vm.stopPrank();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashMismatch.selector,
+                bytes32("ERC4626OracleFeed"),
+                address(fakeERC4626OracleFeed),
+                address(fakeERC4626OracleFeed).codehash,
+                keccak256(type(ERC4626OracleFeed).runtimeCode)
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(pythOracle),
+            address(fakeERC4626OracleFeed),
             address(timelock),
             address(governor)
         );
