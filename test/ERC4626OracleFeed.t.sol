@@ -13,6 +13,30 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
+contract UnderlyingOracleWithoutDecimals {
+    function getPrice(address) external pure returns (uint256) {
+        return 1e8;
+    }
+
+    function getPriceUnsafe(address) external pure returns (uint256) {
+        return 1e8;
+    }
+
+    function isPriceStale(address) external view returns (bool, uint64) {
+        return (false, uint64(block.timestamp));
+    }
+
+    function description() external pure returns (string memory) {
+        return "Underlying Oracle Without Decimals";
+    }
+}
+
+contract UnderlyingOracleWithRevertingDecimals is UnderlyingOracleWithoutDecimals {
+    function decimals() external pure returns (uint8) {
+        revert("decimals unavailable");
+    }
+}
+
 contract ERC4626OracleFeedTest is Test {
     ERC4626OracleFeed public erc4626Feed;
     MockOracle public underlyingOracle;
@@ -76,6 +100,17 @@ contract ERC4626OracleFeedTest is Test {
     function test_Constructor_RevertsOnInvalidOracle() public {
         vm.expectRevert(abi.encodeWithSelector(ERC4626OracleFeed.InvalidOracleAddress.selector, address(0)));
         new ERC4626OracleFeed(address(0));
+    }
+
+    function test_Constructor_RevertsWhenUnderlyingOracleDecimalsMissing() public {
+        UnderlyingOracleWithoutDecimals oracleWithoutDecimals = new UnderlyingOracleWithoutDecimals();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.InvalidUnderlyingPriceOracleDecimals.selector, address(oracleWithoutDecimals)
+            )
+        );
+        new ERC4626OracleFeed(address(oracleWithoutDecimals));
     }
 
     // ============ Registration Tests ============
@@ -362,6 +397,17 @@ contract ERC4626OracleFeedTest is Test {
     function test_SetUnderlyingPriceOracle_RevertsOnInvalidAddress() public {
         vm.expectRevert(abi.encodeWithSelector(ERC4626OracleFeed.InvalidOracleAddress.selector, address(0)));
         erc4626Feed.setUnderlyingPriceOracle(address(0));
+    }
+
+    function test_SetUnderlyingPriceOracle_RevertsWhenDecimalsFail() public {
+        UnderlyingOracleWithRevertingDecimals badOracle = new UnderlyingOracleWithRevertingDecimals();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626OracleFeed.InvalidUnderlyingPriceOracleDecimals.selector, address(badOracle))
+        );
+        erc4626Feed.setUnderlyingPriceOracle(address(badOracle));
+
+        assertEq(address(erc4626Feed.underlyingPriceOracle()), address(underlyingOracle));
     }
 
     function test_SetUnderlyingPriceOracle_RevertsWhenNotOwner() public {

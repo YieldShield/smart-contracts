@@ -80,6 +80,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for invalid oracle address
     error InvalidOracleAddress(address oracle);
 
+    /// @notice Custom error when the underlying oracle does not expose valid price decimals
+    error InvalidUnderlyingPriceOracleDecimals(address oracle);
+
     /// @notice Custom error for unregistered vault
     error VaultNotRegistered(address vault);
 
@@ -131,6 +134,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         if (_underlyingPriceOracle == address(0)) {
             revert InvalidOracleAddress(_underlyingPriceOracle);
         }
+        _getPriceOracleDecimals(_underlyingPriceOracle);
         underlyingPriceOracle = IOracleFeed(_underlyingPriceOracle);
     }
 
@@ -140,6 +144,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         if (_underlyingPriceOracle == address(0)) {
             revert InvalidOracleAddress(_underlyingPriceOracle);
         }
+        _getPriceOracleDecimals(_underlyingPriceOracle);
         address oldOracle = address(underlyingPriceOracle);
         underlyingPriceOracle = IOracleFeed(_underlyingPriceOracle);
         emit UnderlyingPriceOracleUpdated(oldOracle, _underlyingPriceOracle);
@@ -396,14 +401,21 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     }
 
     function _getUnderlyingPriceDecimals() internal view returns (uint8) {
-        (bool success, bytes memory data) =
-            address(underlyingPriceOracle).staticcall(abi.encodeWithSignature("decimals()"));
+        return _getPriceOracleDecimals(address(underlyingPriceOracle));
+    }
 
-        if (success && data.length >= 32) {
-            return abi.decode(data, (uint8));
+    function _getPriceOracleDecimals(address priceOracle) internal view returns (uint8 priceDecimals) {
+        (bool success, bytes memory data) = priceOracle.staticcall(abi.encodeWithSignature("decimals()"));
+
+        if (!success || data.length < 32) {
+            revert InvalidUnderlyingPriceOracleDecimals(priceOracle);
         }
 
-        return ConstantsLib.USD_DECIMALS;
+        uint256 decodedDecimals = abi.decode(data, (uint256));
+        if (decodedDecimals > type(uint8).max) {
+            revert InvalidUnderlyingPriceOracleDecimals(priceOracle);
+        }
+        priceDecimals = uint8(decodedDecimals);
     }
 
     function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config, bool)
