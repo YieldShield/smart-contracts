@@ -62,6 +62,30 @@ contract MockERC4626WithRedeemFee is MockERC4626 {
     }
 }
 
+contract MutableAssetERC4626 is MockERC4626 {
+    address private reportedAsset;
+    bool private shouldRevertAsset;
+
+    constructor(IERC20 initialAsset, string memory name, string memory symbol)
+        MockERC4626(initialAsset, name, symbol)
+    {
+        reportedAsset = address(initialAsset);
+    }
+
+    function setReportedAsset(address asset_) external {
+        reportedAsset = asset_;
+    }
+
+    function setShouldRevertAsset(bool shouldRevertAsset_) external {
+        shouldRevertAsset = shouldRevertAsset_;
+    }
+
+    function asset() public view override returns (address) {
+        if (shouldRevertAsset) revert("asset unavailable");
+        return reportedAsset;
+    }
+}
+
 contract ERC4626OracleFeedTest is Test {
     ERC4626OracleFeed public erc4626Feed;
     MockOracle public underlyingOracle;
@@ -256,6 +280,103 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.getPrice(address(vault));
 
         assertEq(erc4626Feed.getPriceUnsafe(address(vault)), UNDERLYING_PRICE);
+    }
+
+    function test_PriceReadsRevertWhenVaultAssetChangesAfterRegistration() public {
+        MockERC20 mutableAsset = new MockERC20("Mutable Asset", "MA");
+        MockERC20 replacementAsset = new MockERC20("Replacement Asset", "RA");
+        MutableAssetERC4626 mutableVault =
+            new MutableAssetERC4626(IERC20(address(mutableAsset)), "Mutable Vault", "mVLT");
+        underlyingOracle.setPrice(address(mutableAsset), UNDERLYING_PRICE);
+
+        _seedAndRegister(IERC20(address(mutableAsset)), IERC4626(address(mutableVault)));
+        mutableVault.setReportedAsset(address(replacementAsset));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.getPrice(address(mutableVault));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.getPriceUnsafe(address(mutableVault));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.isPriceStale(address(mutableVault));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.getPriceWithStaleness(address(mutableVault));
+    }
+
+    function test_ReferenceRefreshRevertsWhenVaultAssetChangesAfterScheduling() public {
+        MockERC20 mutableAsset = new MockERC20("Mutable Asset", "MA");
+        MockERC20 replacementAsset = new MockERC20("Replacement Asset", "RA");
+        MutableAssetERC4626 mutableVault =
+            new MutableAssetERC4626(IERC20(address(mutableAsset)), "Mutable Vault", "mVLT");
+        underlyingOracle.setPrice(address(mutableAsset), UNDERLYING_PRICE);
+
+        _seedAndRegister(IERC20(address(mutableAsset)), IERC4626(address(mutableVault)));
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(mutableVault));
+        mutableVault.setReportedAsset(address(replacementAsset));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(mutableVault));
+
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultUnderlyingAssetMismatch.selector,
+                address(mutableVault),
+                address(mutableAsset),
+                address(replacementAsset)
+            )
+        );
+        erc4626Feed.refreshVaultSharePriceReference(address(mutableVault));
+    }
+
+    function test_GetPriceRevertsWhenVaultAssetRevertsAfterRegistration() public {
+        MockERC20 mutableAsset = new MockERC20("Mutable Asset", "MA");
+        MutableAssetERC4626 mutableVault =
+            new MutableAssetERC4626(IERC20(address(mutableAsset)), "Mutable Vault", "mVLT");
+        underlyingOracle.setPrice(address(mutableAsset), UNDERLYING_PRICE);
+
+        _seedAndRegister(IERC20(address(mutableAsset)), IERC4626(address(mutableVault)));
+        mutableVault.setShouldRevertAsset(true);
+
+        vm.expectRevert(bytes("asset unavailable"));
+        erc4626Feed.getPrice(address(mutableVault));
     }
 
     function test_GetPriceWithCircuitBreaker_RevertsWhenUnderlyingChallengePending() public {

@@ -100,6 +100,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error for invalid underlying address
     error InvalidUnderlyingAddress(address underlying);
 
+    /// @notice Custom error when a registered vault no longer reports its configured underlying asset
+    error VaultUnderlyingAssetMismatch(address vault, address expectedUnderlying, address actualUnderlying);
+
     /// @notice Custom error for invalid oracle address
     error InvalidOracleAddress(address oracle);
 
@@ -218,6 +221,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @param vault Address of the registered vault
     function scheduleVaultSharePriceReferenceRefresh(address vault) external onlyOwner {
         VaultConfig storage config = _getVaultConfigStorage(vault);
+        _requireLiveUnderlying(vault, config.underlying);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
 
         uint256 scheduledReference = _conservativeAssetsPerShare(vault, config.shareUnit);
@@ -254,6 +258,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     function refreshVaultSharePriceReference(address vault) external onlyOwner {
         VaultConfig storage config = _getVaultConfigStorage(vault);
         ScheduledReferenceRefresh memory scheduled = _consumeScheduledVaultSharePriceReferenceRefresh(vault);
+        _requireLiveUnderlying(vault, config.underlying);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
 
         uint256 currentAssetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
@@ -381,6 +386,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
         VaultConfig memory config = _getVaultConfig(vault);
+        _requireLiveUnderlying(vault, config.underlying);
 
         if (useCircuitBreaker) {
             (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
@@ -408,13 +414,11 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @return isStale True if the underlying price is stale
     /// @return publishTime The timestamp of the underlying price (0 if not available)
     function isPriceStale(address vault) external view returns (bool isStale, uint64 publishTime) {
-        address underlying = vaultToUnderlying[vault];
-        if (underlying == address(0)) {
-            revert VaultNotRegistered(vault);
-        }
+        VaultConfig memory config = _getVaultConfig(vault);
+        _requireLiveUnderlying(vault, config.underlying);
 
         // Try to check underlying oracle staleness
-        (isStale, publishTime) = _checkUnderlyingStaleness(underlying);
+        (isStale, publishTime) = _checkUnderlyingStaleness(config.underlying);
     }
 
     /// @notice Get price with staleness information
@@ -423,6 +427,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @return isStale True if the underlying price is stale
     function getPriceWithStaleness(address vault) external returns (uint256 price, bool isStale) {
         VaultConfig memory config = _getVaultConfig(vault);
+        _requireLiveUnderlying(vault, config.underlying);
 
         // Check staleness
         (isStale,) = _checkUnderlyingStaleness(config.underlying);
@@ -472,6 +477,19 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
+    }
+
+    function _requireLiveUnderlying(address vault, address expectedUnderlying) internal view {
+        try IERC4626(vault).asset() returns (address actualUnderlying) {
+            if (actualUnderlying != expectedUnderlying) {
+                revert VaultUnderlyingAssetMismatch(vault, expectedUnderlying, actualUnderlying);
+            }
+        } catch (bytes memory reason) {
+            if (reason.length == 0) revert InvalidVaultAddress(vault);
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
+            }
+        }
     }
 
     function _conservativeAssetsPerShare(address vault, uint256 shareUnit) internal view returns (uint256) {
