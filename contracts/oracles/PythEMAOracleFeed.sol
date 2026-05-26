@@ -112,6 +112,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
 
         tokenToPriceFeedId[token] = feedId;
         isTokenSupported[token] = true;
+        _clearTokenMaxPriceAge(token);
         _clearScheduledTokenRemoval(token);
 
         emit TokenPriceFeedSet(token, feedId);
@@ -136,6 +137,14 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (scheduledTokenRemovalTime[token] != 0) {
             delete scheduledTokenRemovalTime[token];
             emit TokenRemovalCancelled(token);
+        }
+    }
+
+    function _clearTokenMaxPriceAge(address token) internal {
+        uint256 oldAge = maxPriceAgeForToken[token];
+        if (oldAge != 0) {
+            delete maxPriceAgeForToken[token];
+            emit MaxPriceAgeForTokenUpdated(token, oldAge, 0);
         }
     }
 

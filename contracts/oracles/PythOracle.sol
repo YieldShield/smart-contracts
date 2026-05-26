@@ -213,6 +213,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         tokenToPriceFeedId[token] = feedId;
         tokenToQuotePriceFeedId[token] = bytes32(0);
         isTokenSupported[token] = true;
+        _clearTokenMaxPriceAge(token);
         _clearScheduledTokenRemoval(token);
 
         emit TokenPriceFeedSet(token, feedId);
@@ -231,6 +232,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         tokenToPriceFeedId[token] = baseFeedId;
         tokenToQuotePriceFeedId[token] = quoteUsdFeedId;
         isTokenSupported[token] = true;
+        _clearTokenMaxPriceAge(token);
         _clearScheduledTokenRemoval(token);
 
         emit TokenCompositePriceFeedSet(token, baseFeedId, quoteUsdFeedId);
@@ -255,6 +257,14 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         if (scheduledTokenRemovalTime[token] != 0) {
             delete scheduledTokenRemovalTime[token];
             emit TokenRemovalCancelled(token);
+        }
+    }
+
+    function _clearTokenMaxPriceAge(address token) internal {
+        uint256 oldAge = maxPriceAgeForToken[token];
+        if (oldAge != 0) {
+            delete maxPriceAgeForToken[token];
+            emit MaxPriceAgeForTokenUpdated(token, oldAge, 0);
         }
     }
 

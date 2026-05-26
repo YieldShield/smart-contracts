@@ -493,6 +493,17 @@ contract PythOracleTest is Test {
         oracle.removeToken(address(token1));
     }
 
+    function testSetTokenPriceFeedClearsPerTokenMaxAgeOverride() public {
+        vm.prank(owner);
+        oracle.setMaxPriceAgeForToken(address(token1), 120);
+
+        vm.prank(owner);
+        oracle.setTokenPriceFeed(address(token1), FEED_ID_1);
+
+        assertEq(oracle.maxPriceAgeForToken(address(token1)), 0, "override should be cleared");
+        assertEq(oracle.effectiveMaxPriceAge(address(token1)), oracle.maxPriceAge(), "global max age should apply");
+    }
+
     function testSetTokenCompositePriceFeedClearsScheduledRemoval() public {
         vm.prank(owner);
         oracle.scheduleRemoveToken(address(token1));
@@ -505,6 +516,17 @@ contract PythOracleTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PythOracle.TokenRemovalNotScheduled.selector, address(token1)));
         vm.prank(owner);
         oracle.removeToken(address(token1));
+    }
+
+    function testSetTokenCompositePriceFeedClearsPerTokenMaxAgeOverride() public {
+        vm.prank(owner);
+        oracle.setMaxPriceAgeForToken(address(token1), 120);
+
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        assertEq(oracle.maxPriceAgeForToken(address(token1)), 0, "override should be cleared");
+        assertEq(oracle.effectiveMaxPriceAge(address(token1)), oracle.maxPriceAge(), "global max age should apply");
     }
 
     function testSetTokenPriceFeedOnlyOwner() public {

@@ -149,6 +149,14 @@ contract PythEMAOracleFeedTest is Test {
         feed.removeToken(address(token));
     }
 
+    function testSetTokenPriceFeedClearsPerTokenMaxAgeOverride() public {
+        feed.setMaxPriceAgeForToken(address(token), 120);
+        feed.setTokenPriceFeed(address(token), FEED_ID);
+
+        assertEq(feed.maxPriceAgeForToken(address(token)), 0, "override should be cleared");
+        assertEq(feed.effectiveMaxPriceAge(address(token)), feed.maxPriceAge(), "global max age should apply");
+    }
+
     function testCompositeOracleRejectsEmaFeedForCircuitBreakerPrice() public {
         CompositeOracle compositeOracle = new CompositeOracle();
 

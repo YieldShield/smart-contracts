@@ -176,6 +176,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         tokenFeeds[token] = aggregator;
         isTokenSupported[token] = true;
+        _clearTokenMaxPriceAge(token);
         _clearScheduledTokenFeedRemoval(token);
 
         // Best-effort cache of the underlying aggregator's min/max answer
@@ -255,6 +256,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (scheduledTokenFeedRemovalTime[token] != 0) {
             delete scheduledTokenFeedRemovalTime[token];
             emit TokenFeedRemovalCancelled(token);
+        }
+    }
+
+    function _clearTokenMaxPriceAge(address token) internal {
+        uint256 oldAge = maxPriceAgeForToken[token];
+        if (oldAge != 0) {
+            delete maxPriceAgeForToken[token];
+            emit MaxPriceAgeForTokenUpdated(token, oldAge, 0);
         }
     }
 

@@ -147,6 +147,17 @@ contract ChainlinkVenusBoundsTest is Test {
         feed.removeTokenFeed(token);
     }
 
+    function test_setTokenFeed_ClearsPerTokenMaxAgeOverride() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+        feed.setMaxPriceAgeForToken(token, 120);
+
+        feed.setTokenFeed(token, address(proxy));
+
+        assertEq(feed.maxPriceAgeForToken(token), 0, "override should be cleared");
+        assertEq(feed.effectiveMaxPriceAge(token), feed.maxPriceAge(), "global max age should apply");
+    }
+
     function test_getPrice_RevertsWhenPinnedAtFloor() public {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
