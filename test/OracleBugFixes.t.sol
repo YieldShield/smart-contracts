@@ -82,6 +82,14 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         factory.setDefaultProtocolFeeRecipient(address(this));
     }
 
+    function _removeFactoryTokenAfterOracleSchedule(address token) internal {
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleTokenFeedRemoval(token);
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+        vm.prank(governanceTimelock);
+        factory.removeToken(token);
+    }
+
     // ============ Bug 5: CompositeOracle Division by Zero Tests ============
 
     /// @notice Test that getEquivalentAmount reverts with InvalidPrice when priceB is 0
@@ -193,8 +201,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertTrue(bytes(name).length > 0, "Name should be set");
         assertTrue(bytes(symbol).length > 0, "Symbol should be set");
 
-        vm.prank(governanceTimelock);
-        factory.removeToken(address(vaultA));
+        _removeFactoryTokenAfterOracleSchedule(address(vaultA));
 
         // Verify token is no longer whitelisted
         assertFalse(factory.isWhitelisted(address(vaultA)), "Token should not be whitelisted");
@@ -219,8 +226,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertEq(minCollateral1, 15000, "Initial min collateral should be 15000");
 
         // Remove the token
-        vm.prank(governanceTimelock);
-        factory.removeToken(address(vaultA));
+        _removeFactoryTokenAfterOracleSchedule(address(vaultA));
 
         // Re-add with different params
         factory.addTokenInitial(address(vaultA), "Vault A v2", "vTKNA2", address(mockOracle), address(0), 20000);
@@ -243,8 +249,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isWhitelisted(address(vaultB)), "VaultB should be whitelisted");
 
         // Remove only vaultA
-        vm.prank(governanceTimelock);
-        factory.removeToken(address(vaultA));
+        _removeFactoryTokenAfterOracleSchedule(address(vaultA));
 
         // Verify vaultA is removed but vaultB is unaffected
         assertFalse(factory.isWhitelisted(address(vaultA)), "VaultA should not be whitelisted");

@@ -1258,6 +1258,41 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.removeToken(address(tokenB));
     }
 
+    function testRemoveTokenRequiresScheduledCompositeOracleFeedRemoval() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.TokenOracleFeedRemovalNotScheduled.selector, address(tokenB))
+        );
+        factory.removeToken(address(tokenB));
+
+        assertTrue(factory.isWhitelisted(address(tokenB)), "token should remain whitelisted");
+        assertTrue(compositeOracle.isTokenSupported(address(tokenB)), "oracle feed should remain configured");
+    }
+
+    function testRemoveTokenClearsCompositeOracleFeedAfterSchedule() public {
+        vm.prank(governanceTimelock);
+        factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
+        assertTrue(compositeOracle.strictCircuitBreakerRequired(address(tokenB)), "strict flag should be set");
+
+        vm.prank(governanceTimelock);
+        factory.scheduleCompositeOracleTokenFeedRemoval(address(tokenB));
+        vm.warp(block.timestamp + compositeOracle.FEED_REMOVAL_DELAY());
+
+        vm.prank(governanceTimelock);
+        factory.removeToken(address(tokenB));
+
+        assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "oracle feed should be removed");
+        assertEq(compositeOracle.getTokenOracleFeed(address(tokenB)), address(0), "primary feed should be cleared");
+        assertFalse(compositeOracle.strictCircuitBreakerRequired(address(tokenB)), "oracle strict flag should clear");
+        assertFalse(factory.isWhitelisted(address(tokenB)), "token should be delisted");
+        assertFalse(factory.tokenRequiresStrictProtectedPrice(address(tokenB)), "factory strict flag should clear");
+        (,, address removedToken, address primaryOracleFeed, address backupOracleFeed,) =
+            factory.tokenInfo(address(tokenB));
+        assertEq(removedToken, address(0), "tokenInfo should be deleted");
+        assertEq(primaryOracleFeed, address(0), "primary feed should be cleared");
+        assertEq(backupOracleFeed, address(0), "backup feed should be cleared");
+    }
+
     function testRemovePythTokenRevertsForActiveERC4626Underlying() public {
         _installManagedERC4626FeedForTokenA();
         MockERC20 backingToken = new MockERC20("Backing Token C", "TKNC");

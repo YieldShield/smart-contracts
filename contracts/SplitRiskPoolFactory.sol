@@ -402,13 +402,7 @@ contract SplitRiskPoolFactory is
     }
 
     function removeCompositeOracleTokenFeed(address token) external onlyGovernance {
-        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
-        _requireTokenUnusedByActivePools(token);
-        _compositeOracleAdmin().removeTokenOracleFeed(token);
-        TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
-        delete tokenInfo[token];
-        delete tokenRequiresStrictProtectedPrice[token];
-        emit EventsLib.TokenRemoved(token);
+        _removeTokenAndCompositeFeed(token);
     }
 
     function scheduleCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
@@ -847,16 +841,12 @@ contract SplitRiskPoolFactory is
      * @notice Removes a token from the whitelist
      * @dev Only callable by governance timelock. Removes token from whitelist,
      *      preventing it from being used in new pool creations.
-     *      Also clears tokenInfo to prevent stale data.
+     *      Also removes the managed CompositeOracle feed via its scheduled
+     *      removal path and clears tokenInfo to prevent stale data.
      * @param token Address of the token to remove
      */
     function removeToken(address token) external onlyGovernance {
-        _requireTokenUnusedByActivePools(token);
-        _syncCompositeOracleStrictRequirement(token, false);
-        TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
-        delete tokenInfo[token]; // Clear stale tokenInfo
-        delete tokenRequiresStrictProtectedPrice[token];
-        emit EventsLib.TokenRemoved(token);
+        _removeTokenAndCompositeFeed(token);
     }
 
     /**
@@ -1472,6 +1462,18 @@ contract SplitRiskPoolFactory is
         _configureOracleFeeds(token, primaryOracleFeed, backupOracleFeed);
 
         emit EventsLib.TokenWhitelisted(token, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp);
+    }
+
+    function _removeTokenAndCompositeFeed(address token) internal {
+        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
+        _requireTokenUnusedByActivePools(token);
+        if (compositeOracle != address(0)) {
+            _compositeOracleAdmin().removeTokenOracleFeed(token);
+        }
+        TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
+        delete tokenInfo[token];
+        delete tokenRequiresStrictProtectedPrice[token];
+        emit EventsLib.TokenRemoved(token);
     }
 
     function _configureOracleFeeds(address token, address primaryOracleFeed, address backupOracleFeed) internal {
