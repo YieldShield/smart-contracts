@@ -85,6 +85,26 @@ contract PythOracleTest is Test {
         mockPyth.updatePriceFeeds{ value: fee }(updateDataArray);
     }
 
+    function _updatePriceFeedWithEmaPublishTime(
+        bytes32 feedId,
+        int64 price,
+        uint64 conf,
+        int32 expo,
+        uint64 spotPublishTime,
+        uint64 emaPublishTime
+    ) internal {
+        PythStructs.PriceFeed memory priceFeed;
+        priceFeed.id = feedId;
+        priceFeed.price = PythStructs.Price({ price: price, conf: conf, expo: expo, publishTime: spotPublishTime });
+        priceFeed.emaPrice = PythStructs.Price({ price: price, conf: conf, expo: expo, publishTime: emaPublishTime });
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = abi.encode(priceFeed);
+
+        uint256 fee = mockPyth.getUpdateFee(updateDataArray);
+        mockPyth.updatePriceFeeds{ value: fee }(updateDataArray);
+    }
+
     /* ============ Basic Price Reading Tests ============ */
 
     function testGetPrice() public view {
@@ -190,6 +210,44 @@ contract PythOracleTest is Test {
         assertEq(publishTime, uint64(block.timestamp + 1));
     }
 
+    function testIsPriceStale_ChecksEmaLeg() public {
+        vm.warp(block.timestamp + 1);
+        uint64 staleEmaTime = uint64(block.timestamp - MAX_PRICE_AGE - 1);
+        _updatePriceFeedWithEmaPublishTime(FEED_ID_1, 1e8, 1e6, -8, uint64(block.timestamp), staleEmaTime);
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+
+        assertTrue(isStale, "Stale EMA leg should make protected price stale");
+        assertEq(publishTime, staleEmaTime);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.StalePrice.selector, address(token1), FEED_ID_1, staleEmaTime, MAX_PRICE_AGE
+            )
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testIsPriceStale_ChecksCompositeQuoteEmaLeg() public {
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        vm.warp(block.timestamp + 1);
+        uint64 staleQuoteEmaTime = uint64(block.timestamp - MAX_PRICE_AGE - 1);
+        _updatePriceFeedWithEmaPublishTime(FEED_ID_1, 1e8, 1e4, -8, uint64(block.timestamp), uint64(block.timestamp));
+        _updatePriceFeedWithEmaPublishTime(FEED_ID_2, 1e8, 1e4, -8, uint64(block.timestamp), staleQuoteEmaTime);
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+
+        assertTrue(isStale, "Stale quote EMA leg should make composite protected price stale");
+        assertEq(publishTime, staleQuoteEmaTime);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.StalePrice.selector, address(token1), FEED_ID_2, staleQuoteEmaTime, MAX_PRICE_AGE
+            )
+        );
+        oracle.getPrice(address(token1));
+    }
+
     function testGetPriceUnsafe_RevertsForFuturePublishTime() public {
         uint256 futurePublishTime = block.timestamp + 1;
         _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(futurePublishTime));
@@ -209,6 +267,33 @@ contract PythOracleTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 PythOracle.FuturePrice.selector, address(token1), FEED_ID_1, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testGetPrice_RevertsWithFuturePriceBeforeStaleCheck() public {
+        uint256 futurePublishTime = block.timestamp + MAX_PRICE_AGE + 1;
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(futurePublishTime));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.FuturePrice.selector, address(token1), FEED_ID_1, futurePublishTime, block.timestamp
+            )
+        );
+        oracle.getPrice(address(token1));
+    }
+
+    function testGetPrice_StalenessBoundaryUsesLocalError() public {
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+        uint64 boundaryPublishTime = uint64(block.timestamp - MAX_PRICE_AGE);
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, boundaryPublishTime);
+        assertEq(oracle.getPrice(address(token1)), 1e8, "Boundary age should remain fresh");
+
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PythOracle.StalePrice.selector, address(token1), FEED_ID_1, boundaryPublishTime, MAX_PRICE_AGE
             )
         );
         oracle.getPrice(address(token1));

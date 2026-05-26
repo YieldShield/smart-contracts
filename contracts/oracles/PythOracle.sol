@@ -436,16 +436,24 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         bytes32 feedId = _getFeedId(token);
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
 
-        (bool baseStale, uint64 basePublishTime) = _isFeedStale(feedId, effectiveMaxPriceAge(token));
+        uint256 baseMaxAge = effectiveMaxPriceAge(token);
+        (bool baseSpotStale, uint64 baseSpotPublishTime) = _isFeedStale(feedId, baseMaxAge, false);
+        (bool baseEmaStale, uint64 baseEmaPublishTime) = _isFeedStale(feedId, baseMaxAge, true);
+        bool baseStale = baseSpotStale || baseEmaStale;
+        uint64 baseOldestPublishTime = _olderPublishTime(baseSpotPublishTime, baseEmaPublishTime);
         if (quoteFeedId == bytes32(0)) {
-            return (baseStale, basePublishTime);
+            return (baseStale, baseOldestPublishTime);
         }
 
-        (bool quoteStale, uint64 quotePublishTime) =
-            _isFeedStale(quoteFeedId, effectiveMaxPriceAgeForFeedId(quoteFeedId));
-        uint64 oldestPublishTime = basePublishTime < quotePublishTime ? basePublishTime : quotePublishTime;
-        bool skewStale = _isCompositePublishTimeSkewTooHigh(basePublishTime, quotePublishTime);
-        return (baseStale || quoteStale || skewStale, oldestPublishTime);
+        uint256 quoteMaxAge = effectiveMaxPriceAgeForFeedId(quoteFeedId);
+        (bool quoteSpotStale, uint64 quoteSpotPublishTime) = _isFeedStale(quoteFeedId, quoteMaxAge, false);
+        (bool quoteEmaStale, uint64 quoteEmaPublishTime) = _isFeedStale(quoteFeedId, quoteMaxAge, true);
+        bool quoteStale = quoteSpotStale || quoteEmaStale;
+        uint64 quoteOldestPublishTime = _olderPublishTime(quoteSpotPublishTime, quoteEmaPublishTime);
+        uint64 oldestPublishTime = _olderPublishTime(baseOldestPublishTime, quoteOldestPublishTime);
+        bool spotSkewStale = _isCompositePublishTimeSkewTooHigh(baseSpotPublishTime, quoteSpotPublishTime);
+        bool emaSkewStale = _isCompositePublishTimeSkewTooHigh(baseEmaPublishTime, quoteEmaPublishTime);
+        return (baseStale || quoteStale || spotSkewStale || emaSkewStale, oldestPublishTime);
     }
 
     /// @notice Get the update fee for price feeds
@@ -539,13 +547,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         view
         returns (uint256 price, uint256 publishTime, uint256 confidenceBps)
     {
-        PythStructs.Price memory priceData;
-        if (useEma) {
-            priceData = pyth.getEmaPriceNoOlderThan(feedId, priceAge);
-        } else {
-            priceData = pyth.getPriceNoOlderThan(feedId, priceAge);
-        }
+        PythStructs.Price memory priceData = useEma ? pyth.getEmaPriceUnsafe(feedId) : pyth.getPriceUnsafe(feedId);
         _validatePublishTimeNotFuture(token, feedId, priceData.publishTime);
+        _validatePriceNotStale(token, feedId, priceData.publishTime, priceAge);
         confidenceBps = _validateConfidence(token, priceData, useEma);
         price = _convertPrice(token, priceData);
         publishTime = priceData.publishTime;
@@ -598,19 +602,54 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return skew > maxSkew;
     }
 
-    function _isFeedStale(bytes32 feedId, uint256 priceAge) internal view returns (bool isStale, uint64 publishTime) {
-        try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
-            uint256 rawPublishTime = priceData.publishTime;
-            uint256 currentTime = block.timestamp;
-            publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
-            if (rawPublishTime > currentTime) {
-                return (true, publishTime);
+    function _isFeedStale(bytes32 feedId, uint256 priceAge, bool useEma)
+        internal
+        view
+        returns (bool isStale, uint64 publishTime)
+    {
+        if (useEma) {
+            try pyth.getEmaPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
+                return _isPriceDataStale(priceData, priceAge);
+            } catch {
+                return (true, 0);
             }
-            isStale = (currentTime - rawPublishTime) > priceAge;
-        } catch {
-            isStale = true;
-            publishTime = 0;
+        } else {
+            try pyth.getPriceUnsafe(feedId) returns (PythStructs.Price memory priceData) {
+                return _isPriceDataStale(priceData, priceAge);
+            } catch {
+                return (true, 0);
+            }
         }
+    }
+
+    function _isPriceDataStale(PythStructs.Price memory priceData, uint256 priceAge)
+        internal
+        view
+        returns (bool isStale, uint64 publishTime)
+    {
+        uint256 rawPublishTime = priceData.publishTime;
+        uint256 currentTime = block.timestamp;
+        publishTime = rawPublishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(rawPublishTime);
+        if (rawPublishTime > currentTime) {
+            return (true, publishTime);
+        }
+        isStale = (currentTime - rawPublishTime) > priceAge;
+    }
+
+    function _validatePriceNotStale(address token, bytes32 feedId, uint256 publishTime, uint256 priceAge)
+        internal
+        view
+    {
+        if (block.timestamp - publishTime > priceAge) {
+            uint64 boundedPublishTime =
+                publishTime > type(uint64).max ? type(uint64).max : SafeCast.toUint64(publishTime);
+            revert StalePrice(token, feedId, boundedPublishTime, priceAge);
+        }
+    }
+
+    function _olderPublishTime(uint64 a, uint64 b) internal pure returns (uint64) {
+        if (a == 0 || b == 0) return 0;
+        return a < b ? a : b;
     }
 
     /// @dev Calculate price deviation in basis points using OracleValidationLib
