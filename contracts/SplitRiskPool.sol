@@ -829,6 +829,18 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return poolState.shieldedTokenBalance > reserved ? poolState.shieldedTokenBalance - reserved : 0;
     }
 
+    function _requireAccountingBalanceCovered(address token, uint256 accountedBalance) internal view {
+        uint256 actualBalance = IERC20(token).balanceOf(address(this));
+        if (actualBalance < accountedBalance) {
+            revert ErrorsLib.AccountedBalanceExceedsTokenBalance(token, accountedBalance, actualBalance);
+        }
+    }
+
+    function _requirePoolAccountingBalancesCovered() internal view {
+        _requireAccountingBalanceCovered(SHIELDED_TOKEN, poolState.shieldedTokenBalance);
+        _requireAccountingBalanceCovered(BACKING_TOKEN, poolState.totalBackingTokenBalance);
+    }
+
     /**
      * @dev Gets total value locked in the pool (for TVL limit check)
      * @return totalValueUsd The combined USD value of all deposited assets
@@ -1348,6 +1360,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // slither-disable-next-line incorrect-equality — early-return guard, nothing to pay
         if (feeAmount == 0) return 0;
         _validateFeeRecipient(recipient);
+        _requirePoolAccountingBalancesCovered();
 
         // Check actual balance (source of truth)
         uint256 actualBalance = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
@@ -1513,6 +1526,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             }
             return 0;
         }
+        _requireAccountingBalanceCovered(SHIELDED_TOKEN, poolState.shieldedTokenBalance);
 
         commissionsClaimed[tokenId] += claimable;
         accumulatedCommissions -= claimable;
@@ -1567,6 +1581,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
             revert ErrorsLib.NotOwner();
         }
+        _requirePoolAccountingBalancesCovered();
         _requireProtectorWithdrawalAllowed(msg.sender, "claimCommission");
 
         uint256 positionShares_ = _getProtectorPositionShares(tokenId);
@@ -1586,6 +1601,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (protectorShareEpochs[tokenId] >= protectorShareEpoch) {
             revert ErrorsLib.InvalidTokenId();
         }
+        _requirePoolAccountingBalancesCovered();
 
         address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
         _requireProtectorWithdrawalAllowed(positionOwner, "settleExpiredProtectorPosition");
@@ -1634,6 +1650,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         if (asset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requireActiveFactoryPoolForDeposit();
+        _requirePoolAccountingBalancesCovered();
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canDepositProtector(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositProtector");
         }
@@ -1709,6 +1726,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
         _requireActiveFactoryPoolForDeposit();
+        _requirePoolAccountingBalancesCovered();
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canDepositShielded(msg.sender)) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositShielded");
         }
@@ -1789,6 +1807,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (!(preferredAsset == BACKING_TOKEN || preferredAsset == SHIELDED_TOKEN)) {
             revert ErrorsLib.UnsupportedAsset();
         }
+        _requirePoolAccountingBalancesCovered();
         if (
             accessControlCanGateWithdrawals && accessControl != address(0)
                 && !IPoolAccessControl(accessControl).canWithdrawShielded(msg.sender)
@@ -1937,6 +1956,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ) external nonReentrant whenNotPaused onlyShieldNFTOwner(tokenId) returns (uint256 newTokenId) {
         if (preferredAsset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset(); // Partial withdrawal only for same asset
         if (withdrawAmount == 0) revert ErrorsLib.NoTokensToWithdraw();
+        _requirePoolAccountingBalancesCovered();
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
@@ -2083,6 +2103,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      */
     function claimRewards(uint256 tokenId) external nonReentrant whenNotPaused {
         address owner = _requireShieldNFTOwner(tokenId);
+        _requirePoolAccountingBalancesCovered();
 
         // Rate limiting: minimum 24 hours between calls per tokenId
         uint256 lastClaim = lastClaimRewardsTime[tokenId];
@@ -2134,6 +2155,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         onlyProtectorNFTOwner(tokenId)
     {
         if (preferredAsset != BACKING_TOKEN) revert ErrorsLib.UnsupportedAsset();
+        _requirePoolAccountingBalancesCovered();
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
         _requireProtectorWithdrawalAllowed(msg.sender, "withdrawProtector");
@@ -2618,6 +2640,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         ) {
             revert ErrorsLib.PoolNotEmptyForDeactivation();
         }
+        _requireAccountingBalanceCovered(BACKING_TOKEN, poolState.totalBackingTokenBalance);
 
         sweptAmount = totalProtectorTokens;
         if (sweptAmount == 0) {

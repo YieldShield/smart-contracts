@@ -105,6 +105,8 @@ library ErrorsLib {
     error RewardAccumulationIncomplete(uint256 expected, uint256 accumulated, uint256 redirected);
     /// @notice Thrown when reward claiming would reduce a live shielded position to zero through fees only
     error FeeAccrualWouldConsumePosition(uint256 tokenId, uint256 positionAmount, uint256 feeAmount);
+    /// @notice Thrown when actual token balance no longer covers recorded pool accounting
+    error AccountedBalanceExceedsTokenBalance(address token, uint256 accountedBalance, uint256 actualBalance);
     /// @notice Thrown when old protector backing must be claimed before a fresh epoch can launch
     error ResidualProtectorBackingPending(uint256 amount);
     /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token

@@ -175,6 +175,39 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         pool.claimRewards(tokenId);
     }
 
+    function test_claimRewards_RevertsWhenShieldedBalanceDriftsBelowAccounting() public {
+        uint256 tokenId = _depositShielded(100e18);
+        shieldedToken.burn(address(pool), 1);
+
+        vm.prank(shieldedUser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector,
+                address(shieldedToken),
+                100e18,
+                100e18 - 1
+            )
+        );
+        pool.claimRewards(tokenId);
+    }
+
+    function test_depositBacking_RevertsWhenBackingBalanceDriftsBelowAccounting() public {
+        backingToken.burn(address(pool), 1);
+
+        vm.startPrank(protector);
+        backingToken.approve(address(pool), 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector,
+                address(backingToken),
+                500e18,
+                500e18 - 1
+            )
+        );
+        pool.depositBackingAsset(address(backingToken), 1e18, 0);
+        vm.stopPrank();
+    }
+
     function test_shieldedWithdraw_UsesActualReceivedForSlippageWithTransferFee() public {
         uint256 tokenId = _depositShielded(100e18);
 
