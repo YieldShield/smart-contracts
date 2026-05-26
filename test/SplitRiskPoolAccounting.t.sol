@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
@@ -61,6 +62,8 @@ contract PartialWithdrawReceiver is IERC721Receiver {
 /// @title Tests for totalShieldedTokens accounting consistency
 /// @notice Verifies that totalShieldedTokens always equals sum of active position amounts
 contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
+    using stdStorage for StdStorage;
+
     SplitRiskPool public pool;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
@@ -419,6 +422,35 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
             valueAtDepositAfter, valueAtDepositBefore, "totalValueAtDeposit should remain unchanged after claimRewards"
         );
         _assertTotalValueAtDepositConsistent();
+    }
+
+    function test_claimRewards_SeedsLegacyZeroFeeBaselineWithoutChargingPrincipal() public {
+        vm.startPrank(shielded1);
+        shieldedToken.approve(address(pool), 1000e18);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+        vm.stopPrank();
+
+        IShieldReceiptNFT.ShieldPosition memory posBefore = shieldNFT.getPosition(tokenId);
+        assertEq(posBefore.valueAtDeposit, 1000e8);
+        assertEq(pool.feeValueBaselineUsd(tokenId), posBefore.valueAtDeposit);
+
+        stdstore.target(address(pool)).sig("feeValueBaselineUsd(uint256)").with_key(tokenId).checked_write(uint256(0));
+        assertEq(pool.feeValueBaselineUsd(tokenId), 0);
+
+        uint256 totalShieldedBefore = pool.totalShieldedTokens();
+        uint256 accumulatedPoolFeeBefore = pool.accumulatedPoolFee();
+        uint256 accumulatedProtocolFeeBefore = pool.accumulatedProtocolFee();
+        uint256 accumulatedCommissionsBefore = pool.accumulatedCommissions();
+
+        _claimRewardsAsOwner(tokenId);
+
+        IShieldReceiptNFT.ShieldPosition memory posAfter = shieldNFT.getPosition(tokenId);
+        assertEq(posAfter.amount, posBefore.amount, "principal should not be charged as yield");
+        assertEq(pool.totalShieldedTokens(), totalShieldedBefore, "total shielded should be unchanged");
+        assertEq(pool.accumulatedPoolFee(), accumulatedPoolFeeBefore, "pool fee should remain unchanged");
+        assertEq(pool.accumulatedProtocolFee(), accumulatedProtocolFeeBefore, "protocol fee should remain unchanged");
+        assertEq(pool.accumulatedCommissions(), accumulatedCommissionsBefore, "commissions should remain unchanged");
+        assertEq(pool.feeValueBaselineUsd(tokenId), posBefore.valueAtDeposit, "legacy zero baseline should be seeded");
     }
 
     function test_partialWithdrawShielded_InitializesPoolStateBeforeSafeMintCallback() public {

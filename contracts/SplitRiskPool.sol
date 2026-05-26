@@ -1277,6 +1277,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Use per-position high-water-mark baseline to avoid repeatedly taxing the same yield.
         uint256 baselineValueUsd = feeValueBaselineUsd[tokenId];
+        if (baselineValueUsd == 0 && pos.valueAtDeposit != 0) {
+            baselineValueUsd = pos.valueAtDeposit;
+        }
 
         // Calculate NEW yield earned since last fee accrual (underflow-safe)
         uint256 yieldEarnedUsd = currentValue > baselineValueUsd ? currentValue - baselineValueUsd : 0;
