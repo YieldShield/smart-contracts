@@ -7,6 +7,7 @@ import { FullMath } from "../contracts/oracles/libraries/FullMath.sol";
 import { TickMath } from "../contracts/oracles/libraries/TickMath.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 
 contract UniswapV3TWAPHarness is UniswapV3TWAPFeed {
     constructor(address quoteToken, address quoteOracle) UniswapV3TWAPFeed(1800, quoteToken, quoteOracle) { }
@@ -72,6 +73,41 @@ contract MockUniswapV3Pool {
 
     function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint8, bool) {
         return (0, tick, 0, 0, 0, 0, true);
+    }
+}
+
+contract StaleAwareQuoteOracle is IOracleFeed {
+    uint256 public price = 1e8;
+    bool public stale;
+    uint64 public publishTime;
+
+    function setPrice(uint256 price_) external {
+        price = price_;
+    }
+
+    function setStale(bool stale_) external {
+        stale = stale_;
+    }
+
+    function setPublishTime(uint64 publishTime_) external {
+        publishTime = publishTime_;
+    }
+
+    function getPrice(address) external view returns (uint256) {
+        return price;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Stale Aware Quote Oracle";
+    }
+
+    function isPriceStale(address) external view returns (bool isStale, uint64 observedPublishTime) {
+        observedPublishTime = publishTime == 0 ? uint64(block.timestamp) : publishTime;
+        return (stale, observedPublishTime);
     }
 }
 
@@ -333,6 +369,30 @@ contract UniswapV3TWAPFeedTest is Test {
         pool.setShouldRevertObserve(false);
         pool.setShouldReturnDescendingLiquidityCumulatives(true);
         (isStale, publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+    }
+
+    function test_isPriceStale_ReflectsQuoteOracleStaleness() public {
+        StaleAwareQuoteOracle staleQuoteOracle = new StaleAwareQuoteOracle();
+        UniswapV3TWAPHarness localHarness = new UniswapV3TWAPHarness(address(quoteToken), address(staleQuoteOracle));
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool = new MockUniswapV3Pool(
+            address(token), address(quoteToken), 0, localHarness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
+        );
+        localHarness.setTokenPool(address(token), address(pool));
+
+        staleQuoteOracle.setPublishTime(123);
+        staleQuoteOracle.setStale(true);
+
+        (bool isStale, uint64 publishTime) = localHarness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 123);
+
+        staleQuoteOracle.setStale(false);
+        staleQuoteOracle.setPublishTime(uint64(block.timestamp + 1));
+
+        (isStale, publishTime) = localHarness.isPriceStale(address(token));
         assertTrue(isStale);
         assertEq(publishTime, 0);
     }

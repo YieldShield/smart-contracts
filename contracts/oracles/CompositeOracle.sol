@@ -528,7 +528,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (config.backupFeed == address(0)) revert NotDualFeedToken(token);
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!primarySuccess || !backupSuccess) return type(uint256).max;
         return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
     }
@@ -565,6 +565,74 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             } catch {
                 return (false, 0);
             }
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /// @dev Dispute-only price reader used by the dual-feed challenge gate. It first
+    ///      tries the protected feed price. If that path reverts, it may fall back to
+    ///      `getPriceUnsafe` only when the feed's own staleness helper proves that the
+    ///      unsafe reading is fresh. Production valuation paths never use this helper.
+    function _tryGetNormalizedDisputeFeedPrice(address feed, address token)
+        internal
+        view
+        returns (bool success, uint256 normalizedPrice)
+    {
+        (success, normalizedPrice) = _tryGetNormalizedFeedPrice(feed, token);
+        if (success) {
+            return (true, normalizedPrice);
+        }
+        if (!_isFreshForUnsafeDisputeFallback(feed, token)) {
+            return (false, 0);
+        }
+
+        (success, normalizedPrice) = _tryGetNormalizedUnsafeFeedPriceNoRevert(feed, token);
+        if (!success) {
+            return (false, 0);
+        }
+        return (true, normalizedPrice);
+    }
+
+    function _isFreshForUnsafeDisputeFallback(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) {
+            return false;
+        }
+
+        (bool success, bytes memory data) = feed.staticcall(abi.encodeWithSignature("isPriceStale(address)", token));
+        if (!success || data.length < 64) {
+            return false;
+        }
+
+        (bool isStale, uint256 publishTime) = abi.decode(data, (bool, uint256));
+        if (isStale || publishTime == 0 || publishTime > block.timestamp) {
+            return false;
+        }
+        return true;
+    }
+
+    function _tryGetNormalizedUnsafeFeedPriceNoRevert(address feed, address token)
+        internal
+        view
+        returns (bool success, uint256 normalizedPrice)
+    {
+        if (feed.code.length == 0) {
+            return (false, 0);
+        }
+
+        (bool priceSuccess, bytes memory priceData) =
+            feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
+        if (!priceSuccess || priceData.length < 32) {
+            return (false, 0);
+        }
+
+        uint256 price = abi.decode(priceData, (uint256));
+        if (price == 0) {
+            return (false, 0);
+        }
+
+        try IOracleFeed(feed).decimals() returns (uint8 feedDecimals) {
+            return (true, price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
         } catch {
             return (false, 0);
         }
@@ -614,7 +682,8 @@ contract CompositeOracle is ICompositeOracle, Ownable {
                 return true;
             }
 
-            (bool activeBackupSuccess, uint256 activeBackupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+            (bool activeBackupSuccess, uint256 activeBackupPrice) =
+                _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
             if (!activeBackupSuccess) {
                 return true;
             }
@@ -630,7 +699,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return !primarySupportsCircuitBreaker;
         }
 
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!backupSuccess) {
             // Backup is the only safety net for primaries that lack a circuit
             // breaker. If the primary has its own CB, defer to it; otherwise
@@ -667,7 +736,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!backupSuccess) {
             revert ChallengeNotPossible(token, "Backup oracle unavailable");
         }
@@ -699,7 +768,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!backupSuccess) {
             revert FinalizeNotPossible(token, "Backup oracle unavailable");
         }
@@ -748,7 +817,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!primarySuccess || !backupSuccess) {
             revert CancelNotPossible(token, "Oracle unavailable");
         }
@@ -780,7 +849,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(config.backupFeed, token);
+        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
         if (!primaryProtectedAvailable) {
             revert RevertNotPossible(token, "Primary oracle unavailable");

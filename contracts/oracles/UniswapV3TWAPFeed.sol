@@ -434,10 +434,31 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
             if (minimumLiquidity != 0 && averageLiquidity < minimumLiquidity) {
                 return (true, 0);
             }
+            (bool quoteStale, uint64 quotePublishTime) = _quoteTokenPriceStaleness();
+            if (quoteStale) {
+                return (true, quotePublishTime);
+            }
             return (false, uint64(block.timestamp));
         } catch {
             return (true, 0);
         }
+    }
+
+    function _quoteTokenPriceStaleness() internal view returns (bool isStale, uint64 publishTime) {
+        (bool success, bytes memory data) =
+            address(quoteTokenOracle).staticcall(abi.encodeWithSignature("isPriceStale(address)", quoteToken));
+        if (!success || data.length < 64) {
+            return (true, 0);
+        }
+
+        (bool quoteStale, uint256 quotePublishTime) = abi.decode(data, (bool, uint256));
+        if (quoteStale) {
+            return (true, quotePublishTime <= type(uint64).max ? uint64(quotePublishTime) : 0);
+        }
+        if (quotePublishTime == 0 || quotePublishTime > block.timestamp || quotePublishTime > type(uint64).max) {
+            return (true, 0);
+        }
+        return (false, uint64(quotePublishTime));
     }
 
     /// @notice Get the current spot tick from a pool
