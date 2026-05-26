@@ -1174,6 +1174,18 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factory.getActivePools()[0], poolAddress, "Pool should be in active set");
     }
 
+    function testRemoveTokenRevertsForActivePoolAsset() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.TokenUsedByActivePool.selector, address(tokenA), poolAddress));
+        factory.removeToken(address(tokenA));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.TokenUsedByActivePool.selector, address(tokenB), poolAddress));
+        factory.removeToken(address(tokenB));
+    }
+
     function testClosePoolReturnsCreationBondAndRecyclesActiveSlot() public {
         uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);

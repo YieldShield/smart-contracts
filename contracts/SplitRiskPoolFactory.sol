@@ -840,6 +840,7 @@ contract SplitRiskPoolFactory is
      * @param token Address of the token to remove
      */
     function removeToken(address token) external onlyGovernance {
+        _requireTokenUnusedByActivePools(token);
         _syncCompositeOracleStrictRequirement(token, false);
         TokenWhitelistLib.removeToken(whitelistedTokens, isWhitelisted, token);
         delete tokenInfo[token]; // Clear stale tokenInfo
