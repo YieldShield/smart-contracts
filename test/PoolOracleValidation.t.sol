@@ -176,6 +176,37 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
         CompositeOracle newCompositeOracle = new CompositeOracle();
+        newCompositeOracle.setTokenOracleFeedWithType(address(shieldedToken), address(oracle), "mock");
+        newCompositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
+        newCompositeOracle.setStrictCircuitBreakerRequired(address(backingToken), true);
+
+        (
+            uint256 shieldedMinDepositAmount,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address currentProtocolFeeRecipient,
+            uint96 protocolFee,
+            address oldPriceOracle
+        ) = pool.poolConfig();
+        oldPriceOracle;
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            maxTotalValueLockedUsd,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            currentProtocolFeeRecipient,
+            address(newCompositeOracle)
+        );
+
         newCompositeOracle.transferOwnership(address(factory));
         vm.prank(governance);
         factory.setCompositeOracle(address(newCompositeOracle));
