@@ -305,6 +305,37 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         vm.warp(endTimestamp);
     }
 
+    function _queueGovernorCall(bytes memory callData, string memory description)
+        internal
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash)
+    {
+        targets = new address[](1);
+        targets[0] = address(governor);
+        values = new uint256[](1);
+        calldatas = new bytes[](1);
+        calldatas[0] = callData;
+
+        vm.prank(voter1);
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+        uint256 endTs = _passProposal(proposalId);
+        descriptionHash = keccak256(bytes(description));
+        governor.queue(targets, values, calldatas, descriptionHash);
+        vm.warp(endTs + TIMELOCK_DELAY + 1);
+    }
+
+    function _deployGovernorControlledTimelock(uint256 delay)
+        internal
+        returns (TimelockController replacementTimelock)
+    {
+        address[] memory emptyAddrs = new address[](0);
+        replacementTimelock =
+            TimelockController(payable(address(new YSTimelockController(delay, emptyAddrs, emptyAddrs, deployer))));
+        replacementTimelock.grantRole(replacementTimelock.PROPOSER_ROLE(), address(governor));
+        replacementTimelock.grantRole(replacementTimelock.EXECUTOR_ROLE(), address(governor));
+        replacementTimelock.grantRole(replacementTimelock.CANCELLER_ROLE(), address(governor));
+        replacementTimelock.renounceRole(replacementTimelock.DEFAULT_ADMIN_ROLE(), deployer);
+    }
+
     // ---- Configuration tests ----
 
     function test_GovernorName() public view {
@@ -321,6 +352,75 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 
     function test_ProposalThreshold() public view {
         assertEq(governor.proposalThreshold(), 10_000e18);
+    }
+
+    function test_GovernorSettingsRejectVotingDelayBelowFloor() public {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.setVotingDelay.selector, uint48(VOTING_DELAY - 1)),
+            "Reject short voting delay"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorVotingDelayOutOfRange.selector,
+                uint48(VOTING_DELAY - 1),
+                governor.MIN_GOVERNOR_VOTING_DELAY(),
+                governor.MAX_GOVERNOR_VOTING_DELAY()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+    }
+
+    function test_GovernorSettingsRejectVotingPeriodBelowFloor() public {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.setVotingPeriod.selector, uint32(VOTING_PERIOD - 1)),
+            "Reject short voting period"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorVotingPeriodOutOfRange.selector,
+                uint32(VOTING_PERIOD - 1),
+                governor.MIN_GOVERNOR_VOTING_PERIOD(),
+                governor.MAX_GOVERNOR_VOTING_PERIOD()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+    }
+
+    function test_GovernorSettingsRejectProposalThresholdBelowFloor() public {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.setProposalThreshold.selector, 9_999e18), "Reject low proposal threshold"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorProposalThresholdOutOfRange.selector,
+                9_999e18,
+                governor.MIN_GOVERNOR_PROPOSAL_THRESHOLD(),
+                governor.MAX_GOVERNOR_PROPOSAL_THRESHOLD()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+    }
+
+    function test_UpdateTimelockRejectsShortPublicDelay() public {
+        TimelockController replacementTimelock = _deployGovernorControlledTimelock(0);
+        vm.chainId(1);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.updateTimelock.selector, replacementTimelock),
+            "Reject zero delay timelock"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorTimelockDelayTooShort.selector,
+                address(replacementTimelock),
+                0,
+                governor.MIN_GOVERNOR_TIMELOCK_DELAY()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
     }
 
     function test_QuorumPercent() public view {

@@ -614,6 +614,62 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(poolOracle, address(newOracle), "Pool should use the new default oracle");
     }
 
+    function testSetCompositeOracleRevertsWhileActivePoolUsesOldOracle() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.transferOwnership(address(factory));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SplitRiskPoolFactory.ActivePoolUsesCompositeOracle.selector, poolAddress, address(compositeOracle)
+            )
+        );
+        factory.setCompositeOracle(address(newOracle));
+    }
+
+    function testSetCompositeOracleSucceedsAfterActivePoolsMigrate() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.setTokenOracleFeed(address(tokenA), address(oracle));
+        newOracle.setTokenOracleFeed(address(tokenB), address(oracle));
+        newOracle.transferOwnership(address(factory));
+
+        (
+            uint256 shieldedMinDepositAmount,
+            uint256 shieldedMaxDepositAmount,
+            uint256 backingMinDepositAmount,
+            uint256 backingMaxDepositAmount,
+            uint256 maxTotalValueLockedUsd,
+            uint256 minimumPoolTime,
+            uint256 unlockDuration,
+            address protocolFeeRecipient,
+            uint96 protocolFee,
+            address poolOracle
+        ) = pool.poolConfig();
+        assertEq(poolOracle, address(compositeOracle), "precondition: pool should start on old oracle");
+
+        vm.prank(governanceTimelock);
+        pool.updatePoolConfig(
+            shieldedMinDepositAmount,
+            shieldedMaxDepositAmount,
+            backingMinDepositAmount,
+            backingMaxDepositAmount,
+            maxTotalValueLockedUsd,
+            minimumPoolTime,
+            unlockDuration,
+            protocolFee,
+            protocolFeeRecipient,
+            address(newOracle)
+        );
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracle(address(newOracle));
+
+        assertEq(factory.compositeOracle(), address(newOracle), "Factory default oracle should rotate after migration");
+    }
+
     function testSetCompositeOracleClearsPreAuthorizedCallers() public {
         CompositeOracle newOracle = new CompositeOracle();
         newOracle.setAuthorizedCaller(user1, true);
@@ -1038,10 +1094,16 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         vm.prank(governanceTimelock);
         factory.startPoolGovernanceTimelockTransfers(0, 1);
+
+        assertEq(SplitRiskPool(payable(pool1)).pendingGovernanceTimelock(), replacementGovernance);
+
+        vm.prank(replacementGovernance);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.PoolGovernanceTransfersPending.selector, 1));
+        factory.acceptGovernanceTimelock();
+
         vm.prank(governanceTimelock);
         factory.startPoolGovernanceTimelockTransfers(1, 1);
 
-        assertEq(SplitRiskPool(payable(pool1)).pendingGovernanceTimelock(), replacementGovernance);
         assertEq(SplitRiskPool(payable(pool2)).pendingGovernanceTimelock(), replacementGovernance);
 
         vm.prank(replacementGovernance);
@@ -1055,6 +1117,18 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.prank(replacementGovernance);
         factory.acceptPoolGovernanceTimelockTransfers(1, 1);
         assertEq(SplitRiskPool(payable(pool2)).governanceTimelock(), replacementGovernance);
+    }
+
+    function testCreatePoolRevertsDuringPendingGovernanceTransfer() public {
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SplitRiskPoolFactory.GovernanceTransferPending.selector, replacementGovernance)
+        );
+        factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
     }
 
     function testRevertCreatePoolWithoutDefaultOracle() public {

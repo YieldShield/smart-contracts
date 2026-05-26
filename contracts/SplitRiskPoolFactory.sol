@@ -87,6 +87,9 @@ contract SplitRiskPoolFactory is
 
     error CompositeOracleAuthorizationClosed();
     error CompositeOracleAuthorizedCallersPresent(address oracle, uint256 count);
+    error GovernanceTransferPending(address pendingGovernance);
+    error PoolGovernanceTransfersPending(uint256 remainingPools);
+    error ActivePoolUsesCompositeOracle(address pool, address oracle);
 
     // Governance-controlled protocol parameters
     address public splitRiskPoolImplementation;
@@ -133,6 +136,9 @@ contract SplitRiskPoolFactory is
     address[] private _trackedCompositeOracleAuthorizedCallers;
     mapping(address => bool) private _compositeOracleAuthorizedCallerSeen;
     mapping(address => bool) private _compositeOracleAuthorizedCallerActive;
+    address private _pendingGovernancePoolTransferTarget;
+    uint256 private _pendingGovernancePoolTransfersRemaining;
+    mapping(address => address) private _poolGovernanceTransferTarget;
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
     event BootstrapModeFinalized(address indexed caller);
@@ -207,13 +213,20 @@ contract SplitRiskPoolFactory is
         onlyGovernance
     {
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
+        _pendingGovernancePoolTransferTarget = newGovernanceTimelock;
+        _pendingGovernancePoolTransfersRemaining = pools.length;
     }
 
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable, ISplitRiskPoolFactory) {
+        uint256 remainingPools = _remainingPoolGovernanceTransfers(pendingGovernanceTimelock());
+        if (remainingPools != 0) revert PoolGovernanceTransfersPending(remainingPools);
+
         address previousGovernance = governanceTimelock();
         ProtocolAccessControlUpgradeable.acceptGovernanceTimelock();
+        _pendingGovernancePoolTransferTarget = address(0);
+        _pendingGovernancePoolTransfersRemaining = 0;
 
         if (defaultProtocolFeeRecipient == previousGovernance) {
             address newGovernance = governanceTimelock();
@@ -227,9 +240,18 @@ contract SplitRiskPoolFactory is
     function startPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external override onlyGovernance {
         address pendingGovernance = pendingGovernanceTimelock();
         if (pendingGovernance == address(0)) revert NoPendingGovernance();
+        if (_pendingGovernancePoolTransferTarget != pendingGovernance) {
+            _pendingGovernancePoolTransferTarget = pendingGovernance;
+            _pendingGovernancePoolTransfersRemaining = pools.length;
+        }
         uint256 end = _poolPageEnd(offset, limit);
         for (uint256 i = offset; i < end;) {
-            SplitRiskPool(payable(pools[i])).setGovernanceTimelockFromFactory(pendingGovernance);
+            SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
+            if (pool.governanceTimelock() != pendingGovernance && pool.pendingGovernanceTimelock() != pendingGovernance)
+            {
+                pool.setGovernanceTimelockFromFactory(pendingGovernance);
+            }
+            _markPoolGovernanceTransferStaged(address(pool), pendingGovernance);
             unchecked {
                 ++i;
             }
@@ -274,6 +296,26 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    function _remainingPoolGovernanceTransfers(address pendingGovernance) internal view returns (uint256) {
+        if (pendingGovernance == address(0) || pools.length == 0) {
+            return 0;
+        }
+        if (_pendingGovernancePoolTransferTarget != pendingGovernance) {
+            return pools.length;
+        }
+        return _pendingGovernancePoolTransfersRemaining;
+    }
+
+    function _markPoolGovernanceTransferStaged(address pool, address targetGovernance) internal {
+        if (_poolGovernanceTransferTarget[pool] == targetGovernance) {
+            return;
+        }
+        _poolGovernanceTransferTarget[pool] = targetGovernance;
+        if (_pendingGovernancePoolTransferTarget == targetGovernance && _pendingGovernancePoolTransfersRemaining != 0) {
+            --_pendingGovernancePoolTransfersRemaining;
+        }
+    }
+
     /**
      * @notice Sets the composite oracle address for all new pools
      * @dev Only callable by governance. During bootstrap, the current owner may seed
@@ -288,6 +330,7 @@ contract SplitRiskPoolFactory is
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _requireOwnedByFactory(newOracle);
         if (compositeOracle != address(0) && compositeOracle != newOracle) {
+            _requireNoActivePoolUsesCompositeOracle(compositeOracle);
             _clearCompositeOracleAuthorizedCallersForOracle(compositeOracle);
         }
         _clearCompositeOracleAuthorizedCallersForOracle(newOracle);
@@ -647,6 +690,9 @@ contract SplitRiskPoolFactory is
         uint256 _creationBondAmount,
         address initialAccessControl
     ) internal returns (address poolAddress) {
+        address pendingGovernance = pendingGovernanceTimelock();
+        if (pendingGovernance != address(0)) revert GovernanceTransferPending(pendingGovernance);
+
         uint256 activePoolLimit = _activePoolLimit();
         if (activePools.length >= activePoolLimit) {
             revert ErrorsLib.MaxPoolsExceeded(activePools.length, activePoolLimit);
@@ -1117,6 +1163,20 @@ contract SplitRiskPoolFactory is
             }
             _requireTokenNotActiveERC4626Underlying(token, info.shieldedToken, pool);
             _requireTokenNotActiveERC4626Underlying(token, info.backingToken, pool);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _requireNoActivePoolUsesCompositeOracle(address oracle) internal view {
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            address pool = activePools[i];
+            (,,,,,,,,, address priceOracle) = ISplitRiskPool(pool).poolConfig();
+            if (priceOracle == oracle) {
+                revert ActivePoolUsesCompositeOracle(pool, oracle);
+            }
             unchecked {
                 ++i;
             }
