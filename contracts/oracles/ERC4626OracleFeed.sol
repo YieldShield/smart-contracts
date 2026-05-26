@@ -26,6 +26,14 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint256 maxSharePriceDeviationBps;
     }
 
+    struct ScheduledReferenceRefresh {
+        uint256 executableAt;
+        uint256 expiresAt;
+        uint256 oldReferenceAssetsPerShare;
+        uint256 scheduledReferenceAssetsPerShare;
+        uint256 maxSharePriceDeviationBps;
+    }
+
     /// @notice Underlying price oracle for USD conversion
 
     IOracleFeed public underlyingPriceOracle;
@@ -37,6 +45,8 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     mapping(address => VaultConfig) private vaultConfigs;
 
     mapping(address => uint256) public scheduledVaultRemovalTime;
+
+    mapping(address => ScheduledReferenceRefresh) public scheduledVaultSharePriceReferenceRefresh;
 
     /// @notice Minimum whole-share count required for price validity
     /// @dev The actual threshold is scaled per vault using its native share decimals.
@@ -51,6 +61,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     uint256 public constant VAULT_REMOVAL_DELAY = 1 days;
     uint256 public constant VAULT_REMOVAL_EXPIRY = 7 days;
 
+    uint256 public constant SHARE_PRICE_REFERENCE_REFRESH_DELAY = 1 days;
+    uint256 public constant SHARE_PRICE_REFERENCE_REFRESH_EXPIRY = 7 days;
+
     /// @notice Emitted when a vault is registered
     event VaultRegistered(address indexed vault, address indexed underlying);
 
@@ -64,6 +77,16 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     event VaultSharePriceReferenceUpdated(
         address indexed vault, uint256 oldReferenceAssetsPerShare, uint256 newReferenceAssetsPerShare
     );
+
+    event VaultSharePriceReferenceRefreshScheduled(
+        address indexed vault,
+        uint256 oldReferenceAssetsPerShare,
+        uint256 scheduledReferenceAssetsPerShare,
+        uint256 executableAt,
+        uint256 expiresAt
+    );
+
+    event VaultSharePriceReferenceRefreshCancelled(address indexed vault);
 
     /// @notice Emitted when the share-price deviation bound is updated
     event VaultSharePriceDeviationUpdated(address indexed vault, uint256 oldDeviationBps, uint256 newDeviationBps);
@@ -89,6 +112,10 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     error VaultRemovalNotScheduled(address vault);
     error VaultRemovalTooEarly(address vault, uint256 executableAt);
     error VaultRemovalExpired(address vault, uint256 expiredAt);
+
+    error VaultSharePriceReferenceRefreshNotScheduled(address vault);
+    error VaultSharePriceReferenceRefreshTooEarly(address vault, uint256 executableAt);
+    error VaultSharePriceReferenceRefreshExpired(address vault, uint256 expiredAt);
 
     /// @notice Custom error when token decimals cannot be queried
     error InvalidTokenDecimals(address token);
@@ -183,18 +210,63 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             maxSharePriceDeviationBps: DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS
         });
         _clearScheduledVaultRemoval(vault);
+        _clearScheduledVaultSharePriceReferenceRefresh(vault);
         emit VaultRegistered(vault, underlying);
     }
 
-    /// @notice Refresh the vault share-rate reference to the current ERC4626 conversion rate
+    /// @notice Schedule a reviewed vault share-rate reference refresh.
+    /// @param vault Address of the registered vault
+    function scheduleVaultSharePriceReferenceRefresh(address vault) external onlyOwner {
+        VaultConfig storage config = _getVaultConfigStorage(vault);
+        _requireMinimumVaultSupply(vault, config.minimumSupply);
+
+        uint256 scheduledReference = IERC4626(vault).convertToAssets(config.shareUnit);
+        _requireAssetsPerShareWithinReference(
+            vault, scheduledReference, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
+        );
+
+        uint256 executableAt = block.timestamp + SHARE_PRICE_REFERENCE_REFRESH_DELAY;
+        uint256 expiresAt = executableAt + SHARE_PRICE_REFERENCE_REFRESH_EXPIRY;
+        scheduledVaultSharePriceReferenceRefresh[vault] = ScheduledReferenceRefresh({
+            executableAt: executableAt,
+            expiresAt: expiresAt,
+            oldReferenceAssetsPerShare: config.referenceAssetsPerShare,
+            scheduledReferenceAssetsPerShare: scheduledReference,
+            maxSharePriceDeviationBps: config.maxSharePriceDeviationBps
+        });
+
+        emit VaultSharePriceReferenceRefreshScheduled(
+            vault, config.referenceAssetsPerShare, scheduledReference, executableAt, expiresAt
+        );
+    }
+
+    /// @notice Cancel a scheduled vault share-rate reference refresh.
+    /// @param vault Address of the registered vault
+    function cancelScheduledVaultSharePriceReferenceRefresh(address vault) external onlyOwner {
+        if (scheduledVaultSharePriceReferenceRefresh[vault].executableAt == 0) {
+            revert VaultSharePriceReferenceRefreshNotScheduled(vault);
+        }
+        _clearScheduledVaultSharePriceReferenceRefresh(vault);
+    }
+
+    /// @notice Execute a scheduled vault share-rate reference refresh.
     /// @param vault Address of the registered vault
     function refreshVaultSharePriceReference(address vault) external onlyOwner {
         VaultConfig storage config = _getVaultConfigStorage(vault);
+        ScheduledReferenceRefresh memory scheduled = _consumeScheduledVaultSharePriceReferenceRefresh(vault);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
-        uint256 newReference = IERC4626(vault).convertToAssets(config.shareUnit);
+
+        uint256 currentAssetsPerShare = IERC4626(vault).convertToAssets(config.shareUnit);
+        _requireAssetsPerShareWithinReference(
+            vault,
+            currentAssetsPerShare,
+            scheduled.scheduledReferenceAssetsPerShare,
+            scheduled.maxSharePriceDeviationBps
+        );
+
         uint256 oldReference = config.referenceAssetsPerShare;
-        config.referenceAssetsPerShare = newReference;
-        emit VaultSharePriceReferenceUpdated(vault, oldReference, newReference);
+        config.referenceAssetsPerShare = scheduled.scheduledReferenceAssetsPerShare;
+        emit VaultSharePriceReferenceUpdated(vault, oldReference, scheduled.scheduledReferenceAssetsPerShare);
     }
 
     /// @notice Update the maximum allowed share-rate deviation for a registered vault
@@ -237,6 +309,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         _consumeScheduledVaultRemoval(vault);
         delete vaultToUnderlying[vault];
         delete vaultConfigs[vault];
+        _clearScheduledVaultSharePriceReferenceRefresh(vault);
         emit VaultRemoved(vault);
     }
 
@@ -250,6 +323,31 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
             revert VaultRemovalExpired(vault, expiresAt);
         }
         delete scheduledVaultRemovalTime[vault];
+    }
+
+    function _clearScheduledVaultSharePriceReferenceRefresh(address vault) internal {
+        if (scheduledVaultSharePriceReferenceRefresh[vault].executableAt != 0) {
+            delete scheduledVaultSharePriceReferenceRefresh[vault];
+            emit VaultSharePriceReferenceRefreshCancelled(vault);
+        }
+    }
+
+    function _consumeScheduledVaultSharePriceReferenceRefresh(address vault)
+        internal
+        returns (ScheduledReferenceRefresh memory scheduled)
+    {
+        scheduled = scheduledVaultSharePriceReferenceRefresh[vault];
+        if (scheduled.executableAt == 0) {
+            revert VaultSharePriceReferenceRefreshNotScheduled(vault);
+        }
+        if (block.timestamp < scheduled.executableAt) {
+            revert VaultSharePriceReferenceRefreshTooEarly(vault, scheduled.executableAt);
+        }
+        if (block.timestamp >= scheduled.expiresAt) {
+            revert VaultSharePriceReferenceRefreshExpired(vault, scheduled.expiresAt);
+        }
+
+        delete scheduledVaultSharePriceReferenceRefresh[vault];
     }
 
     /// @notice Returns the minimum total supply required for a registered vault
@@ -376,6 +474,26 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return sharePrice.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
     }
 
+    function _requireAssetsPerShareWithinReference(
+        address vault,
+        uint256 assetsPerShare,
+        uint256 referenceAssetsPerShare,
+        uint256 maxDeviationBps
+    ) internal pure {
+        if (referenceAssetsPerShare == 0) {
+            revert SharePriceDeviationTooHigh(vault, assetsPerShare, referenceAssetsPerShare, maxDeviationBps);
+        }
+
+        uint256 deviationAmount = Math.mulDiv(referenceAssetsPerShare, maxDeviationBps, ConstantsLib.BASIS_POINT_SCALE);
+        uint256 minAssetsPerShare =
+            referenceAssetsPerShare > deviationAmount ? referenceAssetsPerShare - deviationAmount : 0;
+        uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
+
+        if (assetsPerShare < minAssetsPerShare || assetsPerShare > maxAssetsPerShare) {
+            revert SharePriceDeviationTooHigh(vault, assetsPerShare, referenceAssetsPerShare, maxDeviationBps);
+        }
+    }
+
     function _getUnderlyingPrice(address underlying, bool useCircuitBreaker) internal view returns (uint256) {
         if (useCircuitBreaker) {
             return underlyingPriceOracle.getPrice(underlying);
@@ -428,35 +546,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         pure
         returns (uint256)
     {
-        uint256 referenceAssetsPerShare = config.referenceAssetsPerShare;
-        if (referenceAssetsPerShare == 0) {
-            revert SharePriceDeviationTooHigh(
-                vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
-            );
-        }
-
-        uint256 deviationAmount =
-            Math.mulDiv(referenceAssetsPerShare, config.maxSharePriceDeviationBps, ConstantsLib.BASIS_POINT_SCALE);
-        uint256 minAssetsPerShare =
-            referenceAssetsPerShare > deviationAmount ? referenceAssetsPerShare - deviationAmount : 0;
-        uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
-
-        if (assetsPerShare < minAssetsPerShare) {
-            revert SharePriceDeviationTooHigh(
-                vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
-            );
-        }
-
-        // H-4: always fail closed on the upper bound — clamping silently
-        // under-prices the share rate during organic vault yield AND makes
-        // donation-driven inflation indistinguishable from yield. After the
-        // *Unsafe rename, no production caller can tolerate a clamped price.
-        if (assetsPerShare > maxAssetsPerShare) {
-            revert SharePriceDeviationTooHigh(
-                vault, assetsPerShare, referenceAssetsPerShare, config.maxSharePriceDeviationBps
-            );
-        }
-
+        _requireAssetsPerShareWithinReference(
+            vault, assetsPerShare, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
+        );
         return assetsPerShare;
     }
 

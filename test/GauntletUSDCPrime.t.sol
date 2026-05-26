@@ -254,11 +254,12 @@ contract GauntletUSDCPrimeTest is Test {
         // Create deviation and initiate challenge
         vm.warp(block.timestamp + 365 days);
         gtusdc.accrueYield();
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(gtusdc));
 
         compositeOracle.challengeForToken(address(gtusdc));
 
         // Wait for challenge duration
-        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
         erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
 
         // Update market price to match NAV (simulating arbitrage)
@@ -272,23 +273,25 @@ contract GauntletUSDCPrimeTest is Test {
         assertFalse(compositeOracle.isBackupActiveForToken(address(gtusdc)));
     }
 
-    function test_CompositeOracle_ActiveBackupServesWhilePrimaryDisagrees() public {
+    function test_CompositeOracle_ActiveBackupFailsClosedWhilePrimaryDisagrees() public {
         // Create deviation
         vm.warp(block.timestamp + 365 days);
         gtusdc.accrueYield();
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(gtusdc));
 
         // Challenge
         compositeOracle.challengeForToken(address(gtusdc));
 
         // Wait for challenge duration (deviation persists because market price unchanged)
-        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
         erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
 
         // Finalize - should switch to backup since deviation persists
         compositeOracle.finalizeChallenge(address(gtusdc));
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(gtusdc)));
-        assertEq(compositeOracle.getPrice(address(gtusdc)), mockOracle.getPrice(address(gtusdc)));
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(gtusdc)));
+        compositeOracle.getPrice(address(gtusdc));
     }
 
     // ============ Edge Case Tests ============

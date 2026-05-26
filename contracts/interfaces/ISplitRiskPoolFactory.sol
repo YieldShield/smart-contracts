@@ -144,6 +144,8 @@ interface ISplitRiskPoolFactory {
     function setPythMaxEmaConfidenceBps(uint256 maxEmaConfidenceBps) external;
     function setERC4626UnderlyingPriceOracle(address underlyingPriceOracle) external;
     function registerERC4626Vault(address vault, address underlying) external;
+    function scheduleERC4626VaultSharePriceReferenceRefresh(address vault) external;
+    function cancelScheduledERC4626VaultSharePriceReferenceRefresh(address vault) external;
     function refreshERC4626VaultSharePriceReference(address vault) external;
     function setERC4626VaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
     function scheduleERC4626VaultRemoval(address vault) external;

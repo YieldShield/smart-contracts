@@ -58,6 +58,14 @@ contract ERC4626OracleFeedTest is Test {
     event VaultSharePriceReferenceUpdated(
         address indexed vault, uint256 oldReferenceAssetsPerShare, uint256 newReferenceAssetsPerShare
     );
+    event VaultSharePriceReferenceRefreshScheduled(
+        address indexed vault,
+        uint256 oldReferenceAssetsPerShare,
+        uint256 scheduledReferenceAssetsPerShare,
+        uint256 executableAt,
+        uint256 expiresAt
+    );
+    event VaultSharePriceReferenceRefreshCancelled(address indexed vault);
 
     function setUp() public {
         // Deploy underlying asset and vault
@@ -355,18 +363,27 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_RefreshVaultSharePriceReference_AllowsReviewedShareRate() public {
-        uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())
+                / 10_000;
         underlyingAsset.mint(address(vault), donation);
         uint256 assetsPerShare = vault.convertToAssets(1e18);
 
+        uint256 executableAt = block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY();
+        uint256 expiresAt = executableAt + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_EXPIRY();
+        vm.expectEmit(true, false, false, true);
+        emit VaultSharePriceReferenceRefreshScheduled(address(vault), 1e18, assetsPerShare, executableAt, expiresAt);
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        vm.warp(executableAt);
         vm.expectEmit(true, false, false, true);
         emit VaultSharePriceReferenceUpdated(address(vault), 1e18, assetsPerShare);
         erc4626Feed.refreshVaultSharePriceReference(address(vault));
 
-        assertApproxEqAbs(erc4626Feed.getPrice(address(vault)), 2e8, 1);
+        assertApproxEqAbs(erc4626Feed.getPrice(address(vault)), 105e6, 1);
     }
 
-    function test_RefreshVaultSharePriceReference_RevertsBelowMinimumSupply() public {
+    function test_ScheduleVaultSharePriceReferenceRefresh_RevertsBelowMinimumSupply() public {
         uint256 minSupply = erc4626Feed.minimumVaultSupply(address(vault));
         vault.burnShares(address(this), 1);
         underlyingAsset.mint(address(vault), minSupply);
@@ -376,7 +393,118 @@ contract ERC4626OracleFeedTest is Test {
                 ERC4626OracleFeed.InsufficientVaultLiquidity.selector, address(vault), minSupply - 1, minSupply
             )
         );
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+    }
+
+    function test_RefreshVaultSharePriceReference_RevertsWhenUnscheduled() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultSharePriceReferenceRefreshNotScheduled.selector, address(vault)
+            )
+        );
         erc4626Feed.refreshVaultSharePriceReference(address(vault));
+    }
+
+    function test_RefreshVaultSharePriceReference_RevertsBeforeDelay() public {
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        uint256 executableAt = block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultSharePriceReferenceRefreshTooEarly.selector, address(vault), executableAt
+            )
+        );
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+    }
+
+    function test_RefreshVaultSharePriceReference_RevertsAfterExpiry() public {
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        uint256 executableAt = block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY();
+        uint256 expiresAt = executableAt + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_EXPIRY();
+        vm.warp(expiresAt);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.VaultSharePriceReferenceRefreshExpired.selector, address(vault), expiresAt
+            )
+        );
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+
+        (uint256 storedExecutableAt,,,,) = erc4626Feed.scheduledVaultSharePriceReferenceRefresh(address(vault));
+        assertEq(storedExecutableAt, executableAt, "reverted expiry attempt should preserve schedule state");
+    }
+
+    function test_RefreshVaultSharePriceReference_UsesScheduledReference() public {
+        uint256 scheduledDonation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())
+                / 10_000;
+        underlyingAsset.mint(address(vault), scheduledDonation);
+
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        uint256 laterDonation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())
+                / 10_000;
+        underlyingAsset.mint(address(vault), laterDonation);
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
+
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+
+        underlyingAsset.burn(address(vault), scheduledDonation + laterDonation);
+        assertApproxEqAbs(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, 1);
+    }
+
+    function test_RefreshVaultSharePriceReference_RevertsWhenCurrentRateDriftsFromSchedule() public {
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() + 1))
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+    }
+
+    function test_ScheduleVaultSharePriceReferenceRefresh_RevertsWhenCurrentRateExceedsReviewedBand() public {
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() + 1))
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+    }
+
+    function test_CancelScheduledVaultSharePriceReferenceRefresh_Succeeds() public {
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        vm.expectEmit(true, false, false, true);
+        emit VaultSharePriceReferenceRefreshCancelled(address(vault));
+        erc4626Feed.cancelScheduledVaultSharePriceReferenceRefresh(address(vault));
+
+        (uint256 executableAt,,,,) = erc4626Feed.scheduledVaultSharePriceReferenceRefresh(address(vault));
+        assertEq(executableAt, 0, "cancel should clear schedule");
     }
 
     function test_GetPrice_RevertsOnUnregisteredVault() public {

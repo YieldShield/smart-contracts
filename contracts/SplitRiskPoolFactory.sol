@@ -65,6 +65,8 @@ interface IERC4626OracleFeedAdmin {
     function vaultToUnderlying(address vault) external view returns (address);
     function setUnderlyingPriceOracle(address underlyingPriceOracle) external;
     function registerVault(address vault, address underlying) external;
+    function scheduleVaultSharePriceReferenceRefresh(address vault) external;
+    function cancelScheduledVaultSharePriceReferenceRefresh(address vault) external;
     function refreshVaultSharePriceReference(address vault) external;
     function setVaultSharePriceDeviation(address vault, uint256 maxDeviationBps) external;
     function scheduleRemoveVault(address vault) external;
@@ -515,6 +517,14 @@ contract SplitRiskPoolFactory is
     function registerERC4626Vault(address vault, address underlying) external onlyGovernance {
         _erc4626OracleFeedAdmin().registerVault(vault, underlying);
         _validateWhitelistedCompositeOracleTokenFeed(vault);
+    }
+
+    function scheduleERC4626VaultSharePriceReferenceRefresh(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().scheduleVaultSharePriceReferenceRefresh(vault);
+    }
+
+    function cancelScheduledERC4626VaultSharePriceReferenceRefresh(address vault) external onlyGovernance {
+        _erc4626OracleFeedAdmin().cancelScheduledVaultSharePriceReferenceRefresh(vault);
     }
 
     function refreshERC4626VaultSharePriceReference(address vault) external onlyGovernance {
