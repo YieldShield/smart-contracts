@@ -1450,11 +1450,10 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.stopPrank();
     }
 
-    function testDeactivateDustPoolSweepsMinimumBackingAndFreesActiveSlot() public {
+    function testDeactivateDustPoolRevertsWithLiveProtectorShares() public {
         vm.prank(governanceTimelock);
         factory.setDefaultProtocolFeeRecipient(user2);
 
-        uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
         SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
         (,, uint256 backingMinDepositAmount,,,,,,,) = pool.poolConfig();
@@ -1467,23 +1466,16 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
         vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
         factory.deactivateDustPool(poolAddress);
 
-        assertEq(factory.activePoolCount(), 0, "Dust deactivation should free the active slot");
-        assertFalse(factory.isPoolActive(poolAddress), "Dust pool should no longer be active");
-        assertEq(pool.totalProtectorTokens(), 0, "Protector dust should be swept");
-        assertEq(pool.totalProtectorShares(), 0, "Protector shares should be expired");
+        assertEq(factory.activePoolCount(), 1, "Active slot should remain occupied");
+        assertTrue(factory.isPoolActive(poolAddress), "Pool should remain active");
+        assertEq(pool.totalProtectorTokens(), backingMinDepositAmount, "Protector backing should remain tracked");
+        assertEq(pool.totalProtectorShares(), backingMinDepositAmount, "Protector shares should remain live");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
-        assertEq(backingPoolBalance, 0, "Tracked backing balance should be cleared");
-        assertEq(
-            tokenB.balanceOf(user2) - recipientBalanceBefore,
-            expectedBondAmount + backingMinDepositAmount,
-            "Protocol recipient should receive bond plus swept dust"
-        );
-
-        address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
-        assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
-        assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+        assertEq(backingPoolBalance, backingMinDepositAmount, "Tracked backing balance should remain");
+        assertEq(tokenB.balanceOf(user2), recipientBalanceBefore, "Protocol recipient should receive nothing");
     }
 
     function testDeactivateProtectorOnlyPoolFreesSlotWithoutSweepingBacking() public {

@@ -2622,14 +2622,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (sweptAmount > poolConfig.backingMinDepositAmount) {
             revert ErrorsLib.PoolNotEmptyForDeactivation();
         }
-
         if (totalProtectorShares != 0) {
-            uint256 expiredEpoch = protectorShareEpoch;
-            protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
-            protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
-            pendingProtectorRewardDust = 0;
-            totalProtectorShares = 0;
-            protectorShareEpoch += 1;
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
         }
 
         totalProtectorTokens = 0;
