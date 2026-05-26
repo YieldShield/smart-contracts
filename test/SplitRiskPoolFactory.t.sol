@@ -203,6 +203,7 @@ contract ReentrantPoolCreator is ITransferFromHook {
 
 contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     bytes4 private constant ENFORCED_PAUSE = bytes4(keccak256("EnforcedPause()"));
+    bytes4 private constant REENTRANCY_GUARD_REENTRANT_CALL = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
     SplitRiskPoolFactory public factory;
     MockERC4626 public tokenA;
     MockERC20 public tokenB;
@@ -1447,7 +1448,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         hookToken.setCloseOnTransferFrom(true);
 
-        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        vm.expectRevert(REENTRANCY_GUARD_REENTRANT_CALL);
         creator.depositBacking(100e18);
 
         assertTrue(factory.isPoolActive(poolAddress), "reverted close should leave pool active");
@@ -1586,19 +1587,75 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
     }
 
-    function testClosePoolRevertsForUntrackedShieldedSurplus() public {
+    function testClosePoolSweepsUntrackedShieldedSurplus() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
 
+        uint256 recipientBalanceBefore = tokenA.balanceOf(user2);
         tokenA.mintShares(poolAddress, 1);
 
-        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
         factory.closePool(poolAddress);
 
-        assertTrue(factory.isPoolActive(poolAddress), "Pool with untracked shielded surplus should remain active");
-        assertFalse(SplitRiskPool(payable(poolAddress)).paused(), "Reverted close should not leave pool paused");
+        assertFalse(factory.isPoolActive(poolAddress), "Pool with untracked shielded surplus should close");
+        assertEq(tokenA.balanceOf(poolAddress), 0, "Untracked shielded surplus should leave the pool");
+        assertEq(tokenA.balanceOf(user2) - recipientBalanceBefore, 1, "Protocol recipient should receive surplus");
     }
 
-    function testDeactivateProtectorOnlyPoolRevertsForBackingBalanceDrift() public {
+    function testClosePoolSweepsUntrackedBackingSurplus() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        tokenB.mint(poolAddress, 1);
+
+        factory.closePool(poolAddress);
+
+        assertFalse(factory.isPoolActive(poolAddress), "Pool with untracked backing surplus should close");
+        assertEq(tokenB.balanceOf(poolAddress), 0, "Untracked backing surplus should leave the pool");
+        assertEq(tokenB.balanceOf(user2) - recipientBalanceBefore, 1, "Protocol recipient should receive surplus");
+    }
+
+    function testDeactivateProtectorOnlyPoolSweepsBackingSurplus() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        uint256 protectorAmount = 100e18;
+        uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
+
+        tokenB.mint(user1, protectorAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, protectorAmount);
+        pool.depositBackingAsset(address(tokenB), protectorAmount, 0);
+        vm.stopPrank();
+
+        ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
+        vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
+
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        tokenB.mint(poolAddress, 1);
+        vm.prank(governanceTimelock);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        assertFalse(factory.isPoolActive(poolAddress), "Pool with untracked backing surplus should deactivate");
+        assertFalse(pool.paused(), "Protector-only deactivation should leave exits available");
+        assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector accounting should remain unchanged");
+        (, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, protectorAmount, "Tracked backing balance should remain withdrawable");
+        assertEq(
+            tokenB.balanceOf(user2) - recipientBalanceBefore,
+            expectedBondAmount + 1,
+            "Protocol recipient should receive forfeited bond and untracked surplus"
+        );
+        assertEq(tokenB.balanceOf(poolAddress), protectorAmount, "Only protector backing should remain in the pool");
+    }
+
+    function testDeactivateProtectorOnlyPoolRevertsForBackingDeficit() public {
         address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
         SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
         uint256 protectorAmount = 100e18;
@@ -1612,17 +1669,19 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
         vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
 
-        tokenB.mint(poolAddress, 1);
+        tokenB.burn(poolAddress, 1);
         vm.prank(governanceTimelock);
-        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector,
+                address(tokenB),
+                protectorAmount,
+                protectorAmount - 1
+            )
+        );
         factory.deactivateProtectorOnlyPool(poolAddress);
 
-        tokenB.burn(poolAddress, 2);
-        vm.prank(governanceTimelock);
-        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
-        factory.deactivateProtectorOnlyPool(poolAddress);
-
-        assertTrue(factory.isPoolActive(poolAddress), "Pool with backing drift should remain active");
+        assertTrue(factory.isPoolActive(poolAddress), "Pool with backing deficit should remain active");
         assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector accounting should remain unchanged");
     }
 

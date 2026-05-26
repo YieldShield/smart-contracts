@@ -2671,6 +2671,48 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         emit EventsLib.ProtectorResidualBackingSwept(poolConfig.protocolFeeRecipient, BACKING_TOKEN, received);
     }
 
+    /// @notice Sweeps ERC20 balances that arrived outside pool accounting.
+    /// @dev Factory-only cleanup for close/deactivation flows. User principal and
+    ///      reserved fees must remain accounted; deficits still fail closed.
+    function sweepUnaccountedSurplusFromFactory()
+        external
+        nonReentrant
+        returns (uint256 shieldedSweptAmount, uint256 backingSweptAmount)
+    {
+        if (msg.sender != _poolFactoryController()) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "sweepUnaccountedSurplusFromFactory");
+        }
+        if (
+            totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0
+                || getReservedFees() != 0 || poolState.shieldedTokenBalance != 0
+                || poolState.totalBackingTokenBalance != totalProtectorTokens
+        ) {
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
+        }
+
+        address recipient = poolConfig.protocolFeeRecipient;
+        shieldedSweptAmount = _sweepUnaccountedTokenSurplus(SHIELDED_TOKEN, poolState.shieldedTokenBalance, recipient);
+        backingSweptAmount = _sweepUnaccountedTokenSurplus(BACKING_TOKEN, poolState.totalBackingTokenBalance, recipient);
+    }
+
+    function _sweepUnaccountedTokenSurplus(address token, uint256 accountedBalance, address recipient)
+        internal
+        returns (uint256 sweptAmount)
+    {
+        uint256 actualBalance = IERC20(token).balanceOf(address(this));
+        if (actualBalance < accountedBalance) {
+            revert ErrorsLib.AccountedBalanceExceedsTokenBalance(token, accountedBalance, actualBalance);
+        }
+
+        sweptAmount = actualBalance - accountedBalance;
+        if (sweptAmount == 0) {
+            return 0;
+        }
+
+        uint256 received = _transferOutAndGetReceived(token, recipient, sweptAmount);
+        emit EventsLib.PoolUnaccountedSurplusSwept(recipient, token, sweptAmount, received);
+    }
+
     /// @notice Unpauses the pool, resuming normal operations
     /// @dev Only callable by governance
     function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernance {
