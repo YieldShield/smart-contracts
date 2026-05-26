@@ -2090,6 +2090,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.ClaimRewardsCooldownNotMet(lastClaim + ConstantsLib.CLAIM_REWARDS_COOLDOWN);
         }
         lastClaimRewardsTime[tokenId] = block.timestamp;
+        uint256 positionAmountBeforeFees = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId).amount;
 
         // Calculate and accumulate fees (this updates the position internally)
         (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
@@ -2098,6 +2099,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Update totalShieldedTokens to reflect fees deducted from position
         if (totalFees > 0) {
+            if (totalFees >= positionAmountBeforeFees) {
+                revert ErrorsLib.FeeAccrualWouldConsumePosition(tokenId, positionAmountBeforeFees, totalFees);
+            }
             totalShieldedTokens -= totalFees;
         }
 

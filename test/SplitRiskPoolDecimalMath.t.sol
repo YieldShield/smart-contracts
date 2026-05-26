@@ -185,6 +185,48 @@ contract SplitRiskPoolDecimalMathTest is Test, TestTimelockHelper {
         assertEq(pool.accumulatedProtocolFee(), 500_000, "protocol fee should be denominated in 6-dec shielded units");
     }
 
+    function test_ClaimRewards_RevertsRatherThanZeroingDustPosition() public {
+        MockUSDC shieldedBaseToken = new MockUSDC();
+        MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "USDC Vault", "vUSDC");
+        MockERC20 backingToken = new MockERC20("Backing Token", "BACK");
+
+        (SplitRiskPool pool, ShieldReceiptNFT shieldNFT, MockOracle oracle) =
+            _deployPool(address(shieldedToken), "vUSDC", address(backingToken), "BACK");
+
+        oracle.setPrice(address(shieldedToken), 1e8);
+        oracle.setPrice(address(backingToken), 1e8);
+        _setShieldedMinDepositAmount(pool, 1);
+
+        backingToken.mint(PROTECTOR, 1e18);
+        shieldedBaseToken.mint(SHIELDED_USER, 1);
+
+        vm.startPrank(PROTECTOR);
+        backingToken.approve(address(pool), type(uint256).max);
+        pool.depositBackingAsset(address(backingToken), 1e18, 0);
+        vm.stopPrank();
+
+        vm.startPrank(SHIELDED_USER);
+        shieldedBaseToken.approve(address(shieldedToken), type(uint256).max);
+        shieldedToken.deposit(1, SHIELDED_USER);
+        shieldedToken.approve(address(pool), type(uint256).max);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1, 0);
+        vm.stopPrank();
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+
+        vm.prank(SHIELDED_USER);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.FeeAccrualWouldConsumePosition.selector, tokenId, 1, 1));
+        pool.claimRewards(tokenId);
+
+        IShieldReceiptNFT.ShieldPosition memory position = shieldNFT.getPosition(tokenId);
+        assertEq(position.amount, 1, "dust position should remain live");
+        assertEq(pool.totalShieldedTokens(), 1, "tracked shielded total should roll back");
+        assertEq(pool.lastClaimRewardsTime(tokenId), 0, "claim cooldown should not be poisoned");
+        assertEq(pool.accumulatedCommissions(), 0, "commission accounting should roll back");
+        assertEq(pool.accumulatedPoolFee(), 0, "pool fee accounting should roll back");
+        assertEq(pool.accumulatedProtocolFee(), 0, "protocol fee accounting should roll back");
+    }
+
     function test_GetAvailableForWithdrawal_FailsClosedWhenSixDecimalBackingPriceUnavailable() public {
         MockERC20 shieldedBaseToken = new MockERC20("Shielded Base Token", "SBASE");
         MockERC4626 shieldedToken = new MockERC4626(IERC20(address(shieldedBaseToken)), "Shielded Token", "SHIELD");

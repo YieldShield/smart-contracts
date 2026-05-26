@@ -103,6 +103,8 @@ library ErrorsLib {
     error EtherTransferNotAllowed();
     /// @notice Thrown when a forfeiture or reward cannot be fully reserved
     error RewardAccumulationIncomplete(uint256 expected, uint256 accumulated, uint256 redirected);
+    /// @notice Thrown when reward claiming would reduce a live shielded position to zero through fees only
+    error FeeAccrualWouldConsumePosition(uint256 tokenId, uint256 positionAmount, uint256 feeAmount);
     /// @notice Thrown when old protector backing must be claimed before a fresh epoch can launch
     error ResidualProtectorBackingPending(uint256 amount);
     /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token
