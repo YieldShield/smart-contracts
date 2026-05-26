@@ -1259,10 +1259,14 @@ contract SplitRiskPoolFactory is
         }
 
         (uint256 shieldedTokenPoolBalance, uint256 totalBackingTokenPoolBalance) = targetPool.getPoolBalances();
+        ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
+        uint256 actualShieldedTokenBalance = IERC20(info.shieldedToken).balanceOf(pool);
+        uint256 actualBackingTokenBalance = IERC20(info.backingToken).balanceOf(pool);
         if (
             targetPool.totalShieldedTokens() != 0 || targetPool.totalProtectorTokens() != 0
                 || targetPool.getReservedFees() != 0 || shieldedTokenPoolBalance != 0
-                || totalBackingTokenPoolBalance != 0
+                || totalBackingTokenPoolBalance != 0 || actualShieldedTokenBalance != 0
+                || actualBackingTokenBalance != 0
         ) {
             revert ErrorsLib.PoolNotEmptyForDeactivation();
         }
@@ -1271,10 +1275,14 @@ contract SplitRiskPoolFactory is
     function _requireProtectorOnlyPool(address pool) internal view {
         SplitRiskPool targetPool = SplitRiskPool(payable(pool));
         (uint256 shieldedTokenPoolBalance, uint256 totalBackingTokenPoolBalance) = targetPool.getPoolBalances();
+        ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
+        uint256 actualShieldedTokenBalance = IERC20(info.shieldedToken).balanceOf(pool);
+        uint256 actualBackingTokenBalance = IERC20(info.backingToken).balanceOf(pool);
         if (
             targetPool.totalShieldedTokens() != 0 || targetPool.totalValueAtDeposit() != 0
                 || targetPool.totalShieldCollateralAmount() != 0 || targetPool.getReservedFees() != 0
                 || shieldedTokenPoolBalance != 0 || totalBackingTokenPoolBalance != targetPool.totalProtectorTokens()
+                || actualShieldedTokenBalance != 0 || actualBackingTokenBalance != totalBackingTokenPoolBalance
         ) {
             revert ErrorsLib.PoolNotEmptyForDeactivation();
         }

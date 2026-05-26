@@ -654,7 +654,11 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         RevertingUnsafeFeed badFeed = new RevertingUnsafeFeed();
 
         vm.prank(governanceTimelock);
-        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CircuitBreakerNotSupported.selector, address(tokenB), address(badFeed)
+            )
+        );
         factory.setCompositeOracleTokenFeed(address(tokenB), address(badFeed));
 
         assertEq(compositeOracle.getTokenOracleFeed(address(tokenB)), address(oracle), "old feed should remain active");
@@ -1393,7 +1397,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         hookToken.setCloseOnTransferFrom(true);
 
-        vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
         creator.depositBacking(100e18);
 
         assertTrue(factory.isPoolActive(poolAddress), "reverted close should leave pool active");
@@ -1530,6 +1534,46 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
         assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testClosePoolRevertsForUntrackedShieldedSurplus() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+
+        tokenA.mintShares(poolAddress, 1);
+
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.closePool(poolAddress);
+
+        assertTrue(factory.isPoolActive(poolAddress), "Pool with untracked shielded surplus should remain active");
+        assertFalse(SplitRiskPool(payable(poolAddress)).paused(), "Reverted close should not leave pool paused");
+    }
+
+    function testDeactivateProtectorOnlyPoolRevertsForBackingBalanceDrift() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        uint256 protectorAmount = 100e18;
+
+        tokenB.mint(user1, protectorAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, protectorAmount);
+        pool.depositBackingAsset(address(tokenB), protectorAmount, 0);
+        vm.stopPrank();
+
+        ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
+        vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
+
+        tokenB.mint(poolAddress, 1);
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        tokenB.burn(poolAddress, 2);
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        assertTrue(factory.isPoolActive(poolAddress), "Pool with backing drift should remain active");
+        assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector accounting should remain unchanged");
     }
 
     function testDeactivateProtectorOnlyPoolRevertsWhenShieldedLiabilitiesRemain() public {
