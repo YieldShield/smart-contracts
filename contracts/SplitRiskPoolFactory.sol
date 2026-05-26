@@ -35,6 +35,7 @@ interface ICompositeOracleAdmin {
     function removeTokenOracleFeed(address token) external;
     function setAuthorizedCaller(address caller, bool authorized) external;
     function clearAuthorizedCallers() external;
+    function authorizedCallerCount() external view returns (uint256);
     function setDeviationThreshold(uint256 newThresholdBps) external;
     function setChallengeDuration(uint256 newDurationSec) external;
     function scheduleForceResetToPrimary(address token) external;
@@ -83,6 +84,7 @@ contract SplitRiskPoolFactory is
     using SafeERC20 for IERC20;
 
     error CompositeOracleAuthorizationClosed();
+    error CompositeOracleAuthorizedCallersPresent(address oracle, uint256 count);
 
     // Governance-controlled protocol parameters
     address public splitRiskPoolImplementation;
@@ -283,6 +285,10 @@ contract SplitRiskPoolFactory is
         _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && _bootstrapOwnerActionsAllowed());
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _requireOwnedByFactory(newOracle);
+        if (compositeOracle != address(0) && compositeOracle != newOracle) {
+            _clearCompositeOracleAuthorizedCallersForOracle(compositeOracle);
+        }
+        _clearCompositeOracleAuthorizedCallersForOracle(newOracle);
 
         uint256 tokenCount = whitelistedTokens.length;
         for (uint256 i = 0; i < tokenCount;) {
@@ -1375,7 +1381,11 @@ contract SplitRiskPoolFactory is
             return;
         }
 
-        ICompositeOracleAdmin oracleAdmin = ICompositeOracleAdmin(compositeOracle);
+        _clearCompositeOracleAuthorizedCallersForOracle(compositeOracle);
+    }
+
+    function _clearCompositeOracleAuthorizedCallersForOracle(address oracle) internal {
+        ICompositeOracleAdmin oracleAdmin = ICompositeOracleAdmin(oracle);
         bool clearedAll;
         try oracleAdmin.clearAuthorizedCallers() {
             clearedAll = true;
@@ -1393,6 +1403,11 @@ contract SplitRiskPoolFactory is
             unchecked {
                 ++i;
             }
+        }
+
+        uint256 remainingCallerCount = oracleAdmin.authorizedCallerCount();
+        if (remainingCallerCount != 0) {
+            revert CompositeOracleAuthorizedCallersPresent(oracle, remainingCallerCount);
         }
     }
 

@@ -613,6 +613,21 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(poolOracle, address(newOracle), "Pool should use the new default oracle");
     }
 
+    function testSetCompositeOracleClearsPreAuthorizedCallers() public {
+        CompositeOracle newOracle = new CompositeOracle();
+        newOracle.setAuthorizedCaller(user1, true);
+        assertEq(newOracle.authorizedCallerCount(), 1, "precondition: stale caller present");
+        newOracle.transferOwnership(address(factory));
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracle(address(newOracle));
+
+        assertEq(newOracle.authorizedCallerCount(), 0, "factory should clear stale callers");
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.UnauthorizedCaller.selector, user1));
+        newOracle.setTokenOracleFeed(address(tokenA), address(oracle));
+    }
+
     function testSetCompositeOracleReplaysStrictRequirement() public {
         vm.prank(governanceTimelock);
         factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
