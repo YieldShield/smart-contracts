@@ -1566,6 +1566,50 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         emit EventsLib.CommissionClaimed(recipient, tokenId, received);
     }
 
+    /// @dev Clears claimable commission without transferring shielded tokens. The forfeited
+    ///      amount becomes unaccounted surplus and can only be swept once the pool has no
+    ///      tracked liabilities, letting principal exits continue when commission payout is
+    ///      impossible for a shielded token or recipient.
+    function _forfeitCommission(uint256 tokenId, uint256 positionShares_) internal returns (uint256 claimable) {
+        _tryDistributePendingProtectorRewardDust();
+
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
+        bool tracksExpiredEpoch =
+            protectorEpochRemainingShares[positionEpoch] != 0 || protectorEpochRemainingReserve[positionEpoch] != 0;
+        claimable = _calculateClaimableCommission(tokenId, positionShares_);
+        if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
+        if (isExpiredEpoch && tracksExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
+            claimable = protectorEpochRemainingReserve[positionEpoch];
+        }
+        if (claimable == 0) {
+            if (isExpiredEpoch && tracksExpiredEpoch) {
+                _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
+            }
+            return 0;
+        }
+
+        _requireAccountingBalanceCovered(SHIELDED_TOKEN, poolState.shieldedTokenBalance);
+
+        commissionsClaimed[tokenId] += claimable;
+        accumulatedCommissions -= claimable;
+        if (isExpiredEpoch && tracksExpiredEpoch) {
+            protectorEpochRemainingReserve[positionEpoch] = claimable >= protectorEpochRemainingReserve[positionEpoch]
+                ? 0
+                : protectorEpochRemainingReserve[positionEpoch] - claimable;
+            historicalCommissionReserve =
+                claimable >= historicalCommissionReserve ? 0 : historicalCommissionReserve - claimable;
+        } else {
+            currentEpochCommissionReserve =
+                claimable >= currentEpochCommissionReserve ? 0 : currentEpochCommissionReserve - claimable;
+        }
+
+        poolState.shieldedTokenBalance -= claimable;
+        if (isExpiredEpoch && tracksExpiredEpoch) {
+            _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
+        }
+    }
+
     /**
      * @notice Claims accumulated commission for a protector NFT position
      * @dev Uses MasterChef pattern to prevent late-joiner exploit. Only the current
@@ -1597,6 +1641,30 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (_claimCommissionTo(msg.sender, tokenId, positionShares_) == 0) {
             emit EventsLib.NoCommissionToClaim(msg.sender, tokenId);
         }
+    }
+
+    /**
+     * @notice Forfeit claimable commission for a protector NFT position
+     * @dev The NFT owner may voluntarily forfeit commission if shielded-token payouts
+     *      are impossible. Governance may also clear it to unblock pool retirement.
+     *      Principal accounting is left intact.
+     * @param tokenId The protector NFT token ID
+     */
+    function forfeitCommission(uint256 tokenId) external nonReentrant {
+        address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
+        if (msg.sender != positionOwner && msg.sender != governanceTimelock()) {
+            revert ErrorsLib.NotOwner();
+        }
+        _requirePoolAccountingBalancesCovered();
+
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
+        uint256 forfeited = _forfeitCommission(tokenId, positionShares_);
+        if (forfeited == 0) {
+            emit EventsLib.NoCommissionToClaim(positionOwner, tokenId);
+            return;
+        }
+
+        emit EventsLib.CommissionForfeited(msg.sender, positionOwner, tokenId, forfeited);
     }
 
     /**

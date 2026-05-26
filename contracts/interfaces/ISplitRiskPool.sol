@@ -96,6 +96,7 @@ interface ISplitRiskPool {
     // Reward Functions
     function claimRewards(uint256 tokenId) external;
     function claimCommission(uint256 tokenId) external;
+    function forfeitCommission(uint256 tokenId) external;
     function settleExpiredProtectorPosition(uint256 tokenId) external;
 
     // View Functions

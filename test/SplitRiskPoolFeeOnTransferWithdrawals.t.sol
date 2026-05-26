@@ -182,10 +182,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         vm.prank(shieldedUser);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector,
-                address(shieldedToken),
-                100e18,
-                100e18 - 1
+                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector, address(shieldedToken), 100e18, 100e18 - 1
             )
         );
         pool.claimRewards(tokenId);
@@ -198,10 +195,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         backingToken.approve(address(pool), 1e18);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector,
-                address(backingToken),
-                500e18,
-                500e18 - 1
+                ErrorsLib.AccountedBalanceExceedsTokenBalance.selector, address(backingToken), 500e18, 500e18 - 1
             )
         );
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
@@ -491,6 +485,55 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         pool.claimCommission(0);
 
         assertGt(pool.accumulatedCommissions(), 0, "commission remains reserved when exact payout is impossible");
+    }
+
+    function test_forfeitCommission_ClearsUnpayableCommissionAndAllowsProtectorExit() public {
+        uint256 shieldTokenId = _depositShielded(100e18);
+        oracle.setPrice(address(shieldedToken), 2e8);
+
+        vm.prank(shieldedUser);
+        pool.claimRewards(shieldTokenId);
+
+        uint256 claimable = pool.getClaimableCommission(0);
+        assertGt(claimable, 0, "precondition: protector should have commission");
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
+
+        (uint256 shieldedPoolBalanceBefore,) = pool.getPoolBalances();
+        shieldedToken.setTransferFee(500);
+
+        vm.prank(protector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.claimCommission(0);
+
+        vm.prank(protector);
+        vm.expectEmit(true, true, true, true);
+        emit EventsLib.CommissionForfeited(protector, protector, 0, claimable);
+        pool.forfeitCommission(0);
+
+        assertEq(pool.getClaimableCommission(0), 0, "forfeit should clear position commission");
+        assertEq(pool.accumulatedCommissions(), 0, "forfeit should clear commission reserve");
+        (uint256 shieldedPoolBalanceAfter,) = pool.getPoolBalances();
+        assertEq(
+            shieldedPoolBalanceAfter,
+            shieldedPoolBalanceBefore - claimable,
+            "forfeited commission should become unaccounted surplus"
+        );
+
+        _matureProtectorUnlock(0);
+        uint256 available = pool.getAvailableForWithdrawal(0);
+        assertGt(available, 0, "precondition: protector should have withdrawable principal");
+
+        vm.prank(protector);
+        pool.protectorWithdraw(0, available, address(backingToken), 0);
+
+        assertEq(protectorNFT.balanceOf(protector), 0, "principal exit should burn protector NFT");
     }
 
     function test_crossAssetWithdraw_RevertsAfterShieldedTransferFeeObserved() public {
