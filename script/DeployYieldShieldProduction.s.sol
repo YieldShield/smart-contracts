@@ -49,6 +49,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
     bytes32 private constant FIELD_PROTOCOL_FEE_RECIPIENT = "factory.feeRecipient";
+    bytes32 private constant FIELD_FACTORY_GOVERNANCE_TIMELOCK = "factory.governanceTimelock";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -56,7 +57,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolderCodehash(address holder, bytes32 actualCodehash, bytes32 expectedCodehash);
     error InvalidProductionBootstrapHolderSingleton(address holder, address actualSingleton, address expectedSingleton);
     error InvalidProductionBootstrapHolderThreshold(address holder, uint256 actualThreshold, uint256 expectedThreshold);
-    error InvalidProductionBootstrapHolderOwnersHash(address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash);
+    error InvalidProductionBootstrapHolderOwnersHash(
+        address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash
+    );
     error InvalidProductionPythContract(address pythAddress);
     error ProductionPythUpdaterNotConfirmed(uint256 chainId, uint256 maxPriceAge);
     error InvalidProductionProtocolContract(bytes32 name, address contractAddress);
@@ -277,6 +280,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionContract(NAME_TIMELOCK, timelockAddr);
 
         SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
+
         address configuredCompositeOracle = factory.compositeOracle();
         if (configuredCompositeOracle != address(0)) {
             _requireProductionAddress(FIELD_COMPOSITE_ORACLE, configuredCompositeOracle, compositeOracleAddr);
@@ -351,6 +356,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
         SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
         _requireProductionOwner(NAME_FACTORY, factory.owner(), timelockAddr);
+        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
         if (factory.bootstrapModeEnabled()) {
             revert ProductionProtocolBootstrapModeOpen(factoryAddr);
         }
@@ -360,7 +366,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
         _requireProductionOwner(NAME_COMPOSITE_ORACLE, IProductionOwnable(compositeOracleAddr).owner(), factoryAddr);
         _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(pythOracleAddr).owner(), factoryAddr);
-        _requireProductionOwner(NAME_ERC4626_ORACLE_FEED, IProductionOwnable(erc4626OracleFeedAddr).owner(), factoryAddr);
+        _requireProductionOwner(
+            NAME_ERC4626_ORACLE_FEED, IProductionOwnable(erc4626OracleFeedAddr).owner(), factoryAddr
+        );
         _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), compositeOracleAddr);
         _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), timelockAddr);
         _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), pythOracleAddr);

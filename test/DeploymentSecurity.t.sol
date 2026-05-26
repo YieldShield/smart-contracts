@@ -396,7 +396,11 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         harness.validateProductionBootstrapHolderPinned(
-            address(contractHolder), address(contractHolder).codehash, expectedSingleton, 3, keccak256(abi.encode(owners))
+            address(contractHolder),
+            address(contractHolder).codehash,
+            expectedSingleton,
+            3,
+            keccak256(abi.encode(owners))
         );
     }
 
@@ -664,6 +668,48 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(pythOracle),
             address(erc4626OracleFeed),
             address(timelock)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {
+        (, TimelockController expectedTimelock,) = _deployGovernance();
+        (, TimelockController wrongTimelock,) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory =
+            _deployFactory(address(harness), address(wrongTimelock), address(poolImplementation));
+
+        compositeOracle.transferOwnership(address(factory));
+        pythOracle.transferOwnership(address(factory));
+        erc4626OracleFeed.transferOwnership(address(factory));
+
+        vm.startPrank(address(harness));
+        factory.setCompositeOracle(address(compositeOracle));
+        factory.setDefaultProtocolFeeRecipient(address(expectedTimelock));
+        factory.setManagedPythOracle(address(pythOracle));
+        factory.setManagedERC4626OracleFeed(address(erc4626OracleFeed));
+        factory.finalizeBootstrap();
+        factory.transferOwnership(address(expectedTimelock));
+        vm.stopPrank();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAddressMismatch.selector,
+                bytes32("factory.governanceTimelock"),
+                address(wrongTimelock),
+                address(expectedTimelock)
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            address(compositeOracle),
+            address(pythOracle),
+            address(erc4626OracleFeed),
+            address(expectedTimelock)
         );
     }
 
