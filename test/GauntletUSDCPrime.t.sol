@@ -272,7 +272,7 @@ contract GauntletUSDCPrimeTest is Test {
         assertFalse(compositeOracle.isBackupActiveForToken(address(gtusdc)));
     }
 
-    function test_CompositeOracle_ActiveBackupFailsClosedWhilePrimaryDisagrees() public {
+    function test_CompositeOracle_ActiveBackupServesWhilePrimaryDisagrees() public {
         // Create deviation
         vm.warp(block.timestamp + 365 days);
         gtusdc.accrueYield();
@@ -288,9 +288,7 @@ contract GauntletUSDCPrimeTest is Test {
         compositeOracle.finalizeChallenge(address(gtusdc));
 
         assertTrue(compositeOracle.isBackupActiveForToken(address(gtusdc)));
-
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(gtusdc)));
-        compositeOracle.getPrice(address(gtusdc));
+        assertEq(compositeOracle.getPrice(address(gtusdc)), mockOracle.getPrice(address(gtusdc)));
     }
 
     // ============ Edge Case Tests ============

@@ -125,10 +125,9 @@ contract OracleForkTest is ForkTestHelper {
         compositeOracle.finalizeChallenge(testToken);
         assertTrue(compositeOracle.isBackupActiveForToken(testToken), "Backup should be active");
 
-        // The backup is active, but safe pricing stays closed while the recovered primary
-        // remains readable and materially disagrees.
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, testToken));
-        compositeOracle.getPrice(testToken);
+        // The backup is active and serves protected pricing even while the disabled
+        // primary remains readable and materially disagrees.
+        assertEq(compositeOracle.getPrice(testToken), 108e6);
     }
 
     function testCompositeOracleRevertToPrimary() public {
