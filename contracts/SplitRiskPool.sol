@@ -980,14 +980,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         TransferIntegrityProbe probe = new TransferIntegrityProbe(address(this));
         uint256 beforeBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
+        uint256 probeBalanceBefore = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
         SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), address(probe), nominalAmount);
-        uint256 probeReceived = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
+        uint256 probeBalanceAfter = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
+        uint256 probeReceived = probeBalanceAfter - probeBalanceBefore;
         if (probeReceived != nominalAmount) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
         }
         probe.returnToken(SHIELDED_TOKEN, probeReceived);
         uint256 afterBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
-        if (afterBal != beforeBal) {
+        uint256 probeBalanceFinal = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
+        if (afterBal != beforeBal || probeBalanceFinal != probeBalanceBefore) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
         }
     }

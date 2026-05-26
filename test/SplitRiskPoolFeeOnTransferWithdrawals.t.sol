@@ -523,6 +523,27 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         pool.shieldedWithdraw(tokenId, address(backingToken), 0);
     }
 
+    function test_crossAssetWithdraw_IgnoresPrefundedFutureProbeDust() public {
+        uint256 tokenId = _depositShielded(100e18);
+
+        address futureProbe = vm.computeCreateAddress(address(pool), vm.getNonce(address(pool)));
+        shieldedToken.mint(address(this), 1);
+        shieldedToken.transfer(futureProbe, 1);
+        assertEq(shieldedToken.balanceOf(futureProbe), 1, "attacker dust should pre-fund future probe");
+
+        vm.warp(block.timestamp + 7 days + 1);
+        uint256 backingBalanceBefore = backingToken.balanceOf(shieldedUser);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
+
+        assertEq(
+            backingToken.balanceOf(shieldedUser) - backingBalanceBefore,
+            100e18,
+            "pre-funded probe dust must not block backing withdrawal"
+        );
+        assertEq(shieldedToken.balanceOf(futureProbe), 1, "unrelated probe dust should remain isolated");
+    }
+
     function test_crossAssetWithdraw_RevertsIfShieldedTokenTaxesThirdPartyButExemptsSelfTransfers() public {
         SelfTransferExemptFeeMockERC20 selfExemptShielded =
             new SelfTransferExemptFeeMockERC20("Self Exempt Shielded", "SES");
