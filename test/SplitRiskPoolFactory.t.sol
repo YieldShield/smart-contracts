@@ -123,6 +123,30 @@ contract CloseOnTransferToken is ERC20, Ownable {
     }
 }
 
+contract SenderFeeToken is ERC20, Ownable {
+    uint256 public immutable senderFeeBps;
+
+    constructor(uint256 senderFeeBps_) ERC20("Sender Fee Token", "SFEE") Ownable(msg.sender) {
+        senderFeeBps = senderFeeBps_;
+        _mint(msg.sender, 1_000_000e18);
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 amount) internal override {
+        super._update(from, to, amount);
+        if (from == address(0) || to == address(0) || senderFeeBps == 0) {
+            return;
+        }
+        uint256 fee = (amount * senderFeeBps) / 10_000;
+        if (fee != 0) {
+            super._update(from, address(0), fee);
+        }
+    }
+}
+
 contract RevertingUnsafeFeed {
     error UnsafeUnavailable();
 
@@ -329,6 +353,22 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         vm.prank(governanceTimelock);
         factory.setCompositeOracleTokenFeed(address(tokenA), address(erc4626Feed));
+    }
+
+    function _createPoolWithSenderFeeBond()
+        internal
+        returns (SenderFeeToken feeToken, address poolAddress, uint256 bondAmount, uint256 extraDebit)
+    {
+        feeToken = new SenderFeeToken(1_000);
+        oracle.setPrice(address(feeToken), 1e8);
+        compositeOracle.setTokenOracleFeedWithType(address(feeToken), address(oracle), "mock");
+        factory.addTokenInitial(address(feeToken), "Sender Fee Token", "SFEE", address(oracle), address(0), 10_000);
+
+        bondAmount = _defaultCreationBondAmount(address(feeToken));
+        extraDebit = (bondAmount * feeToken.senderFeeBps()) / 10_000;
+        feeToken.approve(address(factory), bondAmount);
+        poolAddress =
+            factory.createPool(address(tokenA), "TKNA", address(feeToken), "SFEE", 500, 200, 15_000, bondAmount);
     }
 
     function _historicalPoolCount() internal view returns (uint256) {
@@ -1266,6 +1306,51 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
         assertEq(_historicalPoolCount(), 2, "Historical registry should include both pools");
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testClosePoolRevertsWhenCreationBondTransferDebitsExtra() public {
+        (SenderFeeToken feeToken, address poolAddress, uint256 bondAmount, uint256 extraDebit) =
+            _createPoolWithSenderFeeBond();
+        feeToken.mint(address(factory), extraDebit);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.UnexpectedOutboundTransferAmount.selector,
+                address(feeToken),
+                bondAmount,
+                bondAmount + extraDebit
+            )
+        );
+        factory.closePool(poolAddress);
+
+        (address creator,, uint256 amount) = factory.creationBonds(poolAddress);
+        assertEq(creator, address(this), "bond should remain recorded after reverted return");
+        assertEq(amount, bondAmount, "bond amount should remain recorded after reverted return");
+        assertTrue(factory.isPoolActive(poolAddress), "pool should remain active after reverted return");
+    }
+
+    function testDeactivatePoolRevertsWhenForfeitedCreationBondDebitsExtra() public {
+        (SenderFeeToken feeToken, address poolAddress, uint256 bondAmount, uint256 extraDebit) =
+            _createPoolWithSenderFeeBond();
+        feeToken.mint(address(factory), extraDebit);
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.UnexpectedOutboundTransferAmount.selector,
+                address(feeToken),
+                bondAmount,
+                bondAmount + extraDebit
+            )
+        );
+        factory.deactivatePool(poolAddress);
+
+        (address creator,, uint256 amount) = factory.creationBonds(poolAddress);
+        assertEq(creator, address(this), "bond should remain recorded after reverted forfeit");
+        assertEq(amount, bondAmount, "bond amount should remain recorded after reverted forfeit");
+        assertTrue(factory.isPoolActive(poolAddress), "pool should remain active after reverted forfeit");
     }
 
     function testClosePoolRevertsWhenCallerIsNotCreator() public {

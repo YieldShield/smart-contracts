@@ -1289,7 +1289,7 @@ contract SplitRiskPoolFactory is
         delete creationBonds[pool];
         uint256 payoutAmount = _availableBondPayout(pool, bond.token, bond.amount);
         if (payoutAmount != 0) {
-            IERC20(bond.token).safeTransfer(recipient, payoutAmount);
+            _transferCreationBondPayout(bond.token, recipient, payoutAmount);
         }
         emit EventsLib.CreationBondReturned(pool, recipient, bond.token, payoutAmount);
     }
@@ -1303,9 +1303,22 @@ contract SplitRiskPoolFactory is
         delete creationBonds[pool];
         uint256 payoutAmount = _availableBondPayout(pool, bond.token, bond.amount);
         if (payoutAmount != 0) {
-            IERC20(bond.token).safeTransfer(defaultProtocolFeeRecipient, payoutAmount);
+            _transferCreationBondPayout(bond.token, defaultProtocolFeeRecipient, payoutAmount);
         }
         emit EventsLib.CreationBondForfeited(pool, defaultProtocolFeeRecipient, bond.token, payoutAmount);
+    }
+
+    function _transferCreationBondPayout(address token, address recipient, uint256 payoutAmount) internal {
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransfer(recipient, payoutAmount);
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        if (balanceAfter > balanceBefore) {
+            revert ErrorsLib.UnexpectedOutboundTransferAmount(token, payoutAmount, 0);
+        }
+        uint256 debited = balanceBefore - balanceAfter;
+        if (debited != payoutAmount) {
+            revert ErrorsLib.UnexpectedOutboundTransferAmount(token, payoutAmount, debited);
+        }
     }
 
     function _availableBondPayout(address pool, address token, uint256 recordedAmount) internal returns (uint256) {
