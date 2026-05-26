@@ -14,6 +14,7 @@ import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { IERC1822Proxiable } from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
 
 interface IProductionOwnable {
     function owner() external view returns (address);
@@ -44,16 +45,23 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
     bytes4 private constant MASTER_COPY_SELECTOR = bytes4(keccak256("masterCopy()"));
     bytes4 private constant PYTH_VALID_TIME_PERIOD_SELECTOR = bytes4(keccak256("getValidTimePeriod()"));
+    bytes32 private constant ERC1967_IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     bytes32 private constant NAME_FACTORY = "SplitRiskPoolFactory";
+    bytes32 private constant NAME_FACTORY_IMPLEMENTATION = "FactoryImplementation";
+    bytes32 private constant NAME_POOL_IMPLEMENTATION = "PoolImplementation";
     bytes32 private constant NAME_COMPOSITE_ORACLE = "CompositeOracle";
     bytes32 private constant NAME_PYTH_ORACLE = "PythOracle";
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
+    bytes32 private constant NAME_GOVERNOR = "YSGovernor";
     bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
     bytes32 private constant FIELD_PROTOCOL_FEE_RECIPIENT = "factory.feeRecipient";
     bytes32 private constant FIELD_FACTORY_GOVERNANCE_TIMELOCK = "factory.governanceTimelock";
+    bytes32 private constant FIELD_FACTORY_IMPLEMENTATION = "factory.proxyImplementation";
+    bytes32 private constant FIELD_POOL_IMPLEMENTATION = "factory.poolImplementation";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -72,13 +80,20 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionProtocolAuthorizedCallersPresent(address compositeOracle, uint256 count);
     error ProductionProtocolBootstrapModeOpen(address factory);
     error ProductionProtocolLaunchAssetsPresent(address factory);
+    error ProductionProtocolCodehashMismatch(bytes32 name, address contractAddress, bytes32 actual, bytes32 expected);
+    error ProductionProtocolUUPSImplementationInvalid(bytes32 name, address implementation, bytes32 actualSlot);
+    error ProductionProtocolGovernorTimelockMismatch(
+        address governor, address actualTimelock, address expectedTimelock
+    );
+    error ProductionProtocolTimelockRoleCountMismatch(bytes32 role, uint256 actualCount, uint256 expectedCount);
+    error ProductionProtocolTimelockRoleMismatch(bytes32 role, address actualMember, address expectedMember);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
 
         (address ysTokenAddr, address timelockAddr, address governorAddr, address bootstrapHolder) = deployGovernance();
         (address factoryAddr, address compositeOracleAddr, address pythOracleAddr, address erc4626OracleFeedAddr) =
-            deployProtocol(timelockAddr);
+            deployProtocol(timelockAddr, governorAddr);
 
         logDeploymentSummary(
             ysTokenAddr,
@@ -94,31 +109,54 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function finalizeProductionProtocolBootstrap(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
-        address timelockAddr
+        address timelockAddr,
+        address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
         _finalizeProductionProtocolBootstrap(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr, deployer
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr,
+            deployer
         );
 
         deployments.push(Deployment("PythOracle", pythOracleAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
         deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
+        deployments.push(Deployment("SplitRiskPoolFactoryImplementation", factoryImplementationAddr));
+        deployments.push(Deployment("SplitRiskPoolImplementation", poolImplementationAddr));
         deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
     }
 
     function validateProductionProtocolFinalized(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
-        address timelockAddr
+        address timelockAddr,
+        address governorAddr
     ) external view {
         _validateProductionProtocolFinalized(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr
         );
     }
 
@@ -180,7 +218,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         deployments.push(Deployment("YSGovernor", governorAddr));
     }
 
-    function deployProtocol(address timelockAddr)
+    function deployProtocol(address timelockAddr, address governorAddr)
         internal
         returns (
             address factoryAddr,
@@ -227,7 +265,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             "Factory minimum creation bond not set correctly"
         );
         _finalizeProductionProtocolBootstrap(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr, deployer
+            factoryAddr,
+            address(factoryImplementation),
+            address(poolImplementation),
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr,
+            deployer
         );
 
         deployments.push(Deployment("PythOracle", pythOracleAddr));
@@ -272,19 +318,33 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _finalizeProductionProtocolBootstrap(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
+        address governorAddr,
         address bootstrapAdmin
     ) internal {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
+        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
         _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
         _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
         _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
         _requireProductionContract(NAME_TIMELOCK, timelockAddr);
+        _requireProductionContract(NAME_GOVERNOR, governorAddr);
+        _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
 
         SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        _requireProductionAddress(
+            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(factoryAddr), factoryImplementationAddr
+        );
+        _requireProductionAddress(
+            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), poolImplementationAddr
+        );
+        _validateProductionGovernanceController(timelockAddr, governorAddr);
         _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
 
         address configuredCompositeOracle = factory.compositeOracle();
@@ -342,24 +402,45 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
 
         _validateProductionProtocolFinalized(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr
         );
     }
 
     function _validateProductionProtocolFinalized(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
-        address timelockAddr
+        address timelockAddr,
+        address governorAddr
     ) internal view {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
+        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
         _requireProductionContract(NAME_COMPOSITE_ORACLE, compositeOracleAddr);
         _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
         _requireProductionContract(NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr);
         _requireProductionContract(NAME_TIMELOCK, timelockAddr);
+        _requireProductionContract(NAME_GOVERNOR, governorAddr);
+        _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
 
         SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        _requireProductionAddress(
+            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(factoryAddr), factoryImplementationAddr
+        );
+        _requireProductionAddress(
+            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), poolImplementationAddr
+        );
+        _validateProductionGovernanceController(timelockAddr, governorAddr);
         _requireProductionOwner(NAME_FACTORY, factory.owner(), timelockAddr);
         _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
         if (factory.bootstrapModeEnabled()) {
@@ -404,6 +485,58 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     function _requireProductionContract(bytes32 name, address contractAddress) internal view {
         if (contractAddress == address(0) || contractAddress.code.length == 0) {
             revert InvalidProductionProtocolContract(name, contractAddress);
+        }
+    }
+
+    function _requireProductionImplementation(bytes32 name, address implementation) internal view {
+        _requireProductionContract(name, implementation);
+        try IERC1822Proxiable(implementation).proxiableUUID() returns (bytes32 slot) {
+            if (slot != ERC1967_IMPLEMENTATION_SLOT) {
+                revert ProductionProtocolUUPSImplementationInvalid(name, implementation, slot);
+            }
+        } catch {
+            revert ProductionProtocolUUPSImplementationInvalid(name, implementation, bytes32(0));
+        }
+    }
+
+    function _requireProductionCodehash(bytes32 name, address contractAddress, bytes memory expectedRuntimeCode)
+        internal
+        view
+    {
+        bytes32 expectedCodehash = keccak256(expectedRuntimeCode);
+        if (contractAddress.codehash != expectedCodehash) {
+            revert ProductionProtocolCodehashMismatch(name, contractAddress, contractAddress.codehash, expectedCodehash);
+        }
+    }
+
+    function _proxyImplementation(address proxy) internal view returns (address implementation) {
+        implementation = address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT))));
+    }
+
+    function _validateProductionGovernanceController(address timelockAddr, address governorAddr) internal view {
+        address governorTimelock = YSGovernor(payable(governorAddr)).timelock();
+        if (governorTimelock != timelockAddr) {
+            revert ProductionProtocolGovernorTimelockMismatch(governorAddr, governorTimelock, timelockAddr);
+        }
+
+        YSTimelockController timelock = YSTimelockController(payable(timelockAddr));
+        _requireSoleTimelockRoleMember(timelock, timelock.DEFAULT_ADMIN_ROLE(), timelockAddr);
+        _requireSoleTimelockRoleMember(timelock, timelock.PROPOSER_ROLE(), governorAddr);
+        _requireSoleTimelockRoleMember(timelock, timelock.EXECUTOR_ROLE(), governorAddr);
+        _requireSoleTimelockRoleMember(timelock, timelock.CANCELLER_ROLE(), governorAddr);
+    }
+
+    function _requireSoleTimelockRoleMember(YSTimelockController timelock, bytes32 role, address expectedMember)
+        internal
+        view
+    {
+        uint256 memberCount = timelock.getRoleMemberCount(role);
+        if (memberCount != 1) {
+            revert ProductionProtocolTimelockRoleCountMismatch(role, memberCount, 1);
+        }
+        address member = timelock.getRoleMember(role, 0);
+        if (member != expectedMember) {
+            revert ProductionProtocolTimelockRoleMismatch(role, member, expectedMember);
         }
     }
 

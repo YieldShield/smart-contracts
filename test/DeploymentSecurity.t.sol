@@ -45,26 +45,47 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
     function finalizeProductionProtocolBootstrapHarness(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
+        address governorAddr,
         address bootstrapAdmin
     ) external {
         _finalizeProductionProtocolBootstrap(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr, bootstrapAdmin
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr,
+            bootstrapAdmin
         );
     }
 
     function validateProductionProtocolFinalizedHarness(
         address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
         address erc4626OracleFeedAddr,
-        address timelockAddr
+        address timelockAddr,
+        address governorAddr
     ) external view {
         _validateProductionProtocolFinalized(
-            factoryAddr, compositeOracleAddr, pythOracleAddr, erc4626OracleFeedAddr, timelockAddr
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr
         );
     }
 
@@ -157,11 +178,17 @@ contract SafeLikeBootstrapHolder {
 }
 
 contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
+    bytes32 internal constant ERC1967_IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     uint256 internal constant TIMELOCK_DELAY = 2 days;
 
     address internal deployer = address(this);
     address internal bootstrapHolder = address(0xB0057);
     address internal dummyPyth = address(0x1234);
+
+    function _proxyImplementation(address proxy) internal view returns (address implementation) {
+        implementation = address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT))));
+    }
 
     function test_ProductionBootstrap_AssignsSupplyAndClearsExternalAdmins() public {
         (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
@@ -615,7 +642,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     }
 
     function test_ProductionProtocol_FinalizerResumesPartialBootstrapAndIsIdempotent() public {
-        (, TimelockController timelock,) = _deployGovernance();
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
@@ -632,18 +659,24 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         harness.finalizeProductionProtocolBootstrapHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
             address(timelock),
+            address(governor),
             address(harness)
         );
         harness.validateProductionProtocolFinalizedHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
-            address(timelock)
+            address(timelock),
+            address(governor)
         );
 
         assertEq(factory.owner(), address(timelock));
@@ -660,23 +693,29 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         harness.finalizeProductionProtocolBootstrapHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
             address(timelock),
+            address(governor),
             address(harness)
         );
         harness.validateProductionProtocolFinalizedHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
-            address(timelock)
+            address(timelock),
+            address(governor)
         );
     }
 
     function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {
-        (, TimelockController expectedTimelock,) = _deployGovernance();
+        (, TimelockController expectedTimelock, YSGovernor expectedGovernor) = _deployGovernance();
         (, TimelockController wrongTimelock,) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
@@ -710,15 +749,118 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         harness.validateProductionProtocolFinalizedHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
-            address(expectedTimelock)
+            address(expectedTimelock),
+            address(expectedGovernor)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsMismatchedFactoryImplementation() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        SplitRiskPoolFactory wrongFactoryImplementation = new SplitRiskPoolFactory();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAddressMismatch.selector,
+                bytes32("factory.proxyImplementation"),
+                _proxyImplementation(address(factory)),
+                address(wrongFactoryImplementation)
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            address(wrongFactoryImplementation),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(pythOracle),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsMismatchedPoolImplementation() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPool wrongPoolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAddressMismatch.selector,
+                bytes32("factory.poolImplementation"),
+                address(poolImplementation),
+                address(wrongPoolImplementation)
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(wrongPoolImplementation),
+            address(compositeOracle),
+            address(pythOracle),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+    }
+
+    function test_ProductionProtocol_ValidationRejectsTimelockControlledByNonGovernor() public {
+        address attacker = address(0xBEEF);
+        address[] memory controllers = new address[](1);
+        controllers[0] = attacker;
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, controllers, controllers, deployer)))
+        );
+        YSToken ysToken = new YSToken(bootstrapHolder);
+        YSGovernor governor = new YSGovernor(IVotes(address(ysToken)), timelock);
+        timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolTimelockRoleMismatch.selector,
+                timelock.PROPOSER_ROLE(),
+                attacker,
+                address(governor)
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(pythOracle),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
         );
     }
 
     function test_ProductionProtocol_ValidationRejectsCompositeOracleAuthorizedCallers() public {
-        (, TimelockController timelock,) = _deployGovernance();
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
@@ -753,15 +895,18 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         harness.validateProductionProtocolFinalizedHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
-            address(timelock)
+            address(timelock),
+            address(governor)
         );
     }
 
     function test_ProductionProtocol_FinalizerRejectsUnexpectedOracleOwner() public {
-        (, TimelockController timelock,) = _deployGovernance();
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
@@ -785,10 +930,13 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         harness.finalizeProductionProtocolBootstrapHarness(
             address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
             address(compositeOracle),
             address(pythOracle),
             address(erc4626OracleFeed),
             address(timelock),
+            address(governor),
             address(harness)
         );
     }
