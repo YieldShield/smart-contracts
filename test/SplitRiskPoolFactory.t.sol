@@ -1661,6 +1661,37 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
     }
 
+    function testDeactivateProtectorOnlyPoolRevertsWhenPoolAlreadyPaused() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        uint256 protectorAmount = 100e18;
+
+        tokenB.mint(user1, protectorAmount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, protectorAmount);
+        pool.depositBackingAsset(address(tokenB), protectorAmount, 0);
+        vm.stopPrank();
+
+        ISplitRiskPoolFactory.PoolInfo memory info = factory.getPoolInfo(poolAddress);
+        vm.prank(governanceTimelock);
+        pool.pause();
+
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ENFORCED_PAUSE);
+        factory.deactivateProtectorOnlyPool(poolAddress);
+
+        assertEq(factory.activePoolCount(), 1, "Paused protector-only pool should keep its active slot");
+        assertTrue(factory.isPoolActive(poolAddress), "Paused protector-only pool should remain active");
+        assertTrue(pool.paused(), "Pool should remain paused after reverted deactivation");
+        assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector backing should remain tracked");
+        assertEq(tokenB.balanceOf(user2), recipientBalanceBefore, "Protocol recipient should receive nothing");
+    }
+
     function testClosePoolSweepsUntrackedShieldedSurplus() public {
         vm.prank(governanceTimelock);
         factory.setDefaultProtocolFeeRecipient(user2);

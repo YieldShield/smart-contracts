@@ -1054,7 +1054,10 @@ contract SplitRiskPoolFactory is
             revert ErrorsLib.PoolDeactivationTooEarly(executableAt);
         }
 
-        SplitRiskPool(payable(pool)).sweepUnaccountedSurplusFromFactory();
+        ISplitRiskPool targetPool = ISplitRiskPool(pool);
+        if (targetPool.paused()) revert EnforcedPause();
+
+        targetPool.sweepUnaccountedSurplusFromFactory();
         _requireProtectorOnlyPool(pool);
         _removeActivePool(pool);
         _forfeitCreationBond(pool);
