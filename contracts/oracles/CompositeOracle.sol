@@ -561,7 +561,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
                 return (false, 0);
             }
             try IOracleFeed(feed).decimals() returns (uint8 feedDecimals) {
-                return (true, price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
+                return _tryNormalizeFeedPrice(price, feedDecimals);
             } catch {
                 return (false, 0);
             }
@@ -1039,7 +1039,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         uint256 price = IOracleFeed(activeFeed).getPrice(token);
         uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
 
-        return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
+        return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
     }
 
     /// @notice Internal helper for the UNSAFE price path
@@ -1060,12 +1060,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         (bool unsafeSupported, uint256 unsafePrice) = _tryGetUnsafePrice(activeFeed, token);
         if (unsafeSupported) {
             uint8 unsafeDecimals = IOracleFeed(activeFeed).decimals();
-            return unsafePrice.normalize(unsafeDecimals, ConstantsLib.USD_DECIMALS);
+            return _normalizeFeedPriceOrRevert(token, unsafePrice, unsafeDecimals);
         }
 
         uint256 price = IOracleFeed(activeFeed).getPrice(token);
         uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
-        return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
+        return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
     }
 
     /// @dev Best-effort wrapper around the feed's `getPriceUnsafe(address)` selector.
@@ -1164,8 +1164,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         try IOracleFeed(activeFeed).getPrice(token) returns (uint256 price) {
             if (price > 0) {
                 uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
-                uint256 normalizedPrice = price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
-                return (Math.mulDiv(amount, normalizedPrice, tokenScale), true);
+                (bool normalized, uint256 normalizedPrice) = _tryNormalizeFeedPrice(price, feedDecimals);
+                if (normalized) {
+                    return (Math.mulDiv(amount, normalizedPrice, tokenScale), true);
+                }
             }
         } catch {
             // Active feed failed, continue to evaluate the fallback policy below.
@@ -1180,8 +1182,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             try IOracleFeed(inactiveFeed).getPrice(token) returns (uint256 price) {
                 if (price > 0) {
                     uint8 feedDecimals = IOracleFeed(inactiveFeed).decimals();
-                    uint256 normalizedPrice = price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
-                    return (Math.mulDiv(amount, normalizedPrice, tokenScale), false);
+                    (bool normalized, uint256 normalizedPrice) = _tryNormalizeFeedPrice(price, feedDecimals);
+                    if (normalized) {
+                        return (Math.mulDiv(amount, normalizedPrice, tokenScale), false);
+                    }
                 }
             } catch {
                 // Inactive feed also failed
@@ -1249,7 +1253,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             revert CircuitBreakerNotSupported(token, activeFeed);
         }
         uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
-        return price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
+        return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
     }
 
     /// @inheritdoc ICompositeOracle
@@ -1275,6 +1279,30 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     function _getValueForPrice(address token, uint256 amount, uint256 price) internal view returns (uint256) {
         return Math.mulDiv(amount, price, _getTokenScale(token));
+    }
+
+    function _tryNormalizeFeedPrice(uint256 price, uint8 feedDecimals)
+        internal
+        pure
+        returns (bool success, uint256 normalizedPrice)
+    {
+        if (feedDecimals > 77) {
+            return (false, 0);
+        }
+        normalizedPrice = price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS);
+        return (normalizedPrice != 0, normalizedPrice);
+    }
+
+    function _normalizeFeedPriceOrRevert(address token, uint256 price, uint8 feedDecimals)
+        internal
+        pure
+        returns (uint256 normalizedPrice)
+    {
+        (bool success, uint256 normalized) = _tryNormalizeFeedPrice(price, feedDecimals);
+        if (!success) {
+            revert InvalidPrice(token, 0);
+        }
+        return normalized;
     }
 
     function _getEquivalentAmountForPrices(

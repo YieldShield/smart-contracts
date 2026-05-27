@@ -427,7 +427,10 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         // Convert to 8 decimals if necessary
         uint8 feedDecimals = feed.decimals();
-        return uint256(answer).normalize(feedDecimals, 8);
+        if (feedDecimals > 77) revert InvalidPrice(token, answer);
+        uint256 normalizedPrice = uint256(answer).normalize(feedDecimals, 8);
+        if (normalizedPrice == 0) revert InvalidPrice(token, 0);
+        return normalizedPrice;
     }
 
     function _requireFreshFeedBounds(address token, address feed) internal view {

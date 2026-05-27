@@ -3,6 +3,9 @@ pragma solidity ^0.8.30;
 
 import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
+import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { ConstantsLib } from "./ConstantsLib.sol";
+import { DecimalNormalizationLib } from "./DecimalNormalizationLib.sol";
 import { ErrorsLib } from "./ErrorsLib.sol";
 
 /// @title PoolOracleValidationLib
@@ -16,6 +19,8 @@ import { ErrorsLib } from "./ErrorsLib.sol";
 ///      split — marked by exposing `getPriceUnsafe(address)` — and answer both safe getters
 ///      with a non-zero price before it can be used by a pool.
 library PoolOracleValidationLib {
+    using DecimalNormalizationLib for uint256;
+
     /// @notice Validate that an oracle supports the pool's required pricing paths
     /// @param oracle The oracle address to validate
     /// @param shieldedToken The shielded token address
@@ -86,10 +91,10 @@ library PoolOracleValidationLib {
             abi.decode(statusData, (bool, address, address, bool, bool, uint256));
 
         if (primaryFeed != address(0)) {
-            _validateProtectedPriceSelector(primaryFeed, token);
+            _validateCompositeFeedProtectedPrice(primaryFeed, token);
         }
         if (isDualFeed && backupFeed != address(0)) {
-            _validateProtectedPriceSelector(backupFeed, token);
+            _validateCompositeFeedProtectedPrice(backupFeed, token);
         }
     }
 
@@ -108,15 +113,13 @@ library PoolOracleValidationLib {
             abi.decode(statusData, (bool, address, address, bool, bool, uint256));
 
         if (primaryFeed != address(0)) {
-            _validateProtectedPriceSelector(primaryFeed, backingToken);
+            _validateCompositeFeedProtectedPrice(primaryFeed, backingToken);
             _validateStrictProtectedPriceSupport(primaryFeed, backingToken);
-            _validateNonZeroOracleResponse(primaryFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
 
         if (isDualFeed && backupFeed != address(0)) {
-            _validateProtectedPriceSelector(backupFeed, backingToken);
+            _validateCompositeFeedProtectedPrice(backupFeed, backingToken);
             _validateStrictProtectedPriceSupport(backupFeed, backingToken);
-            _validateNonZeroOracleResponse(backupFeed, abi.encodeCall(IPriceOracle.getPrice, (backingToken)));
         }
     }
 
@@ -150,10 +153,39 @@ library PoolOracleValidationLib {
         if (abi.decode(data, (uint256)) == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
+    function _validateCompositeFeedProtectedPrice(address feed, address token) private view {
+        _validateProtectedPriceSelector(feed, token);
+        _validateNonZeroNormalizedOracleResponse(feed, abi.encodeCall(IPriceOracle.getPrice, (token)));
+        _validateNonZeroNormalizedOracleResponse(feed, abi.encodeWithSignature("getPriceUnsafe(address)", token));
+    }
+
+    function _validateNonZeroNormalizedOracleResponse(address oracle, bytes memory payload) private view {
+        (bool success, bytes memory data) = oracle.staticcall(payload);
+        if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
+
+        uint256 price = _decodeNonZeroPrice(data);
+        uint8 oracleDecimals = _readOracleDecimals(oracle);
+        uint256 normalizedPrice = price.normalize(oracleDecimals, ConstantsLib.USD_DECIMALS);
+        if (normalizedPrice == 0) revert ErrorsLib.InvalidOraclePrice();
+    }
+
+    function _readOracleDecimals(address oracle) private view returns (uint8 oracleDecimals) {
+        (bool success, bytes memory data) = oracle.staticcall(abi.encodeCall(IOracleFeed.decimals, ()));
+        if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
+
+        uint256 decodedDecimals = abi.decode(data, (uint256));
+        if (decodedDecimals > 77) revert ErrorsLib.InvalidAssetAddress();
+        oracleDecimals = uint8(decodedDecimals);
+    }
+
     function _validateDecodedPrice(bytes memory data) private pure {
         if (data.length < 32) revert ErrorsLib.InvalidAssetAddress();
 
-        uint256 price = abi.decode(data, (uint256));
+        _decodeNonZeroPrice(data);
+    }
+
+    function _decodeNonZeroPrice(bytes memory data) private pure returns (uint256 price) {
+        price = abi.decode(data, (uint256));
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 }

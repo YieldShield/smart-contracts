@@ -136,6 +136,22 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         vm.stopPrank();
     }
 
+    function testAddTokenRevertsWhenCompositeShieldedFeedNormalizesToZero() public {
+        MockERC20 newShieldedToken = new MockERC20("New Shielded Token", "NSHT");
+        MockHighDecimalTinyFeed tinyFeed = new MockHighDecimalTinyFeed(18);
+        tinyFeed.setPrice(address(newShieldedToken), 1);
+
+        vm.startPrank(governance);
+        factory.addToken(address(newShieldedToken), "New Shielded Token", "NSHT", address(tinyFeed), address(0), 10000);
+        vm.stopPrank();
+
+        _approveCreationBond();
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.createPool(
+            address(newShieldedToken), "NSHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
+        );
+    }
+
     function testAddTokenRevertsWhenShieldedFeedIsPythEmaOnly() public {
         MockERC20 newShieldedToken = new MockERC20("New Shielded Token", "NSHT");
         MockPyth mockPyth = new MockPyth(60, 1e15);
@@ -317,6 +333,30 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function testUpdatePoolConfigRevertsWhenCompositeSubFeedNormalizesToZero() public {
+        MockHighDecimalTinyFeed tinyFeed = new MockHighDecimalTinyFeed(18);
+        tinyFeed.setPrice(address(shieldedToken), 1);
+
+        MockFallbackCompositeOracle fallbackCompositeOracle = new MockFallbackCompositeOracle();
+        fallbackCompositeOracle.setTokenOracleFeed(address(shieldedToken), address(tinyFeed));
+        fallbackCompositeOracle.setTokenOracleFeed(address(backingToken), address(oracle));
+
+        vm.prank(governance);
+        vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
+        pool.updatePoolConfig(
+            1e18,
+            1000e18,
+            1e18,
+            1000e18,
+            1000000e8,
+            1 days,
+            28 days,
+            100,
+            protocolFeeRecipient,
+            address(fallbackCompositeOracle)
+        );
+    }
+
     function testUpdatePoolConfigRevertsWhenStrictCompositeOmitsSupportSelector() public {
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
@@ -410,5 +450,44 @@ contract MockFeedWithoutCircuitBreaker is IOracleFeed {
 
     function description() external pure returns (string memory) {
         return "Mock Feed Without Circuit Breaker";
+    }
+}
+
+contract MockHighDecimalTinyFeed is IOracleFeed {
+    uint8 internal immutable feedDecimals;
+    mapping(address => uint256) internal prices;
+
+    constructor(uint8 decimals_) {
+        feedDecimals = decimals_;
+    }
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function getPriceUnsafe(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function decimals() external view returns (uint8) {
+        return feedDecimals;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Mock High Decimal Tiny Feed";
+    }
+
+    function supportsCircuitBreaker(address token) external pure returns (bool) {
+        token;
+        return true;
+    }
+
+    function supportsStrictProtectedPrice(address token) external pure returns (bool) {
+        token;
+        return true;
     }
 }

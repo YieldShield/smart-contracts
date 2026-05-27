@@ -521,6 +521,45 @@ contract FreshUnsafeOnlyFeed is IOracleFeed {
     }
 }
 
+contract HighDecimalTinyFeed is IOracleFeed {
+    uint8 internal immutable feedDecimals;
+    mapping(address => uint256) internal prices;
+
+    constructor(uint8 decimals_) {
+        feedDecimals = decimals_;
+    }
+
+    function setPrice(address token, uint256 price) external {
+        prices[token] = price;
+    }
+
+    function getPrice(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function getPriceUnsafe(address token) external view returns (uint256) {
+        return prices[token];
+    }
+
+    function decimals() external view returns (uint8) {
+        return feedDecimals;
+    }
+
+    function description() external pure returns (string memory) {
+        return "High Decimal Tiny Feed";
+    }
+
+    function supportsCircuitBreaker(address token) external pure returns (bool) {
+        token;
+        return true;
+    }
+
+    function supportsStrictProtectedPrice(address token) external pure returns (bool) {
+        token;
+        return true;
+    }
+}
+
 // ============ Dual-Feed Tests ============
 
 contract CompositeOracleDualFeedTest is Test {
@@ -1630,6 +1669,47 @@ contract CompositeOracleDualFeedTest is Test {
         (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
         assertEq(value, 0, "fallback must not serve inactive feed after marker removal");
         assertFalse(isReliable);
+    }
+
+    function test_NormalizedZeroPriceRevertsForProtectedAndUnsafeReads() public {
+        HighDecimalTinyFeed tinyFeed = new HighDecimalTinyFeed(18);
+        tinyFeed.setPrice(address(token), 1);
+        compositeOracle.setTokenOracleFeed(address(token), address(tinyFeed));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.InvalidPrice.selector, address(token), 0));
+        compositeOracle.getPrice(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.InvalidPrice.selector, address(token), 0));
+        compositeOracle.getPriceUnsafe(address(token));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.InvalidPrice.selector, address(token), 0));
+        compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
+    }
+
+    function test_NormalizedZeroFallbackIsNotReliable() public {
+        HighDecimalTinyFeed tinyFeed = new HighDecimalTinyFeed(18);
+        tinyFeed.setPrice(address(token), 1);
+        compositeOracle.setTokenOracleFeed(address(token), address(tinyFeed));
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(value, 0);
+        assertFalse(isReliable);
+    }
+
+    function test_NormalizedZeroBackupCannotTriggerChallenge() public {
+        HighDecimalTinyFeed tinyBackup = new HighDecimalTinyFeed(18);
+        tinyBackup.setPrice(address(token), 1);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(tinyBackup));
+
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
+        assertEq(compositeOracle.getCurrentDeviation(address(token)), type(uint256).max);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.ChallengeNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
+        compositeOracle.challengeForToken(address(token));
     }
 
     // ============ Helper Functions ============
