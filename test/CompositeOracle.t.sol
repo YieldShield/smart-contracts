@@ -657,30 +657,31 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
     }
 
-    function test_ChallengeableDeviationUsesFreshUnsafeBackupWhenProtectedBackupReverts() public {
+    function test_ChallengeableDeviationRejectsUnsafeBackupWhenProtectedBackupReverts() public {
         FreshUnsafeOnlyFeed flakyBackup = new FreshUnsafeOnlyFeed();
         uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
         flakyBackup.setPrice(address(token), deviatedPrice);
 
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(flakyBackup));
 
-        assertTrue(compositeOracle.isTokenChallengeable(address(token)));
-        assertEq(compositeOracle.getCurrentDeviation(address(token)), 76);
+        assertFalse(compositeOracle.isTokenChallengeable(address(token)));
+        assertEq(compositeOracle.getCurrentDeviation(address(token)), type(uint256).max);
+        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
 
-        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(token)));
-        compositeOracle.getPrice(address(token));
-
-        vm.expectEmit(true, true, false, true);
-        emit ChallengeInitiated(address(token), address(this), PRIMARY_PRICE, deviatedPrice, 76);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.ChallengeNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
         compositeOracle.challengeForToken(address(token));
 
         (,,,, bool isChallengePending, uint256 challengeStartTime) =
             compositeOracle.getTokenDualFeedStatus(address(token));
-        assertTrue(isChallengePending);
-        assertEq(challengeStartTime, block.timestamp);
+        assertFalse(isChallengePending);
+        assertEq(challengeStartTime, 0);
     }
 
-    function test_ChallengeIgnoresStaleUnsafeBackupWhenProtectedBackupReverts() public {
+    function test_ChallengeIgnoresUnsafeBackupWhenProtectedBackupRevertsEvenIfFreshnessChanges() public {
         FreshUnsafeOnlyFeed flakyBackup = new FreshUnsafeOnlyFeed();
         flakyBackup.setPrice(address(token), (PRIMARY_PRICE * 10076) / 10000);
         flakyBackup.setStale(address(token), true);
@@ -694,6 +695,24 @@ contract CompositeOracleDualFeedTest is Test {
             )
         );
         compositeOracle.challengeForToken(address(token));
+    }
+
+    function test_FinalizeChallengeRejectsUnsafeBackupWhenProtectedBackupReverts() public {
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
+        backupOracle.setPrice(address(token), (PRIMARY_PRICE * 10076) / 10000);
+        compositeOracle.challengeForToken(address(token));
+        backupOracle.setShouldRevertOnCircuitBreaker(true);
+
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.FinalizeNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
+        compositeOracle.finalizeChallenge(address(token));
+
+        assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
     }
 
     function test_ChallengeableDeviationClearsWhenFeedsConverge() public {

@@ -570,72 +570,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
-    /// @dev Dispute-only price reader used by the dual-feed challenge gate. It first
-    ///      tries the protected feed price. If that path reverts, it may fall back to
-    ///      `getPriceUnsafe` only when the feed's own staleness helper proves that the
-    ///      unsafe reading is fresh. Production valuation paths never use this helper.
+    /// @dev Dispute-only price reader used by the dual-feed challenge gate. Challenges
+    ///      must be anchored to the backup feed's protected price path, so a fresh raw
+    ///      `getPriceUnsafe` reading cannot bypass feed-level circuit breakers.
     function _tryGetNormalizedDisputeFeedPrice(address feed, address token)
         internal
         view
         returns (bool success, uint256 normalizedPrice)
     {
-        (success, normalizedPrice) = _tryGetNormalizedFeedPrice(feed, token);
-        if (success) {
-            return (true, normalizedPrice);
-        }
-        if (!_isFreshForUnsafeDisputeFallback(feed, token)) {
-            return (false, 0);
-        }
-
-        (success, normalizedPrice) = _tryGetNormalizedUnsafeFeedPriceNoRevert(feed, token);
-        if (!success) {
-            return (false, 0);
-        }
-        return (true, normalizedPrice);
-    }
-
-    function _isFreshForUnsafeDisputeFallback(address feed, address token) internal view returns (bool) {
-        if (feed.code.length == 0) {
-            return false;
-        }
-
-        (bool success, bytes memory data) = feed.staticcall(abi.encodeWithSignature("isPriceStale(address)", token));
-        if (!success || data.length < 64) {
-            return false;
-        }
-
-        (bool isStale, uint256 publishTime) = abi.decode(data, (bool, uint256));
-        if (isStale || publishTime == 0 || publishTime > block.timestamp) {
-            return false;
-        }
-        return true;
-    }
-
-    function _tryGetNormalizedUnsafeFeedPriceNoRevert(address feed, address token)
-        internal
-        view
-        returns (bool success, uint256 normalizedPrice)
-    {
-        if (feed.code.length == 0) {
-            return (false, 0);
-        }
-
-        (bool priceSuccess, bytes memory priceData) =
-            feed.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
-        if (!priceSuccess || priceData.length < 32) {
-            return (false, 0);
-        }
-
-        uint256 price = abi.decode(priceData, (uint256));
-        if (price == 0) {
-            return (false, 0);
-        }
-
-        try IOracleFeed(feed).decimals() returns (uint8 feedDecimals) {
-            return (true, price.normalize(feedDecimals, ConstantsLib.USD_DECIMALS));
-        } catch {
-            return (false, 0);
-        }
+        return _tryGetNormalizedFeedPrice(feed, token);
     }
 
     /// @dev Returns true when the primary active feed is already unsafe for protected
