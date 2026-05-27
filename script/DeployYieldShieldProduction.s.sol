@@ -44,9 +44,17 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes4 private constant NONCE_SELECTOR = bytes4(keccak256("nonce()"));
     bytes4 private constant DOMAIN_SEPARATOR_SELECTOR = bytes4(keccak256("domainSeparator()"));
     bytes4 private constant MASTER_COPY_SELECTOR = bytes4(keccak256("masterCopy()"));
+    bytes4 private constant GET_MODULES_PAGINATED_SELECTOR = bytes4(keccak256("getModulesPaginated(address,uint256)"));
+    bytes4 private constant GET_STORAGE_AT_SELECTOR = bytes4(keccak256("getStorageAt(uint256,uint256)"));
     bytes4 private constant PYTH_VALID_TIME_PERIOD_SELECTOR = bytes4(keccak256("getValidTimePeriod()"));
     bytes32 private constant ERC1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 private constant SAFE_GUARD_STORAGE_SLOT =
+        0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+    bytes32 private constant SAFE_FALLBACK_HANDLER_STORAGE_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+    bytes32 private constant SAFE_MODULE_GUARD_STORAGE_SLOT =
+        0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947;
     bytes32 private constant NAME_FACTORY = "SplitRiskPoolFactory";
     bytes32 private constant NAME_FACTORY_IMPLEMENTATION = "FactoryImplementation";
     bytes32 private constant NAME_POOL_IMPLEMENTATION = "PoolImplementation";
@@ -58,6 +66,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
     string private constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
+    string private constant ENV_BOOTSTRAP_HOLDER_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_GUARD";
+    string private constant ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER = "YS_PRODUCTION_BOOTSTRAP_HOLDER_FALLBACK_HANDLER";
+    string private constant ENV_BOOTSTRAP_HOLDER_MODULE_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_MODULE_GUARD";
     bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
@@ -74,6 +85,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolderThreshold(address holder, uint256 actualThreshold, uint256 expectedThreshold);
     error InvalidProductionBootstrapHolderOwnersHash(
         address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash
+    );
+    error InvalidProductionBootstrapHolderModule(address holder, address module);
+    error InvalidProductionBootstrapHolderGuard(address holder, address actualGuard, address expectedGuard);
+    error InvalidProductionBootstrapHolderFallbackHandler(
+        address holder, address actualFallbackHandler, address expectedFallbackHandler
+    );
+    error InvalidProductionBootstrapHolderModuleGuard(
+        address holder, address actualModuleGuard, address expectedModuleGuard
     );
     error InvalidProductionPythContract(address pythAddress);
     error ProductionPythUpdaterNotConfirmed(uint256 chainId, uint256 maxPriceAge);
@@ -181,12 +200,18 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address expectedBootstrapHolderSingleton = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON");
         uint256 expectedBootstrapHolderThreshold = vm.envUint("YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD");
         bytes32 expectedBootstrapHolderOwnersHash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH");
+        address expectedBootstrapHolderGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_GUARD, address(0));
+        address expectedBootstrapHolderFallbackHandler = vm.envOr(ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER, address(0));
+        address expectedBootstrapHolderModuleGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_MODULE_GUARD, address(0));
         _validateProductionBootstrapHolder(
             bootstrapHolder,
             expectedBootstrapHolderCodehash,
             expectedBootstrapHolderSingleton,
             expectedBootstrapHolderThreshold,
-            expectedBootstrapHolderOwnersHash
+            expectedBootstrapHolderOwnersHash,
+            expectedBootstrapHolderGuard,
+            expectedBootstrapHolderFallbackHandler,
+            expectedBootstrapHolderModuleGuard
         );
 
         address[] memory emptyAccounts = new address[](0);
@@ -626,13 +651,18 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH and
     ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON. Owners and threshold are
     ///      pinned through YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH and
-    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD.
+    ///      YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD. Modules must be empty,
+    ///      while guard, fallback handler, and module guard default to zero and
+    ///      may be explicitly pinned through their YS_PRODUCTION_* env values.
     function _validateProductionBootstrapHolder(
         address holder,
         bytes32 expectedCodehash,
         address expectedSingleton,
         uint256 expectedThreshold,
-        bytes32 expectedOwnersHash
+        bytes32 expectedOwnersHash,
+        address expectedGuard,
+        address expectedFallbackHandler,
+        address expectedModuleGuard
     ) internal view {
         if (holder == address(0) || holder.code.length == 0) {
             revert InvalidProductionBootstrapHolder(holder);
@@ -695,6 +725,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             revert InvalidProductionBootstrapHolderOwnersHash(holder, actualOwnersHash, expectedOwnersHash);
         }
 
+        _validateProductionBootstrapHolderSafeExtensions(
+            holder, expectedGuard, expectedFallbackHandler, expectedModuleGuard
+        );
+
         for (uint256 i = 0; i < owners.length; i++) {
             if (owners[i] == address(0)) {
                 revert InvalidProductionBootstrapHolder(holder);
@@ -705,6 +739,68 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 }
             }
         }
+    }
+
+    function _validateProductionBootstrapHolderSafeExtensions(
+        address holder,
+        address expectedGuard,
+        address expectedFallbackHandler,
+        address expectedModuleGuard
+    ) internal view {
+        _validateProductionBootstrapHolderNoModules(holder);
+
+        address actualGuard = _readSafeStorageAddress(holder, SAFE_GUARD_STORAGE_SLOT);
+        if (actualGuard != expectedGuard) {
+            revert InvalidProductionBootstrapHolderGuard(holder, actualGuard, expectedGuard);
+        }
+
+        address actualFallbackHandler = _readSafeStorageAddress(holder, SAFE_FALLBACK_HANDLER_STORAGE_SLOT);
+        if (actualFallbackHandler != expectedFallbackHandler) {
+            revert InvalidProductionBootstrapHolderFallbackHandler(
+                holder, actualFallbackHandler, expectedFallbackHandler
+            );
+        }
+
+        address actualModuleGuard = _readSafeStorageAddress(holder, SAFE_MODULE_GUARD_STORAGE_SLOT);
+        if (actualModuleGuard != expectedModuleGuard) {
+            revert InvalidProductionBootstrapHolderModuleGuard(holder, actualModuleGuard, expectedModuleGuard);
+        }
+    }
+
+    function _validateProductionBootstrapHolderNoModules(address holder) internal view {
+        address sentinel = address(0x1);
+        (bool success, bytes memory data) =
+            holder.staticcall(abi.encodeWithSelector(GET_MODULES_PAGINATED_SELECTOR, sentinel, 1));
+        if (!success || data.length < 64) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        (address[] memory modules, address next) = abi.decode(data, (address[], address));
+        if (modules.length != 0) {
+            revert InvalidProductionBootstrapHolderModule(holder, modules[0]);
+        }
+        if (next != sentinel) {
+            revert InvalidProductionBootstrapHolderModule(holder, next);
+        }
+    }
+
+    function _readSafeStorageAddress(address holder, bytes32 slot) internal view returns (address value) {
+        (bool success, bytes memory data) =
+            holder.staticcall(abi.encodeWithSelector(GET_STORAGE_AT_SELECTOR, uint256(slot), 1));
+        if (!success || data.length < 64) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        bytes memory rawStorage = abi.decode(data, (bytes));
+        if (rawStorage.length < 32) {
+            revert InvalidProductionBootstrapHolder(holder);
+        }
+
+        bytes32 slotValue;
+        assembly ("memory-safe") {
+            slotValue := mload(add(rawStorage, 0x20))
+        }
+        value = address(uint160(uint256(slotValue)));
     }
 
     function _validateProductionPythConfig(address pythAddress, uint256 maxPriceAge, bool updaterConfirmed)

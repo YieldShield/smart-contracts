@@ -20,7 +20,14 @@ import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 contract ProductionDeployHarness is DeployYieldShieldProduction {
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
-            holder, holder.codehash, _readMasterCopy(holder), _readThreshold(holder), _readOwnersHash(holder)
+            holder,
+            holder.codehash,
+            _readMasterCopy(holder),
+            _readThreshold(holder),
+            _readOwnersHash(holder),
+            address(0),
+            address(0),
+            address(0)
         );
     }
 
@@ -32,7 +39,36 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         bytes32 expectedOwnersHash
     ) external view {
         _validateProductionBootstrapHolder(
-            holder, expectedCodehash, expectedSingleton, expectedThreshold, expectedOwnersHash
+            holder,
+            expectedCodehash,
+            expectedSingleton,
+            expectedThreshold,
+            expectedOwnersHash,
+            address(0),
+            address(0),
+            address(0)
+        );
+    }
+
+    function validateProductionBootstrapHolderPinnedExtensions(
+        address holder,
+        bytes32 expectedCodehash,
+        address expectedSingleton,
+        uint256 expectedThreshold,
+        bytes32 expectedOwnersHash,
+        address expectedGuard,
+        address expectedFallbackHandler,
+        address expectedModuleGuard
+    ) external view {
+        _validateProductionBootstrapHolder(
+            holder,
+            expectedCodehash,
+            expectedSingleton,
+            expectedThreshold,
+            expectedOwnersHash,
+            expectedGuard,
+            expectedFallbackHandler,
+            expectedModuleGuard
         );
     }
 
@@ -157,10 +193,21 @@ contract SelectorsOnlyBootstrapHolder {
 
 contract SafeLikeBootstrapHolder {
     address internal constant SAFE_SINGLETON = address(0x5AFE);
+    address internal constant SENTINEL_MODULES = address(0x1);
+    bytes32 internal constant SAFE_GUARD_STORAGE_SLOT =
+        0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+    bytes32 internal constant SAFE_FALLBACK_HANDLER_STORAGE_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+    bytes32 internal constant SAFE_MODULE_GUARD_STORAGE_SLOT =
+        0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947;
     address[] internal owners;
+    address[] internal modules;
     uint256 internal threshold;
     uint256 internal safeNonce;
     bytes32 internal safeDomainSeparator;
+    address internal safeGuard;
+    address internal safeFallbackHandler;
+    address internal safeModuleGuard;
 
     constructor(address[] memory owners_, uint256 threshold_) {
         owners = owners_;
@@ -190,6 +237,58 @@ contract SafeLikeBootstrapHolder {
 
     function masterCopy() external pure returns (address) {
         return SAFE_SINGLETON;
+    }
+
+    function addModule(address module) external {
+        modules.push(module);
+    }
+
+    function setGuard(address guard) external {
+        safeGuard = guard;
+    }
+
+    function setFallbackHandler(address fallbackHandler) external {
+        safeFallbackHandler = fallbackHandler;
+    }
+
+    function setModuleGuard(address moduleGuard) external {
+        safeModuleGuard = moduleGuard;
+    }
+
+    function getModulesPaginated(address, uint256 pageSize)
+        external
+        view
+        returns (address[] memory page, address next)
+    {
+        if (modules.length == 0 || pageSize == 0) {
+            return (new address[](0), SENTINEL_MODULES);
+        }
+
+        uint256 pageLength = modules.length < pageSize ? modules.length : pageSize;
+        page = new address[](pageLength);
+        for (uint256 i = 0; i < pageLength; i++) {
+            page[i] = modules[i];
+        }
+        next = pageLength == modules.length ? SENTINEL_MODULES : modules[pageLength - 1];
+    }
+
+    function getStorageAt(uint256 offset, uint256 length) external view returns (bytes memory data) {
+        if (length == 0) {
+            return new bytes(0);
+        }
+
+        bytes32 slot = bytes32(offset);
+        if (slot == SAFE_GUARD_STORAGE_SLOT) {
+            return abi.encodePacked(bytes32(uint256(uint160(safeGuard))));
+        }
+        if (slot == SAFE_FALLBACK_HANDLER_STORAGE_SLOT) {
+            return abi.encodePacked(bytes32(uint256(uint160(safeFallbackHandler))));
+        }
+        if (slot == SAFE_MODULE_GUARD_STORAGE_SLOT) {
+            return abi.encodePacked(bytes32(uint256(uint160(safeModuleGuard))));
+        }
+
+        return new bytes(32);
     }
 }
 
@@ -581,6 +680,110 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsSafeLikeHolderWithEnabledModule() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address module = address(0xCA11);
+        contractHolder.addModule(module);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderModule.selector,
+                address(contractHolder),
+                module
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsSafeLikeHolderWithUnexpectedGuard() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address guard = address(0x6A4D);
+        contractHolder.setGuard(guard);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderGuard.selector,
+                address(contractHolder),
+                guard,
+                address(0)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsSafeLikeHolderWithUnexpectedFallbackHandler() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address fallbackHandler = address(0xFA11BA);
+        contractHolder.setFallbackHandler(fallbackHandler);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderFallbackHandler.selector,
+                address(contractHolder),
+                fallbackHandler,
+                address(0)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_RejectsSafeLikeHolderWithUnexpectedModuleGuard() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address moduleGuard = address(0xD00D);
+        contractHolder.setModuleGuard(moduleGuard);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderModuleGuard.selector,
+                address(contractHolder),
+                moduleGuard,
+                address(0)
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
+    function test_ProductionBootstrap_AllowsPinnedSafeLikeHolderExtensions() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](2);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+        address guard = address(0x6A4D);
+        address fallbackHandler = address(0xFA11BA);
+        address moduleGuard = address(0xD00D);
+        contractHolder.setGuard(guard);
+        contractHolder.setFallbackHandler(fallbackHandler);
+        contractHolder.setModuleGuard(moduleGuard);
+
+        harness.validateProductionBootstrapHolderPinnedExtensions(
+            address(contractHolder),
+            address(contractHolder).codehash,
+            contractHolder.masterCopy(),
+            2,
+            keccak256(abi.encode(owners)),
+            guard,
+            fallbackHandler,
+            moduleGuard
+        );
     }
 
     function test_ProductionBootstrap_BurnCannotReduceBelowQuorumVotingPower() public {
