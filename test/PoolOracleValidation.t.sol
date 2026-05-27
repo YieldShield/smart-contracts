@@ -238,18 +238,47 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
     }
 
-    function testPoolStrictProtectedPriceRequirementAutoAdoptsFactoryEnable() public {
-        // H-5 follow-up: a pinned-false pool may auto-tighten when governance
-        // enables strict pricing for its backing token, but factory policy alone
-        // cannot auto-downgrade a pinned strict pool.
+    function testPoolStrictProtectedPriceRequirementRequiresExplicitRefreshAfterFactoryEnable() public {
+        // Factory policy changes affect new pools immediately, but existing
+        // pools keep their pinned snapshot until governance explicitly refreshes.
         assertFalse(pool.requiresStrictProtectedBackingPrice());
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
-        assertTrue(pool.requiresStrictProtectedBackingPrice(), "factory enable should tighten existing pools");
+        assertFalse(pool.requiresStrictProtectedBackingPrice(), "factory enable must not auto-tighten existing pools");
 
         vm.prank(governance);
         pool.refreshStrictProtectedBackingPriceFlag();
         assertTrue(pool.requiresStrictProtectedBackingPrice(), "refresh should adopt the new policy");
+    }
+
+    function testPoolStrictProtectedPriceRefreshRejectsFallbackOnlyCurrentOracle() public {
+        MockFallbackCompositeOracle fallbackCompositeOracle = new MockFallbackCompositeOracle();
+        fallbackCompositeOracle.setTokenOracleFeed(address(shieldedToken), address(oracle));
+        fallbackCompositeOracle.setTokenOracleFeed(address(backingToken), address(oracle));
+
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            1e18,
+            1000e18,
+            1e18,
+            1000e18,
+            1000000e8,
+            1 days,
+            28 days,
+            100,
+            protocolFeeRecipient,
+            address(fallbackCompositeOracle)
+        );
+
+        vm.prank(governance);
+        factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+        assertFalse(pool.requiresStrictProtectedBackingPrice(), "factory enable must not auto-tighten existing pools");
+
+        vm.prank(governance);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        pool.refreshStrictProtectedBackingPriceFlag();
+
+        assertFalse(pool.requiresStrictProtectedBackingPrice(), "failed refresh must preserve previous pin");
     }
 
     function testPoolStrictProtectedPriceRefreshRevertsOnFactoryLookupFailure() public {
@@ -309,6 +338,8 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
     function testUpdatePoolConfigRevertsWhenStrictPoolSwitchesToFallbackOnlyComposite() public {
         vm.prank(governance);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
+        vm.prank(governance);
+        pool.refreshStrictProtectedBackingPriceFlag();
 
         MockFeedWithoutCircuitBreaker noCircuitBreakerFeed = new MockFeedWithoutCircuitBreaker();
         noCircuitBreakerFeed.setPrice(address(backingToken), 1e8);

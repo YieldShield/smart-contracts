@@ -581,30 +581,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @inheritdoc ISplitRiskPool
-    /// @dev H-5: prefer any pinned strict snapshot over the runtime factory lookup,
-    ///      so a future factory regression cannot silently downgrade strict pricing.
-    ///      A current factory policy can still tighten pinned-false pools when
-    ///      governance enables strict mode for an already-active backing token.
-    ///      Governance must explicitly refresh a pool to adopt a factory false.
+    /// @dev Pools use the last explicitly pinned factory snapshot. Factory policy
+    ///      changes affect new pools immediately, but existing pools must be
+    ///      refreshed by governance after their current oracle is validated.
     function requiresStrictProtectedBackingPrice() public view override returns (bool) {
-        if (_strictProtectedBackingPricePinned && _strictProtectedBackingPriceAtInit) {
-            return true;
-        }
-
-        address factory = _poolFactoryController();
-        if (factory == address(0) || factory.code.length == 0) {
-            return _strictProtectedBackingPriceAtInit;
-        }
-
-        (bool success, bytes memory data) = factory.staticcall(
-            abi.encodeCall(ISplitRiskPoolFactory.tokenRequiresStrictProtectedPrice, (BACKING_TOKEN))
-        );
-
-        if (!success || data.length < 32) {
-            return _strictProtectedBackingPriceAtInit;
-        }
-
-        return abi.decode(data, (bool));
+        return _strictProtectedBackingPriceAtInit;
     }
 
     /// @notice Re-snapshot the strict-protected-backing-price flag from the factory.
@@ -624,6 +605,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.InvalidAssetAddress();
         }
         bool newValue = abi.decode(data, (bool));
+        if (newValue) {
+            PoolOracleValidationLib.validateBackingTokenOracle(poolConfig.priceOracle, BACKING_TOKEN, true);
+        }
         _strictProtectedBackingPriceAtInit = newValue;
         _strictProtectedBackingPricePinned = true;
         emit EventsLib.ParameterUpdated("strictProtectedBackingPrice", newValue ? 1 : 0);
@@ -3008,8 +2992,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      silently downgrade strict pricing for live pools. Governance can refresh via
     ///      `refreshStrictProtectedBackingPriceFlag()`.
     bool internal _strictProtectedBackingPriceAtInit;
-    /// @notice One-bit tracker so legacy upgraded pools fall back to the runtime lookup
-    ///         until governance explicitly snapshots a value via the refresh function.
+    /// @notice One-bit tracker for whether the strict snapshot has been initialized or refreshed.
+    /// @dev Retained as part of the storage layout even though pricing now reads the pinned value directly.
     bool internal _strictProtectedBackingPricePinned;
     /// @notice M-14: explicit recipient for accumulated pool fees, rotatable by
     ///         POOL_CREATOR. Defaults to POOL_CREATOR at initialize; legacy
