@@ -21,6 +21,9 @@ import { ErrorsLib } from "./ErrorsLib.sol";
 library PoolOracleValidationLib {
     using DecimalNormalizationLib for uint256;
 
+    bytes4 private constant INVALID_PRICE_UINT_SELECTOR = bytes4(keccak256("InvalidPrice(address,uint256)"));
+    bytes4 private constant INVALID_PRICE_INT_SELECTOR = bytes4(keccak256("InvalidPrice(address,int256)"));
+
     /// @notice Validate that an oracle supports the pool's required pricing paths
     /// @param oracle The oracle address to validate
     /// @param shieldedToken The shielded token address
@@ -149,7 +152,8 @@ library PoolOracleValidationLib {
 
         (bool success, bytes memory data) = oracle.staticcall(abi.encodeWithSignature("getPriceUnsafe(address)", token));
 
-        if (!success || data.length < 32) revert ErrorsLib.InvalidAssetAddress();
+        if (!success) _revertOracleResponseFailure(data);
+        if (data.length < 32) revert ErrorsLib.InvalidAssetAddress();
         if (abi.decode(data, (uint256)) == 0) revert ErrorsLib.InvalidOraclePrice();
     }
 
@@ -187,5 +191,18 @@ library PoolOracleValidationLib {
     function _decodeNonZeroPrice(bytes memory data) private pure returns (uint256 price) {
         price = abi.decode(data, (uint256));
         if (price == 0) revert ErrorsLib.InvalidOraclePrice();
+    }
+
+    function _revertOracleResponseFailure(bytes memory data) private pure {
+        if (data.length >= 4) {
+            bytes4 selector = bytes4(data);
+            if (
+                selector == INVALID_PRICE_UINT_SELECTOR || selector == INVALID_PRICE_INT_SELECTOR
+                    || selector == ErrorsLib.InvalidOraclePrice.selector
+            ) {
+                revert ErrorsLib.InvalidOraclePrice();
+            }
+        }
+        revert ErrorsLib.InvalidAssetAddress();
     }
 }

@@ -146,7 +146,7 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         vm.stopPrank();
 
         _approveCreationBond();
-        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        vm.expectRevert(ErrorsLib.InvalidOraclePrice.selector);
         factory.createPool(
             address(newShieldedToken), "NSHT", address(backingToken), "BKT", 1000, 200, 15000, _creationBondAmount()
         );
