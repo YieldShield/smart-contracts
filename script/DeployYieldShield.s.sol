@@ -106,7 +106,7 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         console.log("Timelock delay set to:", minDelay, "seconds");
 
         // 3. Deploy YS Governor
-        YSGovernor governor = new YSGovernor(ysToken, timelock);
+        YSGovernor governor = new YSGovernor(ysToken, timelock, deployer);
         governorAddr = address(governor);
         console.log("YS Governor deployed at:", governorAddr);
 

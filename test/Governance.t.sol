@@ -245,7 +245,7 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         );
 
         // 3. Deploy governor
-        governor = new YSGovernor(IVotes(address(ysToken)), timelock);
+        governor = new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
 
         // 4. Grant governor roles on timelock
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));

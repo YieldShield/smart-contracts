@@ -284,7 +284,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     function test_TimelockCanRotateGovernanceControllerAtomically() public {
         (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
-        YSGovernor newGovernor = new YSGovernor(IVotes(address(ysToken)), timelock);
+        YSGovernor newGovernor = new YSGovernor(IVotes(address(ysToken)), timelock, address(0));
 
         vm.prank(address(timelock));
         ysTimelock.rotateGovernanceController(address(newGovernor));
@@ -332,7 +332,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         (YSToken ysToken, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         (, TimelockController otherTimelock,) = _deployGovernance();
         YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
-        YSGovernor wrongGovernor = new YSGovernor(IVotes(address(ysToken)), otherTimelock);
+        YSGovernor wrongGovernor = new YSGovernor(IVotes(address(ysToken)), otherTimelock, address(0));
 
         vm.prank(address(timelock));
         vm.expectRevert(
@@ -343,6 +343,72 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ysTimelock.rotateGovernanceController(address(wrongGovernor));
 
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(governor)));
+    }
+
+    function test_GovernorConstructorRejectsNonYSTimelock() public {
+        address[] memory emptyAccounts = new address[](0);
+        TimelockController ozTimelock = new TimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer);
+        YSToken ysToken = new YSToken(bootstrapHolder);
+        bytes32 expectedCodehash = keccak256(type(YSTimelockController).runtimeCode);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorTimelockImplementationMismatch.selector,
+                address(ozTimelock),
+                expectedCodehash,
+                address(ozTimelock).codehash
+            )
+        );
+        new YSGovernor(IVotes(address(ysToken)), ozTimelock, deployer);
+    }
+
+    function test_GovernorConstructorRejectsUnexpectedBootstrapAdmin() public {
+        address attacker = address(0xBEEF);
+        address[] memory emptyAccounts = new address[](0);
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, attacker)))
+        );
+        YSToken ysToken = new YSToken(bootstrapHolder);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorTimelockInvalidInitialAdmin.selector, address(timelock), deployer, attacker, 2
+            )
+        );
+        new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
+    }
+
+    function test_GovernorConstructorRejectsEOAOperationalController() public {
+        address attacker = address(0xBEEF);
+        address[] memory controllers = new address[](1);
+        controllers[0] = attacker;
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(TIMELOCK_DELAY, controllers, controllers, deployer)))
+        );
+        YSToken ysToken = new YSToken(bootstrapHolder);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorTimelockInvalidInitialController.selector, address(timelock), attacker
+            )
+        );
+        new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
+    }
+
+    function test_GovernorConstructorRejectsShortPublicTimelockDelay() public {
+        address[] memory emptyAccounts = new address[](0);
+        vm.chainId(31337);
+        TimelockController timelock = TimelockController(
+            payable(address(new YSTimelockController(1 days, emptyAccounts, emptyAccounts, deployer)))
+        );
+        YSToken ysToken = new YSToken(bootstrapHolder);
+
+        vm.chainId(PythConfig.ARBITRUM_MAINNET_CHAIN_ID);
+        vm.expectRevert(
+            abi.encodeWithSelector(YSGovernor.GovernorTimelockDelayTooShort.selector, address(timelock), 1 days, 2 days)
+        );
+        new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
+        vm.chainId(31337);
     }
 
     function test_ProductionBootstrap_RejectsEOABootstrapHolder() public {
@@ -844,14 +910,15 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     }
 
     function test_ProductionProtocol_ValidationRejectsTimelockControlledByNonGovernor() public {
-        address attacker = address(0xBEEF);
+        (,, YSGovernor wrongController) = _deployGovernance();
+        address wrongControllerAddr = address(wrongController);
         address[] memory controllers = new address[](1);
-        controllers[0] = attacker;
+        controllers[0] = wrongControllerAddr;
         TimelockController timelock = TimelockController(
             payable(address(new YSTimelockController(TIMELOCK_DELAY, controllers, controllers, deployer)))
         );
         YSToken ysToken = new YSToken(bootstrapHolder);
-        YSGovernor governor = new YSGovernor(IVotes(address(ysToken)), timelock);
+        YSGovernor governor = new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
@@ -866,7 +933,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             abi.encodeWithSelector(
                 DeployYieldShieldProduction.ProductionProtocolTimelockRoleMismatch.selector,
                 timelock.PROPOSER_ROLE(),
-                attacker,
+                wrongControllerAddr,
                 address(governor)
             )
         );
@@ -1079,7 +1146,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             payable(address(new YSTimelockController(TIMELOCK_DELAY, emptyAccounts, emptyAccounts, deployer)))
         );
         ysToken = new YSToken(bootstrapHolder);
-        governor = new YSGovernor(IVotes(address(ysToken)), timelock);
+        governor = new YSGovernor(IVotes(address(ysToken)), timelock, deployer);
 
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(governor));
         timelock.grantRole(timelock.EXECUTOR_ROLE(), address(governor));

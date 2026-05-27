@@ -12,6 +12,7 @@ import {
 import { GovernorTimelockControl } from "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+import { YSTimelockController } from "./governance/YSTimelockController.sol";
 
 /// @title YSGovernor
 /// @author David Hawig
@@ -52,8 +53,12 @@ contract YSGovernor is
     error GovernorTimelockInvalidRole(
         address candidate, bytes32 role, address expectedMember, address actualMember, uint256 memberCount
     );
+    error GovernorTimelockInvalidInitialAdmin(
+        address candidate, address expectedBootstrapAdmin, address actualMember, uint256 memberCount
+    );
+    error GovernorTimelockInvalidInitialController(address candidate, address controller);
 
-    constructor(IVotes _token, TimelockController _timelock)
+    constructor(IVotes _token, TimelockController _timelock, address expectedBootstrapAdmin)
         Governor("YSGovernor")
         GovernorSettings(
             86400, // initialVotingDelay (seconds) - 1 day
@@ -66,7 +71,9 @@ contract YSGovernor is
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4) // 4% quorum
         GovernorTimelockControl(_timelock)
-    { }
+    {
+        _validateInitialTimelock(_timelock, expectedBootstrapAdmin);
+    }
 
     /// @notice Returns the quorum for a given timepoint, enforcing a minimum floor
     /// @dev Uses the greater of the percentage-based quorum and the absolute minimum
@@ -180,22 +187,101 @@ contract YSGovernor is
         _requireSoleRoleMember(candidate, CANCELLER_ROLE_VALUE, address(this));
     }
 
-    function _requireSoleRoleMember(address candidate, bytes32 role, address expectedMember) internal view {
-        (bool success, bytes memory data) =
-            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, role));
+    function _validateInitialTimelock(TimelockController initialTimelock, address expectedBootstrapAdmin)
+        internal
+        view
+    {
+        address candidate = address(initialTimelock);
+        if (candidate == address(0) || candidate.code.length == 0) revert GovernorInvalidTimelock(candidate);
+
+        bytes32 expectedCodehash = keccak256(type(YSTimelockController).runtimeCode);
+        if (candidate.codehash != expectedCodehash) {
+            revert GovernorTimelockImplementationMismatch(candidate, expectedCodehash, candidate.codehash);
+        }
+
+        (bool success, bytes memory data) = candidate.staticcall(abi.encodeWithSelector(GET_MIN_DELAY_SELECTOR));
         if (!success || data.length < 32) revert GovernorInvalidTimelock(candidate);
-        uint256 memberCount = abi.decode(data, (uint256));
+        uint256 minDelay = abi.decode(data, (uint256));
+        if (!_isLocalDevelopmentChain() && minDelay < MIN_GOVERNOR_TIMELOCK_DELAY) {
+            revert GovernorTimelockDelayTooShort(candidate, minDelay, MIN_GOVERNOR_TIMELOCK_DELAY);
+        }
+
+        _validateInitialDefaultAdmin(candidate, expectedBootstrapAdmin);
+        _validateInitialOperationalRoles(candidate);
+    }
+
+    function _validateInitialDefaultAdmin(address candidate, address expectedBootstrapAdmin) internal view {
+        uint256 memberCount = _roleMemberCount(candidate, DEFAULT_ADMIN_ROLE_VALUE);
+        if (memberCount == 1) {
+            address onlyMember = _roleMemberAt(candidate, DEFAULT_ADMIN_ROLE_VALUE, 0);
+            if (onlyMember != candidate) {
+                revert GovernorTimelockInvalidRole(
+                    candidate, DEFAULT_ADMIN_ROLE_VALUE, candidate, onlyMember, memberCount
+                );
+            }
+            return;
+        }
+
+        if (memberCount == 2) {
+            address firstMember = _roleMemberAt(candidate, DEFAULT_ADMIN_ROLE_VALUE, 0);
+            address secondMember = _roleMemberAt(candidate, DEFAULT_ADMIN_ROLE_VALUE, 1);
+            bool hasSelfAdmin = firstMember == candidate || secondMember == candidate;
+            address bootstrapAdmin = firstMember == candidate ? secondMember : firstMember;
+            if (hasSelfAdmin && bootstrapAdmin == expectedBootstrapAdmin) {
+                return;
+            }
+            revert GovernorTimelockInvalidInitialAdmin(candidate, expectedBootstrapAdmin, bootstrapAdmin, memberCount);
+        }
+
+        revert GovernorTimelockInvalidInitialAdmin(candidate, expectedBootstrapAdmin, address(0), memberCount);
+    }
+
+    function _validateInitialOperationalRoles(address candidate) internal view {
+        uint256 proposerCount = _roleMemberCount(candidate, PROPOSER_ROLE_VALUE);
+        uint256 executorCount = _roleMemberCount(candidate, EXECUTOR_ROLE_VALUE);
+        uint256 cancellerCount = _roleMemberCount(candidate, CANCELLER_ROLE_VALUE);
+        if (proposerCount == 0 && executorCount == 0 && cancellerCount == 0) {
+            return;
+        }
+        if (proposerCount != 1 || executorCount != 1 || cancellerCount != 1) {
+            revert GovernorTimelockInvalidInitialController(candidate, address(0));
+        }
+
+        address controller = _roleMemberAt(candidate, PROPOSER_ROLE_VALUE, 0);
+        if (
+            controller == address(0) || controller.code.length == 0
+                || _roleMemberAt(candidate, EXECUTOR_ROLE_VALUE, 0) != controller
+                || _roleMemberAt(candidate, CANCELLER_ROLE_VALUE, 0) != controller
+        ) {
+            revert GovernorTimelockInvalidInitialController(candidate, controller);
+        }
+    }
+
+    function _requireSoleRoleMember(address candidate, bytes32 role, address expectedMember) internal view {
+        uint256 memberCount = _roleMemberCount(candidate, role);
 
         address actualMember = address(0);
         if (memberCount == 1) {
-            (success, data) = candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_SELECTOR, role, uint256(0)));
-            if (!success || data.length < 32) revert GovernorInvalidTimelock(candidate);
-            actualMember = abi.decode(data, (address));
+            actualMember = _roleMemberAt(candidate, role, 0);
         }
 
         if (memberCount != 1 || actualMember != expectedMember) {
             revert GovernorTimelockInvalidRole(candidate, role, expectedMember, actualMember, memberCount);
         }
+    }
+
+    function _roleMemberCount(address candidate, bytes32 role) internal view returns (uint256 memberCount) {
+        (bool success, bytes memory data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_COUNT_SELECTOR, role));
+        if (!success || data.length < 32) revert GovernorInvalidTimelock(candidate);
+        memberCount = abi.decode(data, (uint256));
+    }
+
+    function _roleMemberAt(address candidate, bytes32 role, uint256 index) internal view returns (address member) {
+        (bool success, bytes memory data) =
+            candidate.staticcall(abi.encodeWithSelector(GET_ROLE_MEMBER_SELECTOR, role, index));
+        if (!success || data.length < 32) revert GovernorInvalidTimelock(candidate);
+        member = abi.decode(data, (address));
     }
 
     function _isLocalDevelopmentChain() internal view returns (bool) {

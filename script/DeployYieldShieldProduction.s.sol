@@ -202,7 +202,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("YS Token deployed at:", ysTokenAddr);
         console.log("Bootstrap holder:", bootstrapHolder);
 
-        YSGovernor governor = new YSGovernor(ysToken, timelock);
+        YSGovernor governor = new YSGovernor(ysToken, timelock, deployer);
         governorAddr = address(governor);
         console.log("YS Governor deployed at:", governorAddr);
 
@@ -543,7 +543,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionCodehash(name, contractAddress, _readRequiredProductionCodehash(name, envName));
     }
 
-    function _readRequiredProductionCodehash(bytes32 name, string memory envName) internal view returns (bytes32 codehash) {
+    function _readRequiredProductionCodehash(bytes32 name, string memory envName)
+        internal
+        view
+        returns (bytes32 codehash)
+    {
         codehash = vm.envOr(envName, bytes32(0));
         if (codehash == bytes32(0)) {
             revert ProductionProtocolCodehashRequired(name, envName);
