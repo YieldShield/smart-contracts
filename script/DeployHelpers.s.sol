@@ -266,11 +266,8 @@ contract ScaffoldETHDeploy is Script {
         address broadcastAddr,
         uint256 broadcastModifiedAt
     ) internal pure returns (address) {
-        deploymentModifiedAt;
-        broadcastModifiedAt;
-
         if (deploymentAddr != address(0) && broadcastAddr != address(0)) {
-            return deploymentAddr;
+            return broadcastModifiedAt > deploymentModifiedAt ? broadcastAddr : deploymentAddr;
         }
 
         if (deploymentAddr != address(0)) {
@@ -286,11 +283,8 @@ contract ScaffoldETHDeploy is Script {
         address[] memory broadcastAddresses,
         uint256 broadcastModifiedAt
     ) internal pure returns (address[] memory) {
-        deploymentModifiedAt;
-        broadcastModifiedAt;
-
         if (deploymentAddresses.length > 0 && broadcastAddresses.length > 0) {
-            return deploymentAddresses;
+            return broadcastModifiedAt > deploymentModifiedAt ? broadcastAddresses : deploymentAddresses;
         }
 
         if (deploymentAddresses.length > 0) {

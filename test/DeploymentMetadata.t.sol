@@ -41,6 +41,17 @@ contract DeployHelpersHarness is ScaffoldETHDeploy {
     ) external pure returns (address) {
         return _selectFreshestAddress(deploymentAddr, deploymentModifiedAt, broadcastAddr, broadcastModifiedAt);
     }
+
+    function selectFreshestAddressListHarness(
+        address[] memory deploymentAddresses,
+        uint256 deploymentModifiedAt,
+        address[] memory broadcastAddresses,
+        uint256 broadcastModifiedAt
+    ) external pure returns (address[] memory) {
+        return _selectFreshestAddressList(
+            deploymentAddresses, deploymentModifiedAt, broadcastAddresses, broadcastModifiedAt
+        );
+    }
 }
 
 contract DeploymentMetadataTest is Test {
@@ -188,12 +199,12 @@ contract DeploymentMetadataTest is Test {
         assertEq(deployHelpers.findAddressByName(json, "SplitRiskPoolFactory"), factory);
     }
 
-    function test_selectFreshestAddress_PrefersDeploymentMetadataWhenBothSourcesExist() public {
+    function test_selectFreshestAddress_PrefersNewerBroadcastWhenDeploymentIsOlder() public {
         (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID);
         address deploymentAddr = address(0x1001);
         address broadcastAddr = address(0x1002);
 
-        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 100, broadcastAddr, 200), deploymentAddr);
+        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 100, broadcastAddr, 200), broadcastAddr);
     }
 
     function test_selectFreshestAddress_PrefersNewerDeploymentWhenBroadcastIsOlder() public {
@@ -202,6 +213,29 @@ contract DeploymentMetadataTest is Test {
         address broadcastAddr = address(0x2002);
 
         assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 200, broadcastAddr, 100), deploymentAddr);
+    }
+
+    function test_selectFreshestAddress_PrefersDeploymentOnEqualMtime() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 20);
+        address deploymentAddr = address(0x3001);
+        address broadcastAddr = address(0x3002);
+
+        assertEq(deployHelpers.selectFreshestAddressHarness(deploymentAddr, 200, broadcastAddr, 200), deploymentAddr);
+    }
+
+    function test_selectFreshestAddressList_PrefersNewerBroadcastList() public {
+        (DeployHelpersHarness deployHelpers,) = _newDeployHelpers(FRESHEST_RESOLUTION_TEST_CHAIN_ID + 21);
+        address[] memory deploymentAddresses = new address[](1);
+        deploymentAddresses[0] = address(0x4001);
+        address[] memory broadcastAddresses = new address[](2);
+        broadcastAddresses[0] = address(0x4002);
+        broadcastAddresses[1] = address(0x4003);
+
+        address[] memory resolved =
+            deployHelpers.selectFreshestAddressListHarness(deploymentAddresses, 100, broadcastAddresses, 200);
+        assertEq(resolved.length, 2);
+        assertEq(resolved[0], broadcastAddresses[0]);
+        assertEq(resolved[1], broadcastAddresses[1]);
     }
 
     function test_resolveDeploymentAddresses_FallsBackToBroadcastWhenDeploymentFileLacksRequestedEntries() public {
