@@ -89,6 +89,9 @@ contract SplitRiskPoolFactory is
     error CompositeOracleAuthorizedCallersPresent(address oracle, uint256 count);
     error GovernanceTransferPending(address pendingGovernance);
     error PoolGovernanceTransfersPending(uint256 remainingPools);
+    error PoolGovernanceTransferOutOfSync(
+        address pool, address currentGovernance, address pendingGovernance, address expectedGovernance
+    );
     error ActivePoolUsesCompositeOracle(address pool, address oracle);
 
     // Governance-controlled protocol parameters
@@ -260,13 +263,29 @@ contract SplitRiskPoolFactory is
 
     /// @notice Accepts the factory's current governance timelock on pools that were pre-staged.
     /// @dev Call after `acceptGovernanceTimelock` on the factory. Pools outside the requested
-    ///      page, or pools not staged for the current timelock, are left untouched.
+    ///      page are left untouched. A pool inside the page must already use, or be pending for,
+    ///      the factory's current governance timelock.
     function acceptPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external override onlyGovernance {
         address currentGovernance = governanceTimelock();
         uint256 end = _poolPageEnd(offset, limit);
         for (uint256 i = offset; i < end;) {
             SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
-            if (pool.pendingGovernanceTimelock() == currentGovernance) {
+            address poolGovernance = pool.governanceTimelock();
+            if (poolGovernance == currentGovernance) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
+
+            address poolPendingGovernance = pool.pendingGovernanceTimelock();
+            if (poolPendingGovernance != currentGovernance) {
+                revert PoolGovernanceTransferOutOfSync(
+                    address(pool), poolGovernance, poolPendingGovernance, currentGovernance
+                );
+            }
+
+            if (poolPendingGovernance == currentGovernance) {
                 pool.acceptGovernanceTimelockFromFactory(currentGovernance);
             }
             unchecked {
@@ -297,13 +316,23 @@ contract SplitRiskPoolFactory is
     }
 
     function _remainingPoolGovernanceTransfers(address pendingGovernance) internal view returns (uint256) {
-        if (pendingGovernance == address(0) || pools.length == 0) {
+        uint256 totalPools = pools.length;
+        if (pendingGovernance == address(0) || totalPools == 0) {
             return 0;
         }
-        if (_pendingGovernancePoolTransferTarget != pendingGovernance) {
-            return pools.length;
+
+        uint256 remainingPools;
+        for (uint256 i = 0; i < totalPools;) {
+            SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
+            if (pool.governanceTimelock() != pendingGovernance && pool.pendingGovernanceTimelock() != pendingGovernance)
+            {
+                ++remainingPools;
+            }
+            unchecked {
+                ++i;
+            }
         }
-        return _pendingGovernancePoolTransfersRemaining;
+        return remainingPools;
     }
 
     function _markPoolGovernanceTransferStaged(address pool, address targetGovernance) internal {
