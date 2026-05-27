@@ -89,6 +89,10 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         );
     }
 
+    function requireProductionPythOracleCodehashHarness(address pythOracleAddr, string memory envName) external view {
+        _requireMandatoryProductionCodehash(bytes32("PythOracle"), pythOracleAddr, envName);
+    }
+
     function _readMasterCopy(address holder) internal view returns (address singleton) {
         (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("masterCopy()"));
         if (success && data.length >= 32) {
@@ -192,6 +196,7 @@ contract SafeLikeBootstrapHolder {
 contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     bytes32 internal constant ERC1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    string internal constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
     uint256 internal constant TIMELOCK_DELAY = 2 days;
 
     address internal deployer = address(this);
@@ -606,6 +611,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         (, TimelockController timelock,) = _deployGovernance();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -658,6 +664,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -732,6 +739,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -776,6 +784,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -807,6 +816,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -846,6 +856,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -876,6 +887,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -922,6 +934,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         FakeProductionOwnableOracle fakeERC4626OracleFeed = new FakeProductionOwnableOracle();
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -961,11 +974,74 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function test_ProductionProtocol_ValidationRequiresPythOracleCodehashEnv() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        string memory missingEnvName = "YS_TEST_REQUIRED_PYTH_ORACLE_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashRequired.selector,
+                bytes32("PythOracle"),
+                missingEnvName
+            )
+        );
+        harness.requireProductionPythOracleCodehashHarness(address(pythOracle), missingEnvName);
+    }
+
+    function test_ProductionProtocol_ValidationRejectsUnexpectedPythOracleBytecode() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        PythOracle expectedPythOracle = new PythOracle(dummyPyth, 60);
+        FakeProductionOwnableOracle fakePythOracle = new FakeProductionOwnableOracle();
+        _pinPythOracleCodehash(address(expectedPythOracle));
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(expectedPythOracle));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        compositeOracle.transferOwnership(address(factory));
+        fakePythOracle.transferOwnership(address(factory));
+        erc4626OracleFeed.transferOwnership(address(factory));
+
+        vm.startPrank(address(harness));
+        factory.setCompositeOracle(address(compositeOracle));
+        factory.setDefaultProtocolFeeRecipient(address(timelock));
+        factory.setManagedPythOracle(address(fakePythOracle));
+        factory.setManagedERC4626OracleFeed(address(erc4626OracleFeed));
+        factory.finalizeBootstrap();
+        factory.transferOwnership(address(timelock));
+        vm.stopPrank();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashMismatch.selector,
+                bytes32("PythOracle"),
+                address(fakePythOracle),
+                address(fakePythOracle).codehash,
+                address(expectedPythOracle).codehash
+            )
+        );
+        harness.validateProductionProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(fakePythOracle),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+    }
+
     function test_ProductionProtocol_FinalizerRejectsUnexpectedOracleOwner() public {
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         PythOracle pythOracle = new PythOracle(dummyPyth, 60);
+        _pinPythOracleCodehash(address(pythOracle));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(pythOracle));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1015,5 +1091,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
         assertEq(ysTimelock.getRoleMemberCount(ysTimelock.DEFAULT_ADMIN_ROLE()), 1);
         assertEq(ysTimelock.getRoleMember(ysTimelock.DEFAULT_ADMIN_ROLE(), 0), address(timelock));
+    }
+
+    function _pinPythOracleCodehash(address pythOracleAddr) internal {
+        vm.setEnv(ENV_PYTH_ORACLE_CODEHASH, vm.toString(pythOracleAddr.codehash));
     }
 }

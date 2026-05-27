@@ -57,6 +57,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_GOVERNOR = "YSGovernor";
     string private constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
     string private constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
+    string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
     bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
@@ -82,6 +83,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionProtocolAuthorizedCallersPresent(address compositeOracle, uint256 count);
     error ProductionProtocolBootstrapModeOpen(address factory);
     error ProductionProtocolLaunchAssetsPresent(address factory);
+    error ProductionProtocolCodehashRequired(bytes32 name, string envName);
     error ProductionProtocolCodehashMismatch(bytes32 name, address contractAddress, bytes32 actual, bytes32 expected);
     error ProductionProtocolUUPSImplementationInvalid(bytes32 name, address implementation, bytes32 actualSlot);
     error ProductionProtocolGovernorTimelockMismatch(
@@ -92,6 +94,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
 
         (address ysTokenAddr, address timelockAddr, address governorAddr, address bootstrapHolder) = deployGovernance();
         (address factoryAddr, address compositeOracleAddr, address pythOracleAddr, address erc4626OracleFeedAddr) =
@@ -120,6 +123,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
         _finalizeProductionProtocolBootstrap(
             factoryAddr,
             factoryImplementationAddr,
@@ -341,7 +345,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionContractCodehash(
             NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
+        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         _requireProductionContractCodehash(
             NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
@@ -447,7 +451,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionContractCodehash(
             NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireProductionContract(NAME_PYTH_ORACLE, pythOracleAddr);
+        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         _requireProductionContractCodehash(
             NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
@@ -528,6 +532,21 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         bytes32 expectedCodehash = vm.envOr(envName, bytes32(0));
         if (expectedCodehash != bytes32(0)) {
             _requireProductionCodehash(name, contractAddress, expectedCodehash);
+        }
+    }
+
+    function _requireMandatoryProductionCodehash(bytes32 name, address contractAddress, string memory envName)
+        internal
+        view
+    {
+        _requireProductionContract(name, contractAddress);
+        _requireProductionCodehash(name, contractAddress, _readRequiredProductionCodehash(name, envName));
+    }
+
+    function _readRequiredProductionCodehash(bytes32 name, string memory envName) internal view returns (bytes32 codehash) {
+        codehash = vm.envOr(envName, bytes32(0));
+        if (codehash == bytes32(0)) {
+            revert ProductionProtocolCodehashRequired(name, envName);
         }
     }
 
