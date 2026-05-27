@@ -113,6 +113,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
         _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
 
         (address ysTokenAddr, address timelockAddr, address governorAddr, address bootstrapHolder) = deployGovernance();
@@ -142,6 +144,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
         _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
         _finalizeProductionProtocolBootstrap(
             factoryAddr,
@@ -360,11 +364,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
-        _requireOptionalProductionCodehash(
+        _requireMandatoryProductionCodehash(
             NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
         );
         _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
-        _requireOptionalProductionCodehash(
+        _requireMandatoryProductionCodehash(
             NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
         );
         _requireProductionContractCodehash(
@@ -466,11 +470,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal view {
         _requireProductionContract(NAME_FACTORY, factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
-        _requireOptionalProductionCodehash(
+        _requireMandatoryProductionCodehash(
             NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
         );
         _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
-        _requireOptionalProductionCodehash(
+        _requireMandatoryProductionCodehash(
             NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
         );
         _requireProductionContractCodehash(
@@ -550,16 +554,6 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
     }
 
-    function _requireOptionalProductionCodehash(bytes32 name, address contractAddress, string memory envName)
-        internal
-        view
-    {
-        bytes32 expectedCodehash = vm.envOr(envName, bytes32(0));
-        if (expectedCodehash != bytes32(0)) {
-            _requireProductionCodehash(name, contractAddress, expectedCodehash);
-        }
-    }
-
     function _requireMandatoryProductionCodehash(bytes32 name, address contractAddress, string memory envName)
         internal
         view
@@ -571,6 +565,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     function _readRequiredProductionCodehash(bytes32 name, string memory envName)
         internal
         view
+        virtual
         returns (bytes32 codehash)
     {
         codehash = vm.envOr(envName, bytes32(0));

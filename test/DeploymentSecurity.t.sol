@@ -18,6 +18,10 @@ import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 
 contract ProductionDeployHarness is DeployYieldShieldProduction {
+    bytes32 internal expectedFactoryImplementationCodehash;
+    bytes32 internal expectedPoolImplementationCodehash;
+    bytes32 internal expectedPythOracleCodehash;
+
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
             holder,
@@ -90,6 +94,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address governorAddr,
         address bootstrapAdmin
     ) external {
+        _pinProductionProtocolCodehashesForHarness(factoryImplementationAddr, poolImplementationAddr, pythOracleAddr);
         _finalizeProductionProtocolBootstrap(
             factoryAddr,
             factoryImplementationAddr,
@@ -112,7 +117,8 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr
-    ) external view {
+    ) external {
+        _pinProductionProtocolCodehashesForHarness(factoryImplementationAddr, poolImplementationAddr, pythOracleAddr);
         _validateProductionProtocolFinalized(
             factoryAddr,
             factoryImplementationAddr,
@@ -125,8 +131,77 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         );
     }
 
+    function validateProductionProtocolFinalizedWithExpectedPythCodehashHarness(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address pythOracleAddr,
+        address expectedPythOracleCodehashAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr
+    ) external {
+        _pinProductionProtocolCodehashesForHarness(
+            factoryImplementationAddr, poolImplementationAddr, expectedPythOracleCodehashAddr
+        );
+        _validateProductionProtocolFinalized(
+            factoryAddr,
+            factoryImplementationAddr,
+            poolImplementationAddr,
+            compositeOracleAddr,
+            pythOracleAddr,
+            erc4626OracleFeedAddr,
+            timelockAddr,
+            governorAddr
+        );
+    }
+
+    function _pinProductionProtocolCodehashesForHarness(
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address pythOracleCodehashAddr
+    ) internal {
+        expectedFactoryImplementationCodehash = factoryImplementationAddr.codehash;
+        expectedPoolImplementationCodehash = poolImplementationAddr.codehash;
+        expectedPythOracleCodehash = pythOracleCodehashAddr.codehash;
+    }
+
+    function _readRequiredProductionCodehash(bytes32 name, string memory envName)
+        internal
+        view
+        override
+        returns (bytes32 codehash)
+    {
+        if (name == bytes32("FactoryImplementation") && expectedFactoryImplementationCodehash != bytes32(0)) {
+            return expectedFactoryImplementationCodehash;
+        }
+        if (name == bytes32("PoolImplementation") && expectedPoolImplementationCodehash != bytes32(0)) {
+            return expectedPoolImplementationCodehash;
+        }
+        if (name == bytes32("PythOracle") && expectedPythOracleCodehash != bytes32(0)) {
+            return expectedPythOracleCodehash;
+        }
+
+        return super._readRequiredProductionCodehash(name, envName);
+    }
+
     function requireProductionPythOracleCodehashHarness(address pythOracleAddr, string memory envName) external view {
         _requireMandatoryProductionCodehash(bytes32("PythOracle"), pythOracleAddr, envName);
+    }
+
+    function requireProductionFactoryImplementationCodehashHarness(
+        address factoryImplementationAddr,
+        string memory envName
+    ) external view {
+        _requireMandatoryProductionCodehash(bytes32("FactoryImplementation"), factoryImplementationAddr, envName);
+    }
+
+    function requireProductionPoolImplementationCodehashHarness(address poolImplementationAddr, string memory envName)
+        external
+        view
+    {
+        _requireMandatoryProductionCodehash(bytes32("PoolImplementation"), poolImplementationAddr, envName);
     }
 
     function _readMasterCopy(address holder) internal view returns (address singleton) {
@@ -295,6 +370,8 @@ contract SafeLikeBootstrapHolder {
 contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     bytes32 internal constant ERC1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    string internal constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
+    string internal constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     string internal constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
     uint256 internal constant TIMELOCK_DELAY = 2 days;
 
@@ -939,6 +1016,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
         address directOracleCaller = address(0xCA11);
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         compositeOracle.setAuthorizedCaller(directOracleCaller, true);
         compositeOracle.transferOwnership(address(harness));
@@ -1014,6 +1094,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory =
             _deployFactory(address(harness), address(wrongTimelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         compositeOracle.transferOwnership(address(factory));
         pythOracle.transferOwnership(address(factory));
@@ -1059,6 +1142,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
         SplitRiskPoolFactory wrongFactoryImplementation = new SplitRiskPoolFactory();
+        _pinProductionProtocolCodehashes(
+            address(wrongFactoryImplementation), address(poolImplementation), address(pythOracle)
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1091,6 +1177,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPool wrongPoolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(wrongPoolImplementation), address(pythOracle)
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1131,6 +1220,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1162,6 +1254,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         compositeOracle.transferOwnership(address(factory));
         pythOracle.transferOwnership(address(factory));
@@ -1209,6 +1304,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         compositeOracle.transferOwnership(address(factory));
         pythOracle.transferOwnership(address(factory));
@@ -1260,6 +1358,38 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         harness.requireProductionPythOracleCodehashHarness(address(pythOracle), missingEnvName);
     }
 
+    function test_ProductionProtocol_ValidationRequiresFactoryImplementationCodehashEnv() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        SplitRiskPoolFactory factoryImplementation = new SplitRiskPoolFactory();
+        string memory missingEnvName = "YS_TEST_REQUIRED_FACTORY_IMPLEMENTATION_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashRequired.selector,
+                bytes32("FactoryImplementation"),
+                missingEnvName
+            )
+        );
+        harness.requireProductionFactoryImplementationCodehashHarness(address(factoryImplementation), missingEnvName);
+    }
+
+    function test_ProductionProtocol_ValidationRequiresPoolImplementationCodehashEnv() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        string memory missingEnvName = "YS_TEST_REQUIRED_POOL_IMPLEMENTATION_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashRequired.selector,
+                bytes32("PoolImplementation"),
+                missingEnvName
+            )
+        );
+        harness.requireProductionPoolImplementationCodehashHarness(address(poolImplementation), missingEnvName);
+    }
+
     function test_ProductionProtocol_ValidationRejectsUnexpectedPythOracleBytecode() public {
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
@@ -1271,6 +1401,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(expectedPythOracle)
+        );
 
         compositeOracle.transferOwnership(address(factory));
         fakePythOracle.transferOwnership(address(factory));
@@ -1294,12 +1427,13 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
                 address(expectedPythOracle).codehash
             )
         );
-        harness.validateProductionProtocolFinalizedHarness(
+        harness.validateProductionProtocolFinalizedWithExpectedPythCodehashHarness(
             address(factory),
             _proxyImplementation(address(factory)),
             address(poolImplementation),
             address(compositeOracle),
             address(fakePythOracle),
+            address(expectedPythOracle),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor)
@@ -1316,6 +1450,9 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        _pinProductionProtocolCodehashes(
+            _proxyImplementation(address(factory)), address(poolImplementation), address(pythOracle)
+        );
 
         address unexpectedOwner = address(0xA11CE);
         compositeOracle.transferOwnership(unexpectedOwner);
@@ -1365,5 +1502,15 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function _pinPythOracleCodehash(address pythOracleAddr) internal {
         vm.setEnv(ENV_PYTH_ORACLE_CODEHASH, vm.toString(pythOracleAddr.codehash));
+    }
+
+    function _pinProductionProtocolCodehashes(
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address pythOracleAddr
+    ) internal {
+        vm.setEnv(ENV_FACTORY_IMPLEMENTATION_CODEHASH, vm.toString(factoryImplementationAddr.codehash));
+        vm.setEnv(ENV_POOL_IMPLEMENTATION_CODEHASH, vm.toString(poolImplementationAddr.codehash));
+        _pinPythOracleCodehash(pythOracleAddr);
     }
 }
