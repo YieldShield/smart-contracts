@@ -651,47 +651,63 @@ contract DeployYieldShield is ScaffoldETHDeploy {
         address backupAddr = backupOracleAddr; // Will be address(0) if not set (testnet/mainnet)
 
         // Standard stablecoins and yield tokens - 100% minimum collateral (global minimum applies)
-        factory.addTokenInitial(address(susde), "Staked USDe", "SUSDE", underlyingOracleAddr, backupAddr, 10000);
-        factory.addTokenInitial(address(sdai), "Savings DAI", "SDAI", underlyingOracleAddr, backupAddr, 10000);
-        factory.addTokenInitial(address(usdy), "Ondo USD Yield", "USDY", underlyingOracleAddr, backupAddr, 10000);
+        factory.addTokenInitial(address(susde), "Staked USDe", "SUSDE", underlyingOracleAddr, backupAddr, 10000, true);
+        factory.addTokenInitial(address(sdai), "Savings DAI", "SDAI", underlyingOracleAddr, backupAddr, 10000, true);
+        factory.addTokenInitial(address(usdy), "Ondo USD Yield", "USDY", underlyingOracleAddr, backupAddr, 10000, true);
         factory.addTokenInitial(
-            address(jaaa), "Janus Henderson Anemoy AAA CLO Fund", "JAAA", underlyingOracleAddr, backupAddr, 10000
+            address(jaaa), "Janus Henderson Anemoy AAA CLO Fund", "JAAA", underlyingOracleAddr, backupAddr, 10000, true
         );
         factory.addTokenInitial(
-            address(ustb), "U.S. Government Securities Fund", "USTB", underlyingOracleAddr, backupAddr, 10000
-        );
-        factory.addTokenInitial(address(usyc), "Circle Yield Fund", "USYC", underlyingOracleAddr, backupAddr, 10000);
-        factory.addTokenInitial(
-            address(rlp), "Resolv Liquidity Provider Token", "RLP", underlyingOracleAddr, backupAddr, 10000
+            address(ustb), "U.S. Government Securities Fund", "USTB", underlyingOracleAddr, backupAddr, 10000, true
         );
         factory.addTokenInitial(
-            address(susds), "Staked USD Sky Protocol", "SUSDS", underlyingOracleAddr, backupAddr, 10000
+            address(usyc), "Circle Yield Fund", "USYC", underlyingOracleAddr, backupAddr, 10000, true
+        );
+        factory.addTokenInitial(
+            address(rlp), "Resolv Liquidity Provider Token", "RLP", underlyingOracleAddr, backupAddr, 10000, true
+        );
+        factory.addTokenInitial(
+            address(susds), "Staked USD Sky Protocol", "SUSDS", underlyingOracleAddr, backupAddr, 10000, true
         );
         // USDC remains an oracle underlying/backup asset, but direct 6-decimal pool assets are unsupported.
 
         // gtUSDC uses ERC4626OracleFeed for NAV-based pricing.
         address gtUsdcBackup = backupErc4626FeedAddr;
         factory.addTokenInitial(
-            address(gtusdc), "Gauntlet USDC Prime", "gtUSDC", address(erc4626Feed), gtUsdcBackup, 10000
+            address(gtusdc), "Gauntlet USDC Prime", "gtUSDC", address(erc4626Feed), gtUsdcBackup, 10000, true
         );
 
         // USD0 underlying token
-        factory.addTokenInitial(address(usd0), "USD0 Stablecoin", "USD0", underlyingOracleAddr, backupAddr, 10000);
+        factory.addTokenInitial(address(usd0), "USD0 Stablecoin", "USD0", underlyingOracleAddr, backupAddr, 10000, true);
 
         // New Morpho vault tokens with ERC4626 NAV pricing.
         address vaultBackup = backupErc4626FeedAddr;
-        factory.addTokenInitial(address(mcusd0), "MEV Capital USD0", "mcUSD0", address(erc4626Feed), vaultBackup, 10000);
         factory.addTokenInitial(
-            address(steakusdc), "Steakhouse High Yield USDC", "steakUSDC", address(erc4626Feed), vaultBackup, 10000
+            address(mcusd0), "MEV Capital USD0", "mcUSD0", address(erc4626Feed), vaultBackup, 10000, true
         );
         factory.addTokenInitial(
-            address(skyusds), "Sky.money USDS Risk Capital", "skyUSDS", address(erc4626Feed), vaultBackup, 10000
+            address(steakusdc),
+            "Steakhouse High Yield USDC",
+            "steakUSDC",
+            address(erc4626Feed),
+            vaultBackup,
+            10000,
+            true
+        );
+        factory.addTokenInitial(
+            address(skyusds), "Sky.money USDS Risk Capital", "skyUSDS", address(erc4626Feed), vaultBackup, 10000, true
         );
 
         // Volatile assets (ETH, BTC derivatives) - 150% minimum collateral when used as backing asset
-        factory.addTokenInitial(address(steth), "Lido Staked Ether", "STETH", underlyingOracleAddr, backupAddr, 15000);
-        factory.addTokenInitial(address(stone), "Stargate Finance", "STONE", underlyingOracleAddr, backupAddr, 15000);
-        factory.addTokenInitial(address(lbtc), "Lightning Bitcoin", "LBTC", underlyingOracleAddr, backupAddr, 15000);
+        factory.addTokenInitial(
+            address(steth), "Lido Staked Ether", "STETH", underlyingOracleAddr, backupAddr, 15000, true
+        );
+        factory.addTokenInitial(
+            address(stone), "Stargate Finance", "STONE", underlyingOracleAddr, backupAddr, 15000, true
+        );
+        factory.addTokenInitial(
+            address(lbtc), "Lightning Bitcoin", "LBTC", underlyingOracleAddr, backupAddr, 15000, true
+        );
 
         if (isLocalNetwork) {
             console.log("Whitelisted 17 tokens with local oracle feeds");

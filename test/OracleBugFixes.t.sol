@@ -214,7 +214,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
     /// @notice Test that removeToken clears tokenInfo mapping
     function test_removeToken_ClearsTokenInfo() public {
         // First add a token
-        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000);
+        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000, true);
 
         // Verify token is whitelisted and has tokenInfo
         assertTrue(factory.isWhitelisted(address(vaultA)), "Token should be whitelisted");
@@ -250,7 +250,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
     /// @notice Test that re-whitelisting a token with new parameters works correctly
     function test_removeToken_ThenReAdd_UsesNewParams() public {
         // Add token with initial params
-        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000);
+        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000, true);
 
         // Verify initial params
         (,,,,, uint256 minCollateral1) = factory.tokenInfo(address(vaultA));
@@ -260,7 +260,7 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
         _removeFactoryTokenAfterOracleSchedule(address(vaultA));
 
         // Re-add with different params
-        factory.addTokenInitial(address(vaultA), "Vault A v2", "vTKNA2", address(mockOracle), address(0), 20000);
+        factory.addTokenInitial(address(vaultA), "Vault A v2", "vTKNA2", address(mockOracle), address(0), 20000, true);
 
         // Verify new params are used
         (string memory name, string memory symbol,,,, uint256 minCollateral2) = factory.tokenInfo(address(vaultA));
@@ -272,8 +272,8 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
     /// @notice Test that multiple tokens can be added and removed independently
     function test_removeToken_IndependentOfOtherTokens() public {
         // Add two tokens
-        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000);
-        factory.addTokenInitial(address(vaultB), "Vault B", "vTKNB", address(mockOracle), address(0), 12000);
+        factory.addTokenInitial(address(vaultA), "Vault A", "vTKNA", address(mockOracle), address(0), 15000, true);
+        factory.addTokenInitial(address(vaultB), "Vault B", "vTKNB", address(mockOracle), address(0), 12000, true);
 
         // Verify both are whitelisted
         assertTrue(factory.isWhitelisted(address(vaultA)), "VaultA should be whitelisted");

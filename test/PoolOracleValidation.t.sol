@@ -50,8 +50,10 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracle(address(compositeOracle));
         factory.setCompositeOracleAuthorizedCaller(address(this), true);
 
-        factory.addTokenInitial(address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(backingToken), "Backing Token", "BKT", address(oracle), address(0), 10000);
+        factory.addTokenInitial(
+            address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000, true
+        );
+        factory.addTokenInitial(address(backingToken), "Backing Token", "BKT", address(oracle), address(0), 10000, true);
         factory.setDefaultProtocolFeeRecipient(protocolFeeRecipient);
 
         _approveCreationBond();
@@ -113,7 +115,13 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
             )
         );
         factory.addToken(
-            address(newBackingToken), "New Backing Token", "NBKT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newBackingToken),
+            "New Backing Token",
+            "NBKT",
+            address(noCircuitBreakerFeed),
+            address(0),
+            10000,
+            true
         );
         vm.stopPrank();
     }
@@ -131,7 +139,13 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
             )
         );
         factory.addToken(
-            address(newShieldedToken), "New Shielded Token", "NSHT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newShieldedToken),
+            "New Shielded Token",
+            "NSHT",
+            address(noCircuitBreakerFeed),
+            address(0),
+            10000,
+            true
         );
         vm.stopPrank();
     }
@@ -142,7 +156,9 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
         tinyFeed.setPrice(address(newShieldedToken), 1);
 
         vm.startPrank(governance);
-        factory.addToken(address(newShieldedToken), "New Shielded Token", "NSHT", address(tinyFeed), address(0), 10000);
+        factory.addToken(
+            address(newShieldedToken), "New Shielded Token", "NSHT", address(tinyFeed), address(0), 10000, true
+        );
         vm.stopPrank();
 
         _approveCreationBond();
@@ -165,7 +181,9 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
                 CompositeOracle.CircuitBreakerNotSupported.selector, address(newShieldedToken), address(emaFeed)
             )
         );
-        factory.addToken(address(newShieldedToken), "New Shielded Token", "NSHT", address(emaFeed), address(0), 10000);
+        factory.addToken(
+            address(newShieldedToken), "New Shielded Token", "NSHT", address(emaFeed), address(0), 10000, true
+        );
         vm.stopPrank();
     }
 
@@ -182,7 +200,13 @@ contract PoolOracleValidationTest is Test, FactoryProxyTestBase {
             )
         );
         factory.addToken(
-            address(newBackingToken), "New Backing Token", "NBKT", address(noCircuitBreakerFeed), address(0), 10000
+            address(newBackingToken),
+            "New Backing Token",
+            "NBKT",
+            address(noCircuitBreakerFeed),
+            address(0),
+            10000,
+            true
         );
         vm.stopPrank();
     }

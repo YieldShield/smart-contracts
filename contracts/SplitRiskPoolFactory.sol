@@ -952,12 +952,15 @@ contract SplitRiskPoolFactory is
      *      the oracle feed(s) in the CompositeOracle. If backupOracleFeed is provided,
      *      dual-feed mode is enabled with challenge mechanism support.
      *      Tokens must expose a valid ERC20 decimals() value supported by pool scaling math.
+     *      Governance must explicitly acknowledge that the token's wallet balances are static
+     *      and not rebasing, elastic, or share-indexed.
      * @param token Address of the token to add
      * @param name Name of the token
      * @param symbol Symbol of the token
      * @param primaryOracleFeed Address of the primary oracle feed for this token's price
      * @param backupOracleFeed Address of the backup oracle feed (address(0) for single-feed mode)
      * @param minCollateralRatioBp Minimum collateral ratio (basis points) when used as backing asset
+     * @param staticBalanceAcknowledged Explicit acknowledgement that balances are static
      */
     function addToken(
         address token,
@@ -965,9 +968,12 @@ contract SplitRiskPoolFactory is
         string memory symbol,
         address primaryOracleFeed,
         address backupOracleFeed,
-        uint256 minCollateralRatioBp
+        uint256 minCollateralRatioBp,
+        bool staticBalanceAcknowledged
     ) external onlyGovernance {
-        _addToken(token, name, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp);
+        _addToken(
+            token, name, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp, staticBalanceAcknowledged
+        );
     }
 
     /**
@@ -976,12 +982,15 @@ contract SplitRiskPoolFactory is
      *      After bootstrap is finalized, only governance can continue onboarding tokens.
      *      If backupOracleFeed is provided, dual-feed mode is enabled.
      *      Tokens must expose a valid ERC20 decimals() value supported by pool scaling math.
+     *      The caller must explicitly acknowledge that the token's wallet balances are static
+     *      and not rebasing, elastic, or share-indexed.
      * @param token Address of the token to add
      * @param name Name of the token
      * @param symbol Symbol of the token
      * @param primaryOracleFeed Address of the primary oracle feed for this token's price
      * @param backupOracleFeed Address of the backup oracle feed (address(0) for single-feed mode)
      * @param minCollateralRatioBp Minimum collateral ratio (basis points) when used as backing asset
+     * @param staticBalanceAcknowledged Explicit acknowledgement that balances are static
      */
     function addTokenInitial(
         address token,
@@ -989,10 +998,13 @@ contract SplitRiskPoolFactory is
         string memory symbol,
         address primaryOracleFeed,
         address backupOracleFeed,
-        uint256 minCollateralRatioBp
+        uint256 minCollateralRatioBp,
+        bool staticBalanceAcknowledged
     ) external {
         _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
-        _addToken(token, name, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp);
+        _addToken(
+            token, name, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp, staticBalanceAcknowledged
+        );
     }
 
     /**
@@ -1606,11 +1618,13 @@ contract SplitRiskPoolFactory is
         string memory symbol,
         address primaryOracleFeed,
         address backupOracleFeed,
-        uint256 minCollateralRatioBp
+        uint256 minCollateralRatioBp,
+        bool staticBalanceAcknowledged
     ) internal {
         if (primaryOracleFeed == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _validateMinCollateralRatioBp(minCollateralRatioBp);
         _validateTokenDecimals(token);
+        if (!staticBalanceAcknowledged) revert ErrorsLib.StaticBalanceAcknowledgementRequired(token);
         _validateStaticBalanceToken(token);
         TokenWhitelistLib.addToken(whitelistedTokens, isWhitelisted, token);
 

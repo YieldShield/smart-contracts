@@ -435,8 +435,8 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         vm.prank(governance);
         factory.setMinimumCreationBondUsd(0);
 
-        factory.addTokenInitial(address(shieldedToken), "SHIELD", "SHIELD", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(backingToken), "BACK", "BACK", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(shieldedToken), "SHIELD", "SHIELD", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(backingToken), "BACK", "BACK", address(oracle), address(0), 10000, true);
         factory.setTokenRequiresStrictProtectedPrice(address(backingToken), true);
 
         address poolAddress =

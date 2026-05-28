@@ -289,8 +289,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         // Whitelist tokens with oracle feed (required for pool creation)
         // Using address(0) for backup oracle = single-feed mode
-        factory.addTokenInitial(address(tokenA), "Token A", "TKNA", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(tokenB), "Token B", "TKNB", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(tokenA), "Token A", "TKNA", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(tokenB), "Token B", "TKNB", address(oracle), address(0), 10000, true);
 
         // Set protocol fee recipient (required for pool creation)
         factory.setDefaultProtocolFeeRecipient(address(this));
@@ -415,7 +415,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         feeToken = new SenderFeeToken(1_000);
         oracle.setPrice(address(feeToken), 1e8);
         compositeOracle.setTokenOracleFeedWithType(address(feeToken), address(oracle), "mock");
-        factory.addTokenInitial(address(feeToken), "Sender Fee Token", "SFEE", address(oracle), address(0), 10_000);
+        factory.addTokenInitial(
+            address(feeToken), "Sender Fee Token", "SFEE", address(oracle), address(0), 10_000, true
+        );
 
         bondAmount = _defaultCreationBondAmount(address(feeToken));
         extraDebit = (bondAmount * feeToken.senderFeeBps()) / 10_000;
@@ -758,7 +760,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         backupOracle.setPrice(address(dualFeedToken), 1e8);
 
         factory.addTokenInitial(
-            address(dualFeedToken), "Dual Feed Token", "DFT", address(oracle), address(backupOracle), 10000
+            address(dualFeedToken), "Dual Feed Token", "DFT", address(oracle), address(backupOracle), 10000, true
         );
 
         CompositeOracle newOracle = new CompositeOracle();
@@ -1100,7 +1102,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(this))
         );
-        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, true);
     }
 
     function testCannotAuthorizeCompositeOracleCallerAfterBootstrapFinalization() public {
@@ -1118,9 +1120,30 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.finalizeBootstrap();
 
         vm.prank(governanceTimelock);
-        factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+        factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, true);
 
         assertTrue(factory.isWhitelisted(address(tokenC)), "Governance should retain token onboarding control");
+    }
+
+    function testAddTokenRequiresStaticBalanceAcknowledgement() public {
+        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
+        oracle.setPrice(address(tokenC), 1e8);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(tokenC))
+        );
+        factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, false);
+    }
+
+    function testAddTokenInitialRequiresStaticBalanceAcknowledgement() public {
+        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
+        oracle.setPrice(address(tokenC), 1e8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(tokenC))
+        );
+        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, false);
     }
 
     function testAddTokenRejectsScaledBalanceToken() public {
@@ -1131,7 +1154,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledToken))
         );
-        factory.addToken(address(scaledToken), "Scaled Balance Token", "SBT", address(oracle), address(0), 10000);
+        factory.addToken(address(scaledToken), "Scaled Balance Token", "SBT", address(oracle), address(0), 10000, true);
     }
 
     function testAddTokenRejectsSharesBalanceToken() public {
@@ -1142,7 +1165,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(sharesToken))
         );
         factory.addTokenInitial(
-            address(sharesToken), "Shares Balance Token", "SHARE", address(oracle), address(0), 10000
+            address(sharesToken), "Shares Balance Token", "SHARE", address(oracle), address(0), 10000, true
         );
     }
 
@@ -1154,7 +1177,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledSupplyToken))
         );
-        factory.addToken(address(scaledSupplyToken), "Scaled Supply Token", "SST", address(oracle), address(0), 10000);
+        factory.addToken(
+            address(scaledSupplyToken), "Scaled Supply Token", "SST", address(oracle), address(0), 10000, true
+        );
     }
 
     function testAddTokenRejectsPooledEthSharesToken() public {
@@ -1165,7 +1190,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(pooledEthSharesToken))
         );
         factory.addTokenInitial(
-            address(pooledEthSharesToken), "Pooled ETH Shares Token", "PETH", address(oracle), address(0), 10000
+            address(pooledEthSharesToken), "Pooled ETH Shares Token", "PETH", address(oracle), address(0), 10000, true
         );
     }
 
@@ -1406,8 +1431,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             _deployFactory(address(this), address(_deployTestTimelock(address(this))), address(poolImpl));
 
         // Whitelist tokens (without setting composite oracle first)
-        newFactory.addTokenInitial(address(tokenA), "Token A", "TKNA", address(oracle), address(0), 10000);
-        newFactory.addTokenInitial(address(tokenB), "Token B", "TKNB", address(oracle), address(0), 10000);
+        newFactory.addTokenInitial(address(tokenA), "Token A", "TKNA", address(oracle), address(0), 10000, true);
+        newFactory.addTokenInitial(address(tokenB), "Token B", "TKNB", address(oracle), address(0), 10000, true);
 
         // Try to create pool without setting composite oracle - should revert
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
@@ -1656,7 +1681,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20 backingToken = new MockERC20("Backing Token C", "TKNC");
         oracle.setPrice(address(backingToken), 1e8);
         compositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
-        factory.addTokenInitial(address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000);
+        factory.addTokenInitial(
+            address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000, true
+        );
 
         address poolAddress = createPool(address(tokenA), "TKNA", address(backingToken), "TKNC", 500, 200, 15_000);
 
@@ -1670,7 +1697,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20 backingToken = new MockERC20("Backing Token C", "TKNC");
         oracle.setPrice(address(backingToken), 1e8);
         compositeOracle.setTokenOracleFeedWithType(address(backingToken), address(oracle), "mock");
-        factory.addTokenInitial(address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000);
+        factory.addTokenInitial(
+            address(backingToken), "Backing Token C", "TKNC", address(oracle), address(0), 10_000, true
+        );
         createPool(address(tokenA), "TKNA", address(backingToken), "TKNC", 500, 200, 15_000);
 
         bytes32 badFeedId = managedPyth.BAD_FEED_ID();
@@ -1780,8 +1809,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         compositeOracle.setTokenOracleFeedWithType(address(hookToken), address(oracle), "mock");
         compositeOracle.setTokenOracleFeedWithType(address(hookShielded), address(oracle), "mock");
-        factory.addTokenInitial(address(hookToken), "Hook Token", "HOOK", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(hookShielded), "Hook Shielded", "HSH", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(hookToken), "Hook Token", "HOOK", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(hookShielded), "Hook Shielded", "HSH", address(oracle), address(0), 10000, true);
 
         uint256 creationBondAmount = _defaultCreationBondAmount(address(hookToken));
         hookToken.mint(address(creator), creationBondAmount + 100e18);
@@ -2214,8 +2243,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC4626 vault2 = new MockERC4626(tokenB, "Vault 2", "VLT2");
 
         // Whitelist both vaults
-        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(vault2), "Vault 2", "VLT2", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(vault2), "Vault 2", "VLT2", address(oracle), address(0), 10000, true);
 
         // Set oracle prices for the vaults
         oracle.setPrice(address(vault1), 1e8);
@@ -2239,9 +2268,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC4626 vault2 = new MockERC4626(tokenC, "Vault 2", "VLT2");
 
         // Whitelist tokens
-        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(vault2), "Vault 2", "VLT2", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(vault2), "Vault 2", "VLT2", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, true);
 
         // Set oracle prices
         oracle.setPrice(address(vault1), 1e8);
@@ -2258,7 +2287,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC4626 vault1 = new MockERC4626(tokenB, "Vault 1", "VLT1");
 
         // Whitelist tokens
-        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(vault1), "Vault 1", "VLT1", address(oracle), address(0), 10000, true);
 
         // Set oracle prices
         oracle.setPrice(address(vault1), 1e8);
@@ -2278,8 +2307,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockERC20 tokenD = new MockERC20("Token D", "TKND");
 
         // Whitelist tokens
-        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(tokenD), "Token D", "TKND", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, true);
+        factory.addTokenInitial(address(tokenD), "Token D", "TKND", address(oracle), address(0), 10000, true);
 
         // Set oracle prices
         oracle.setPrice(address(tokenC), 1e8);
@@ -2298,7 +2327,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(highMinToken), 1e8);
 
         // Add token with 150% minimum collateral (15000 basis points)
-        factory.addTokenInitial(address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000);
+        factory.addTokenInitial(
+            address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000, true
+        );
 
         // Create pool with collateral ratio exactly at minimum - should succeed
         address poolAddress = createPool(address(tokenA), "TKNA", address(highMinToken), "HMT", 500, 200, 15000);
@@ -2315,7 +2346,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(highMinToken), 1e8);
 
         // Add token with 150% minimum collateral (15000 basis points)
-        factory.addTokenInitial(address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000);
+        factory.addTokenInitial(
+            address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000, true
+        );
 
         // Try to create pool with collateral ratio below minimum - should revert
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.CollateralBelowTokenMinimum.selector, 12000, 15000));
@@ -2358,7 +2391,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(testToken), 1e8);
 
         // Add token with specific minimum collateral (single-feed mode)
-        factory.addTokenInitial(address(testToken), "Test Token", "TST", address(oracle), address(0), 20000);
+        factory.addTokenInitial(address(testToken), "Test Token", "TST", address(oracle), address(0), 20000, true);
 
         // Retrieve and verify token info
         (
@@ -2384,7 +2417,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(highMinToken), 1e8);
 
         // Add token with 150% minimum collateral (15000 basis points)
-        factory.addTokenInitial(address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000);
+        factory.addTokenInitial(
+            address(highMinToken), "High Min Token", "HMT", address(oracle), address(0), 15000, true
+        );
 
         // Create pool with highMinToken as SHIELDED token (not protector)
         // The minimum collateral check should only apply to the backing token
@@ -2411,7 +2446,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             "DFT",
             address(oracle), // primary
             address(backupOracle), // backup
-            10000
+            10000,
+            true
         );
 
         // Verify token info stores both oracle feeds
@@ -2454,7 +2490,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             "SFT",
             address(oracle), // primary
             address(0), // no backup
-            10000
+            10000,
+            true
         );
 
         // Verify token info has zero backup
@@ -2479,7 +2516,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         backupOracle.setPrice(address(govToken), 1e8);
 
         vm.prank(governanceTimelock);
-        factory.addToken(address(govToken), "Governance Token", "GOV", address(oracle), address(backupOracle), 12000);
+        factory.addToken(
+            address(govToken), "Governance Token", "GOV", address(oracle), address(backupOracle), 12000, true
+        );
 
         // Verify dual-feed was configured
         (,,, address primaryOracleFeed, address backupOracleFeed, uint256 minCollateralRatioBp) =
@@ -2494,7 +2533,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         MockUSDC usdc = new MockUSDC();
         oracle.setPrice(address(usdc), 1e8);
 
-        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000, true);
 
         (,, address token,,,) = factory.tokenInfo(address(usdc));
         assertEq(token, address(usdc), "USDC should be whitelisted");
@@ -2506,7 +2545,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.InvalidTokenDecimals.selector, address(highDecimalToken), 33));
         factory.addTokenInitial(
-            address(highDecimalToken), "High Decimal Token", "HDT", address(oracle), address(0), 10000
+            address(highDecimalToken), "High Decimal Token", "HDT", address(oracle), address(0), 10000, true
         );
     }
 
@@ -2515,7 +2554,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(usdc), 1e8);
 
         vm.prank(governanceTimelock);
-        factory.addToken(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
+        factory.addToken(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000, true);
 
         (,, address token,,,) = factory.tokenInfo(address(usdc));
         assertEq(token, address(usdc), "USDC should be whitelisted");
@@ -2524,7 +2563,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     function testCreatePool_AllowsMixedDecimalWhitelist() public {
         MockUSDC usdc = new MockUSDC();
         oracle.setPrice(address(usdc), 1e8);
-        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
+        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000, true);
 
         address poolAddress = createPool(address(tokenA), "TKNA", address(usdc), "USDC", 500, 200, 15000);
         SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
@@ -2545,7 +2584,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         backupOracle.setPrice(address(dualFeedToken), 1e8);
 
         factory.addTokenInitial(
-            address(dualFeedToken), "Dual Feed Token", "DFT", address(oracle), address(backupOracle), 10000
+            address(dualFeedToken), "Dual Feed Token", "DFT", address(oracle), address(backupOracle), 10000, true
         );
 
         // Create a pool with dual-feed token as shielded token

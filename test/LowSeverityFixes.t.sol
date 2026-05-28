@@ -63,8 +63,10 @@ contract LowSeverityFixesTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracleAuthorizedCaller(address(this), true);
 
         // Whitelist tokens with oracle feed
-        factory.addTokenInitial(address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000);
-        factory.addTokenInitial(address(backingToken), "Backing Token", "BKT", address(oracle), address(0), 10000);
+        factory.addTokenInitial(
+            address(shieldedToken), "Shielded Token", "SHT", address(oracle), address(0), 10000, true
+        );
+        factory.addTokenInitial(address(backingToken), "Backing Token", "BKT", address(oracle), address(0), 10000, true);
 
         // Set protocol fee recipient
         factory.setDefaultProtocolFeeRecipient(protocolFeeRecipient);
