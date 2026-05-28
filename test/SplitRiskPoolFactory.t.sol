@@ -372,6 +372,22 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracleTokenFeed(address(tokenA), address(erc4626Feed));
     }
 
+    function _stageAndAcceptFactoryGovernance(address currentGovernance, address nextGovernance, uint256 poolCount)
+        internal
+    {
+        vm.prank(currentGovernance);
+        factory.setGovernanceTimelock(nextGovernance);
+
+        vm.prank(currentGovernance);
+        factory.startPoolGovernanceTimelockTransfers(0, poolCount);
+
+        vm.prank(nextGovernance);
+        factory.acceptGovernanceTimelock();
+
+        vm.prank(nextGovernance);
+        factory.acceptPoolGovernanceTimelockTransfers(0, poolCount);
+    }
+
     function _createPoolWithSenderFeeBond()
         internal
         returns (SenderFeeToken feeToken, address poolAddress, uint256 bondAmount, uint256 extraDebit)
@@ -1233,6 +1249,61 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.acceptGovernanceTimelock();
 
         assertEq(factory.governanceTimelock(), replacementGovernance);
+    }
+
+    function testGovernanceTimelockTransferCanReusePriorTarget() public {
+        address pool1 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        address pool2 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
+        address governanceOne = address(_deployTestTimelock(address(this)));
+        address governanceTwo = address(_deployTestTimelock(address(this)));
+
+        _stageAndAcceptFactoryGovernance(governanceTimelock, governanceOne, 2);
+        _stageAndAcceptFactoryGovernance(governanceOne, governanceTwo, 2);
+
+        vm.prank(governanceTwo);
+        factory.setGovernanceTimelock(governanceOne);
+
+        vm.prank(governanceTwo);
+        factory.startPoolGovernanceTimelockTransfers(0, 2);
+
+        vm.prank(governanceOne);
+        factory.acceptGovernanceTimelock();
+
+        vm.prank(governanceOne);
+        factory.acceptPoolGovernanceTimelockTransfers(0, 2);
+
+        assertEq(factory.governanceTimelock(), governanceOne);
+        assertEq(SplitRiskPool(payable(pool1)).governanceTimelock(), governanceOne);
+        assertEq(SplitRiskPool(payable(pool2)).governanceTimelock(), governanceOne);
+    }
+
+    function testGovernanceTimelockRetargetCanReturnToPreviouslyStagedTarget() public {
+        createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        address governanceOne = address(_deployTestTimelock(address(this)));
+        address governanceTwo = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(governanceOne);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(governanceTwo);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(governanceOne);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+
+        vm.prank(governanceOne);
+        factory.acceptGovernanceTimelock();
+
+        assertEq(factory.governanceTimelock(), governanceOne);
     }
 
     function testAcceptPoolGovernanceTimelockTransfersRevertsWhenPoolDriftsAfterFactoryAccept() public {

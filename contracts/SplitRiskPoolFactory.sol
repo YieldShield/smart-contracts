@@ -217,8 +217,7 @@ contract SplitRiskPoolFactory is
         onlyGovernance
     {
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
-        _pendingGovernancePoolTransferTarget = newGovernanceTimelock;
-        _pendingGovernancePoolTransfersRemaining = pools.length;
+        _startPoolGovernanceTransferTracking(newGovernanceTimelock);
     }
 
     /// @notice Completes the two-step governance transfer
@@ -246,8 +245,7 @@ contract SplitRiskPoolFactory is
         address pendingGovernance = pendingGovernanceTimelock();
         if (pendingGovernance == address(0)) revert NoPendingGovernance();
         if (_pendingGovernancePoolTransferTarget != pendingGovernance) {
-            _pendingGovernancePoolTransferTarget = pendingGovernance;
-            _pendingGovernancePoolTransfersRemaining = pools.length;
+            _startPoolGovernanceTransferTracking(pendingGovernance);
         }
         uint256 end = _poolPageEnd(offset, limit);
         for (uint256 i = offset; i < end;) {
@@ -327,10 +325,25 @@ contract SplitRiskPoolFactory is
         return _pendingGovernancePoolTransfersRemaining;
     }
 
+    function _startPoolGovernanceTransferTracking(address targetGovernance) internal {
+        unchecked {
+            ++_governancePoolTransferEpoch;
+        }
+        if (_governancePoolTransferEpoch == 0) {
+            _governancePoolTransferEpoch = 1;
+        }
+        _pendingGovernancePoolTransferTarget = targetGovernance;
+        _pendingGovernancePoolTransfersRemaining = pools.length;
+    }
+
     function _markPoolGovernanceTransferStaged(address pool, address targetGovernance) internal {
-        if (_poolGovernanceTransferTarget[pool] == targetGovernance) {
+        if (
+            _poolGovernanceTransferEpoch[pool] == _governancePoolTransferEpoch
+                && _poolGovernanceTransferTarget[pool] == targetGovernance
+        ) {
             return;
         }
+        _poolGovernanceTransferEpoch[pool] = _governancePoolTransferEpoch;
         _poolGovernanceTransferTarget[pool] = targetGovernance;
         if (_pendingGovernancePoolTransferTarget == targetGovernance && _pendingGovernancePoolTransfersRemaining != 0) {
             --_pendingGovernancePoolTransfersRemaining;
@@ -1682,11 +1695,13 @@ contract SplitRiskPoolFactory is
 
     /// @notice Governance-configurable active pool cap. Zero falls back to MAX_POOLS for legacy upgrades.
     uint256 public maxActivePools;
+    uint256 private _governancePoolTransferEpoch;
+    mapping(address => uint256) private _poolGovernanceTransferEpoch;
 
     /**
      * @dev Storage gap for future upgrades.
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[38] private __gap;
+    uint256[36] private __gap;
 }
