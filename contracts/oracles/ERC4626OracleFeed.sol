@@ -52,6 +52,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @dev The actual threshold is scaled per vault using its native share decimals.
     uint256 public constant MIN_VAULT_SHARE_COUNT = 1000;
 
+    /// @notice Minimum USD value required across vault total assets for price validity
+    uint256 public constant MIN_VAULT_VALUE_USD = 1_000e8;
+
     /// @notice Default maximum share-rate movement before pricing is rejected
     uint256 public constant DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS = 500;
 
@@ -139,6 +142,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @param required Minimum required total supply
     error InsufficientVaultLiquidity(address vault, uint256 totalSupply, uint256 required);
 
+    /// @notice Custom error for vaults whose total assets are too small in USD terms
+    error InsufficientVaultValue(address vault, uint256 totalValueUsd, uint256 requiredValueUsd);
+
     /// @notice Custom error for invalid share-price deviation bounds
     error InvalidSharePriceDeviation(uint256 deviationBps);
 
@@ -199,19 +205,23 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint8 shareDecimals = _getTokenDecimals(vault);
         uint8 underlyingDecimals = _getTokenDecimals(underlying);
         uint256 shareUnit = _getScaleFactor(vault, shareDecimals);
+        uint256 underlyingUnit = _getScaleFactor(underlying, underlyingDecimals);
         uint256 minimumSupply = _getMinimumVaultSupply(vault, shareDecimals, shareUnit);
         _requireMinimumVaultSupply(vault, minimumSupply);
         uint256 referenceAssetsPerShare = _conservativeAssetsPerShare(vault, shareUnit);
 
-        vaultToUnderlying[vault] = underlying;
-        vaultConfigs[vault] = VaultConfig({
+        VaultConfig memory config = VaultConfig({
             underlying: underlying,
             shareUnit: shareUnit,
-            underlyingUnit: _getScaleFactor(underlying, underlyingDecimals),
+            underlyingUnit: underlyingUnit,
             minimumSupply: minimumSupply,
             referenceAssetsPerShare: referenceAssetsPerShare,
             maxSharePriceDeviationBps: DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS
         });
+        _requireMinimumVaultValue(vault, config, true);
+
+        vaultToUnderlying[vault] = underlying;
+        vaultConfigs[vault] = config;
         _clearScheduledVaultRemoval(vault);
         _clearScheduledVaultSharePriceReferenceRefresh(vault);
         emit VaultRegistered(vault, underlying);
@@ -223,6 +233,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         VaultConfig storage config = _getVaultConfigStorage(vault);
         _requireLiveUnderlying(vault, config.underlying);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
+        _requireMinimumVaultValue(vault, config, true);
 
         uint256 scheduledReference = _conservativeAssetsPerShare(vault, config.shareUnit);
         _requireAssetsPerShareWithinReference(
@@ -260,6 +271,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         ScheduledReferenceRefresh memory scheduled = _consumeScheduledVaultSharePriceReferenceRefresh(vault);
         _requireLiveUnderlying(vault, config.underlying);
         _requireMinimumVaultSupply(vault, config.minimumSupply);
+        _requireMinimumVaultValue(vault, config, true);
 
         uint256 currentAssetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
         _requireAssetsPerShareWithinReference(
@@ -464,6 +476,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
+        _requireMinimumVaultValue(vault, config, useCircuitBreaker);
 
         uint256 assetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
@@ -610,6 +623,25 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         if (totalSupply < minimumSupply) {
             revert InsufficientVaultLiquidity(vault, totalSupply, minimumSupply);
         }
+    }
+
+    function _requireMinimumVaultValue(address vault, VaultConfig memory config, bool useCircuitBreaker) internal view {
+        uint256 totalValueUsd = _vaultTotalValueUsd(vault, config, useCircuitBreaker);
+        if (totalValueUsd < MIN_VAULT_VALUE_USD) {
+            revert InsufficientVaultValue(vault, totalValueUsd, MIN_VAULT_VALUE_USD);
+        }
+    }
+
+    function _vaultTotalValueUsd(address vault, VaultConfig memory config, bool useCircuitBreaker)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 totalAssets = IERC4626(vault).totalAssets();
+        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
+        uint8 priceDecimals = _getUnderlyingPriceDecimals();
+        uint256 value = Math.mulDiv(totalAssets, underlyingPrice, config.underlyingUnit);
+        return value.normalize(priceDecimals, ConstantsLib.USD_DECIMALS);
     }
 
     /// @notice Check if underlying oracle price is stale

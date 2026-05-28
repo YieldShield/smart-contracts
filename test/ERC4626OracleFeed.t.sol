@@ -784,6 +784,42 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(price, 1e8); // $1.00
     }
 
+    function test_RegisterVault_RevertsBelowMinimumUsdValue() public {
+        MockERC20 lowValueAsset = new MockERC20("Low Value Asset", "LVA");
+        MockERC4626 lowValueVault = new MockERC4626(IERC20(address(lowValueAsset)), "Low Value Vault", "LVV");
+        underlyingOracle.setPrice(address(lowValueAsset), 0.1e8);
+        _seedVaultToMinimum(IERC20(address(lowValueAsset)), IERC4626(address(lowValueVault)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.InsufficientVaultValue.selector,
+                address(lowValueVault),
+                100e8,
+                erc4626Feed.MIN_VAULT_VALUE_USD()
+            )
+        );
+        erc4626Feed.registerVault(address(lowValueVault), address(lowValueAsset));
+    }
+
+    function test_GetPrice_RevertsWhenVaultValueDropsBelowMinimumUsd() public {
+        MockERC20 valueDropAsset = new MockERC20("Value Drop Asset", "VDA");
+        MockERC4626 valueDropVault = new MockERC4626(IERC20(address(valueDropAsset)), "Value Drop Vault", "VDV");
+        underlyingOracle.setPrice(address(valueDropAsset), 1e8);
+        _seedAndRegister(IERC20(address(valueDropAsset)), IERC4626(address(valueDropVault)));
+
+        underlyingOracle.setPrice(address(valueDropAsset), 0.5e8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.InsufficientVaultValue.selector,
+                address(valueDropVault),
+                500e8,
+                erc4626Feed.MIN_VAULT_VALUE_USD()
+            )
+        );
+        erc4626Feed.getPrice(address(valueDropVault));
+    }
+
     function test_ShareInflationAttack_IsBlocked() public {
         // This test demonstrates that share inflation attacks are blocked
         //
