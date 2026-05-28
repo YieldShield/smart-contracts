@@ -10,6 +10,24 @@ import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 
+contract RejectingPythRefundCaller {
+    receive() external payable {
+        revert("refund rejected");
+    }
+
+    function updatePriceFeeds(PythOracle oracle, bytes[] calldata priceUpdateData) external payable {
+        oracle.updatePriceFeeds{ value: msg.value }(priceUpdateData);
+    }
+
+    function updatePriceFeedsWithRefundRecipient(
+        PythOracle oracle,
+        bytes[] calldata priceUpdateData,
+        address refundRecipient
+    ) external payable {
+        oracle.updatePriceFeedsWithRefundRecipient{ value: msg.value }(priceUpdateData, refundRecipient);
+    }
+}
+
 contract PythOracleTest is Test {
     PythOracle public oracle;
     MockPyth public mockPyth;
@@ -158,8 +176,12 @@ contract PythOracleTest is Test {
     }
 
     function testSupportsStrictProtectedPriceTracksSupportedTokens() public view {
-        assertTrue(oracle.supportsStrictProtectedPrice(address(token1)), "configured Pyth feed should support strict path");
-        assertFalse(oracle.supportsStrictProtectedPrice(address(0xBEEF)), "unsupported token should not support strict path");
+        assertTrue(
+            oracle.supportsStrictProtectedPrice(address(token1)), "configured Pyth feed should support strict path"
+        );
+        assertFalse(
+            oracle.supportsStrictProtectedPrice(address(0xBEEF)), "unsupported token should not support strict path"
+        );
     }
 
     function testPythFeedCanSatisfyCompositeStrictProtectedPriceRequirement() public {
@@ -422,6 +444,81 @@ contract PythOracleTest is Test {
         uint256 balanceAfter = user.balance;
         // Should refund the excess
         assertEq(balanceAfter, balanceBefore - fee, "Excess should be refunded");
+    }
+
+    function testUpdatePriceFeedsWithRefundRecipientKeepsRejectingCallerLive() public {
+        vm.warp(block.timestamp + 10);
+        bytes memory updateData =
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp));
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = updateData;
+
+        uint256 fee = oracle.getUpdateFee(updateDataArray);
+        uint256 excessAmount = 1e17;
+        address refundRecipient = address(0xB0B);
+        RejectingPythRefundCaller refundRejectingCaller = new RejectingPythRefundCaller();
+
+        vm.expectRevert(PythOracle.EtherRefundFailed.selector);
+        refundRejectingCaller.updatePriceFeeds{ value: fee + excessAmount }(oracle, updateDataArray);
+        assertEq(oracle.getPrice(address(token1)), 1e8, "failed refund should revert the update");
+
+        refundRejectingCaller.updatePriceFeedsWithRefundRecipient{ value: fee + excessAmount }(
+            oracle, updateDataArray, refundRecipient
+        );
+
+        assertEq(refundRecipient.balance, excessAmount, "explicit recipient should receive the refund");
+        assertEq(oracle.getPrice(address(token1)), 2e8, "price should update when refund recipient accepts ETH");
+    }
+
+    function testUpdatePriceFeedsWithRefundRecipientRejectsZeroRecipient() public {
+        bytes memory updateData =
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp));
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = updateData;
+
+        uint256 fee = oracle.getUpdateFee(updateDataArray);
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidRefundRecipient.selector, address(0)));
+        oracle.updatePriceFeedsWithRefundRecipient{ value: fee }(updateDataArray, address(0));
+    }
+
+    function testUpdatePriceFeedsExactRejectsFeeMismatch() public {
+        bytes memory updateData =
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp));
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = updateData;
+
+        uint256 fee = oracle.getUpdateFee(updateDataArray);
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.UnexpectedUpdateFee.selector, fee, fee + 1));
+        oracle.updatePriceFeedsExact{ value: fee + 1 }(updateDataArray);
+    }
+
+    function testUpdatePriceFeedsIfNecessaryWithRefundRecipientUpdatesAndRefunds() public {
+        vm.warp(block.timestamp + 10);
+        bytes memory updateData =
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp));
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = updateData;
+        bytes32[] memory priceIds = new bytes32[](1);
+        priceIds[0] = FEED_ID_1;
+        uint64[] memory publishTimes = new uint64[](1);
+        publishTimes[0] = uint64(block.timestamp);
+
+        uint256 fee = oracle.getUpdateFee(updateDataArray);
+        uint256 excessAmount = 1e17;
+        address refundRecipient = address(0xB0B);
+
+        oracle.updatePriceFeedsIfNecessaryWithRefundRecipient{ value: fee + excessAmount }(
+            updateDataArray, priceIds, publishTimes, refundRecipient
+        );
+
+        assertEq(refundRecipient.balance, excessAmount, "explicit recipient should receive the refund");
+        assertEq(oracle.getPrice(address(token1)), 2e8, "necessary update should refresh the price");
     }
 
     function testUpdatePriceFeedsInsufficientFee() public {

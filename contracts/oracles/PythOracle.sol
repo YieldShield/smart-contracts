@@ -119,6 +119,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Custom error for failed ETH refund
     error EtherRefundFailed();
 
+    /// @notice Custom error for exact-fee update calls with a mismatched payment
+    error UnexpectedUpdateFee(uint256 required, uint256 provided);
+
+    /// @notice Custom error for invalid refund recipient
+    error InvalidRefundRecipient(address recipient);
+
     /// @notice Custom error for invalid/zero EMA price
     error InvalidEMAPrice(address token, uint256 emaPrice);
 
@@ -189,18 +195,58 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @param priceUpdateData Array of price update data from Pyth's Hermes API
     /// @dev Caller must send enough ETH to cover the update fee
     function updatePriceFeeds(bytes[] calldata priceUpdateData) external payable {
+        _updatePriceFeeds(priceUpdateData, msg.sender);
+    }
+
+    /// @notice Update price feeds and refund excess ETH to an explicit recipient
+    /// @param priceUpdateData Array of price update data from Pyth's Hermes API
+    /// @param refundRecipient Recipient for any ETH above the Pyth update fee
+    /// @dev Useful for contract callers that cannot safely receive native-token refunds.
+    function updatePriceFeedsWithRefundRecipient(bytes[] calldata priceUpdateData, address refundRecipient)
+        external
+        payable
+    {
+        _requireRefundRecipient(refundRecipient);
+        _updatePriceFeeds(priceUpdateData, refundRecipient);
+    }
+
+    /// @notice Update price feeds only when the caller provides exactly the Pyth fee
+    /// @param priceUpdateData Array of price update data from Pyth's Hermes API
+    /// @dev Avoids any refund path and reverts on both underpayment and overpayment.
+    function updatePriceFeedsExact(bytes[] calldata priceUpdateData) external payable {
         uint256 updateFee = pyth.getUpdateFee(priceUpdateData);
-        if (msg.value < updateFee) {
-            revert InsufficientUpdateFee(updateFee, msg.value);
+        if (msg.value != updateFee) {
+            revert UnexpectedUpdateFee(updateFee, msg.value);
         }
 
-        // slither-disable-next-line arbitrary-send-eth — ETH forwarded to trusted Pyth contract; excess refunded to caller
         pyth.updatePriceFeeds{ value: updateFee }(priceUpdateData);
+    }
 
-        if (msg.value > updateFee) {
-            (bool success,) = payable(msg.sender).call{ value: msg.value - updateFee }("");
-            if (!success) revert EtherRefundFailed();
-        }
+    /// @notice Update price feeds only if Pyth reports an update is still necessary
+    /// @param priceUpdateData Array of price update data from Pyth's Hermes API
+    /// @param priceIds Feed IDs to compare against the provided publish times
+    /// @param publishTimes Expected publish times for each feed ID
+    function updatePriceFeedsIfNecessary(
+        bytes[] calldata priceUpdateData,
+        bytes32[] calldata priceIds,
+        uint64[] calldata publishTimes
+    ) external payable {
+        _updatePriceFeedsIfNecessary(priceUpdateData, priceIds, publishTimes, msg.sender);
+    }
+
+    /// @notice Update price feeds if necessary and refund excess ETH to an explicit recipient
+    /// @param priceUpdateData Array of price update data from Pyth's Hermes API
+    /// @param priceIds Feed IDs to compare against the provided publish times
+    /// @param publishTimes Expected publish times for each feed ID
+    /// @param refundRecipient Recipient for any ETH above the Pyth update fee
+    function updatePriceFeedsIfNecessaryWithRefundRecipient(
+        bytes[] calldata priceUpdateData,
+        bytes32[] calldata priceIds,
+        uint64[] calldata publishTimes,
+        address refundRecipient
+    ) external payable {
+        _requireRefundRecipient(refundRecipient);
+        _updatePriceFeedsIfNecessary(priceUpdateData, priceIds, publishTimes, refundRecipient);
     }
 
     /// @notice Set the price feed ID for a token
@@ -482,6 +528,45 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @return fee The required fee in wei
     function getUpdateFee(bytes[] calldata priceUpdateData) external view returns (uint256 fee) {
         return pyth.getUpdateFee(priceUpdateData);
+    }
+
+    function _updatePriceFeeds(bytes[] calldata priceUpdateData, address refundRecipient) internal {
+        uint256 updateFee = pyth.getUpdateFee(priceUpdateData);
+        if (msg.value < updateFee) {
+            revert InsufficientUpdateFee(updateFee, msg.value);
+        }
+
+        // slither-disable-next-line arbitrary-send-eth — ETH forwarded to trusted Pyth contract; excess refunded below
+        pyth.updatePriceFeeds{ value: updateFee }(priceUpdateData);
+        _refundExcess(refundRecipient, msg.value - updateFee);
+    }
+
+    function _updatePriceFeedsIfNecessary(
+        bytes[] calldata priceUpdateData,
+        bytes32[] calldata priceIds,
+        uint64[] calldata publishTimes,
+        address refundRecipient
+    ) internal {
+        uint256 updateFee = pyth.getUpdateFee(priceUpdateData);
+        if (msg.value < updateFee) {
+            revert InsufficientUpdateFee(updateFee, msg.value);
+        }
+
+        // slither-disable-next-line arbitrary-send-eth — ETH forwarded to trusted Pyth contract; excess refunded below
+        pyth.updatePriceFeedsIfNecessary{ value: updateFee }(priceUpdateData, priceIds, publishTimes);
+        _refundExcess(refundRecipient, msg.value - updateFee);
+    }
+
+    function _requireRefundRecipient(address refundRecipient) internal pure {
+        if (refundRecipient == address(0)) revert InvalidRefundRecipient(refundRecipient);
+    }
+
+    function _refundExcess(address refundRecipient, uint256 refundAmount) internal {
+        if (refundAmount == 0) {
+            return;
+        }
+        (bool success,) = payable(refundRecipient).call{ value: refundAmount }("");
+        if (!success) revert EtherRefundFailed();
     }
 
     /// @notice Internal function to get feed ID for a token
