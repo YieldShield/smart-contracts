@@ -223,7 +223,8 @@ contract SplitRiskPoolFactory is
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable, ISplitRiskPoolFactory) {
-        uint256 remainingPools = _remainingPoolGovernanceTransfers(pendingGovernanceTimelock());
+        address pendingGovernance = pendingGovernanceTimelock();
+        uint256 remainingPools = _trackedPoolGovernanceTransfersRemaining(pendingGovernance);
         if (remainingPools != 0) revert PoolGovernanceTransfersPending(remainingPools);
 
         address previousGovernance = governanceTimelock();
@@ -315,24 +316,14 @@ contract SplitRiskPoolFactory is
         }
     }
 
-    function _remainingPoolGovernanceTransfers(address pendingGovernance) internal view returns (uint256) {
-        uint256 totalPools = pools.length;
-        if (pendingGovernance == address(0) || totalPools == 0) {
+    function _trackedPoolGovernanceTransfersRemaining(address pendingGovernance) internal view returns (uint256) {
+        if (pendingGovernance == address(0)) {
             return 0;
         }
-
-        uint256 remainingPools;
-        for (uint256 i = 0; i < totalPools;) {
-            SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
-            if (pool.governanceTimelock() != pendingGovernance && pool.pendingGovernanceTimelock() != pendingGovernance)
-            {
-                ++remainingPools;
-            }
-            unchecked {
-                ++i;
-            }
+        if (_pendingGovernancePoolTransferTarget != pendingGovernance) {
+            return pools.length;
         }
-        return remainingPools;
+        return _pendingGovernancePoolTransfersRemaining;
     }
 
     function _markPoolGovernanceTransferStaged(address pool, address targetGovernance) internal {

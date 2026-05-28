@@ -2590,7 +2590,26 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         override(ProtocolAccessControlUpgradeable)
         onlyGovernance
     {
+        _requireFactoryGovernanceTransferAlignment(newGovernanceTimelock);
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
+    }
+
+    function _requireFactoryGovernanceTransferAlignment(address newGovernanceTimelock) internal view {
+        address factory = _poolFactoryController();
+        if (factory == address(0) || !_isPoolFactoryLikeController(factory)) {
+            return;
+        }
+
+        (bool success, bytes memory data) =
+            factory.staticcall(abi.encodeCall(ISplitRiskPoolFactory.pendingGovernanceTimelock, ()));
+        if (!success || data.length < 32) {
+            return;
+        }
+
+        address factoryPendingGovernance = abi.decode(data, (address));
+        if (factoryPendingGovernance != address(0) && newGovernanceTimelock != factoryPendingGovernance) {
+            revert InvalidGovernanceTimelock(newGovernanceTimelock);
+        }
     }
 
     function setGovernanceTimelockFromFactory(address newGovernanceTimelock) external override {

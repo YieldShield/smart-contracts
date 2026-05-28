@@ -1119,7 +1119,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(SplitRiskPool(payable(pool2)).governanceTimelock(), replacementGovernance);
     }
 
-    function testAcceptGovernanceTimelockRecomputesPoolTransferStateAfterDrift() public {
+    function testPoolGovernanceCannotDriftDuringFactoryGovernanceTransfer() public {
         address pool1 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
         address pool2 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
         address replacementGovernance = address(_deployTestTimelock(address(this)));
@@ -1135,13 +1135,46 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(SplitRiskPool(payable(pool2)).pendingGovernanceTimelock(), replacementGovernance);
 
         vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, unexpectedGovernance
+            )
+        );
         SplitRiskPool(payable(pool2)).setGovernanceTimelock(unexpectedGovernance);
+
+        vm.prank(replacementGovernance);
+        factory.acceptGovernanceTimelock();
+
+        assertEq(factory.governanceTimelock(), replacementGovernance);
+    }
+
+    function testAcceptGovernanceTimelockUsesStagedTransferCounterForClosedHistoricalPools() public {
+        address pool1 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        address pool2 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15000);
+        address pool3 = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 700, 200, 15000);
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        factory.closePool(pool1);
+        factory.closePool(pool2);
+        factory.closePool(pool3);
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 2);
 
         vm.prank(replacementGovernance);
         vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.PoolGovernanceTransfersPending.selector, 1));
         factory.acceptGovernanceTimelock();
 
-        assertEq(factory.governanceTimelock(), governanceTimelock);
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(2, 1);
+
+        vm.prank(replacementGovernance);
+        factory.acceptGovernanceTimelock();
+
+        assertEq(factory.governanceTimelock(), replacementGovernance);
     }
 
     function testAcceptPoolGovernanceTimelockTransfersRevertsWhenPoolDriftsAfterFactoryAccept() public {
