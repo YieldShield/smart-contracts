@@ -163,6 +163,26 @@ contract SharesBalanceToken is MockERC20 {
     }
 }
 
+contract ScaledSupplyToken is MockERC20 {
+    constructor() MockERC20("Scaled Supply Token", "SST") { }
+
+    function scaledTotalSupply() external view returns (uint256) {
+        return totalSupply();
+    }
+}
+
+contract PooledEthSharesToken is MockERC20 {
+    constructor() MockERC20("Pooled ETH Shares Token", "PETH") { }
+
+    function getPooledEthByShares(uint256 sharesAmount) external pure returns (uint256) {
+        return sharesAmount;
+    }
+
+    function getSharesByPooledEth(uint256 pooledEthAmount) external pure returns (uint256) {
+        return pooledEthAmount;
+    }
+}
+
 contract RevertingUnsafeFeed {
     error UnsafeUnavailable();
 
@@ -928,7 +948,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     function testTransferManagedOracleOwnershipRejectsCurrentCompositeOracle() public {
         vm.prank(governanceTimelock);
-        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(compositeOracle)));
+        vm.expectRevert(
+            abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(compositeOracle))
+        );
         factory.transferManagedOracleOwnership(address(compositeOracle), user1);
     }
 
@@ -1106,7 +1128,9 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         oracle.setPrice(address(scaledToken), 1e8);
 
         vm.prank(governanceTimelock);
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledToken)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledToken))
+        );
         factory.addToken(address(scaledToken), "Scaled Balance Token", "SBT", address(oracle), address(0), 10000);
     }
 
@@ -1114,8 +1138,35 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         SharesBalanceToken sharesToken = new SharesBalanceToken();
         oracle.setPrice(address(sharesToken), 1e8);
 
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(sharesToken)));
-        factory.addTokenInitial(address(sharesToken), "Shares Balance Token", "SHARE", address(oracle), address(0), 10000);
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(sharesToken))
+        );
+        factory.addTokenInitial(
+            address(sharesToken), "Shares Balance Token", "SHARE", address(oracle), address(0), 10000
+        );
+    }
+
+    function testAddTokenRejectsScaledSupplyToken() public {
+        ScaledSupplyToken scaledSupplyToken = new ScaledSupplyToken();
+        oracle.setPrice(address(scaledSupplyToken), 1e8);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledSupplyToken))
+        );
+        factory.addToken(address(scaledSupplyToken), "Scaled Supply Token", "SST", address(oracle), address(0), 10000);
+    }
+
+    function testAddTokenRejectsPooledEthSharesToken() public {
+        PooledEthSharesToken pooledEthSharesToken = new PooledEthSharesToken();
+        oracle.setPrice(address(pooledEthSharesToken), 1e8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(pooledEthSharesToken))
+        );
+        factory.addTokenInitial(
+            address(pooledEthSharesToken), "Pooled ETH Shares Token", "PETH", address(oracle), address(0), 10000
+        );
     }
 
     function testAcceptGovernanceTimelockSyncsOwnerAndProtocolFeeRecipient() public {

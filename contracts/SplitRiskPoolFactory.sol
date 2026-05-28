@@ -1168,13 +1168,26 @@ contract SplitRiskPoolFactory is
             _supportsUintBalanceMarker(token, "scaledBalanceOf(address)")
                 || _supportsUintBalanceMarker(token, "sharesOf(address)")
                 || _supportsUintPairBalanceMarker(token, "getScaledUserBalanceAndSupply(address)")
+                || _supportsUintMarker(token, "scaledTotalSupply()")
+                || _supportsUintInputMarker(token, "getPooledEthByShares(uint256)")
+                || _supportsUintInputMarker(token, "getSharesByPooledEth(uint256)")
         ) {
             revert ErrorsLib.BalanceMutatingTokenUnsupported(token);
         }
     }
 
+    function _supportsUintMarker(address token, string memory signature) internal view returns (bool) {
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature(signature));
+        return success && data.length >= 32;
+    }
+
     function _supportsUintBalanceMarker(address token, string memory signature) internal view returns (bool) {
         (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature(signature, address(this)));
+        return success && data.length >= 32;
+    }
+
+    function _supportsUintInputMarker(address token, string memory signature) internal view returns (bool) {
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature(signature, 1));
         return success && data.length >= 32;
     }
 
