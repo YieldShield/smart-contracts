@@ -2082,7 +2082,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // 5. Initialise per-id pool mappings BEFORE the safe mint callback can
         // inspect the new receipt. This mirrors depositShieldedAsset's ordering.
         newTokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
+        uint256 oldLastClaimRewardsTime = lastClaimRewardsTime[tokenId];
         feeValueBaselineUsd[newTokenId] = newFeeBaselineUsd;
+        lastClaimRewardsTime[newTokenId] = oldLastClaimRewardsTime;
         delete feeValueBaselineUsd[tokenId];
         delete lastClaimRewardsTime[tokenId];
 

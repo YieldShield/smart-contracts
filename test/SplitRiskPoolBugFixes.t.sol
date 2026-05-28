@@ -386,6 +386,29 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         vm.stopPrank();
     }
 
+    function test_partialWithdrawShielded_CarriesClaimRewardsCooldown() public {
+        vm.startPrank(shielded1);
+        shieldedToken.approve(address(pool), 100e18);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        pool.claimRewards(tokenId);
+        uint256 claimTime = pool.lastClaimRewardsTime(tokenId);
+        assertTrue(claimTime > 0, "claim cooldown should be set");
+
+        uint256 newTokenId = pool.partialWithdrawShielded(tokenId, 10e18, address(shieldedToken), 0);
+
+        assertEq(pool.lastClaimRewardsTime(tokenId), 0, "old token cooldown should be cleared");
+        assertEq(pool.lastClaimRewardsTime(newTokenId), claimTime, "new token should inherit cooldown");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.ClaimRewardsCooldownNotMet.selector, claimTime + ConstantsLib.CLAIM_REWARDS_COOLDOWN
+            )
+        );
+        pool.claimRewards(newTokenId);
+        vm.stopPrank();
+    }
+
     // ============ Bug 4: Zero Amount Tests ============
 
     /// @notice Test that zero withdraw amount reverts
