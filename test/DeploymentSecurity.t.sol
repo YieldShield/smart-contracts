@@ -690,6 +690,26 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function test_ProductionBootstrap_RejectsNonMajorityBootstrapHolderThreshold() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address[] memory owners = new address[](4);
+        owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        owners[2] = address(0xCAFE);
+        owners[3] = address(0xDAD);
+        SafeLikeBootstrapHolder contractHolder = new SafeLikeBootstrapHolder(owners, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.InvalidProductionBootstrapHolderThresholdRatio.selector,
+                address(contractHolder),
+                2,
+                owners.length
+            )
+        );
+        harness.validateProductionBootstrapHolder(address(contractHolder));
+    }
+
     function test_ProductionBootstrap_RejectsWrongBootstrapHolderOwnersHash() public {
         ProductionDeployHarness harness = new ProductionDeployHarness();
         address[] memory owners = new address[](2);

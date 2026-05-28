@@ -83,6 +83,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error InvalidProductionBootstrapHolderCodehash(address holder, bytes32 actualCodehash, bytes32 expectedCodehash);
     error InvalidProductionBootstrapHolderSingleton(address holder, address actualSingleton, address expectedSingleton);
     error InvalidProductionBootstrapHolderThreshold(address holder, uint256 actualThreshold, uint256 expectedThreshold);
+    error InvalidProductionBootstrapHolderThresholdRatio(address holder, uint256 threshold, uint256 ownerCount);
     error InvalidProductionBootstrapHolderOwnersHash(
         address holder, bytes32 actualOwnersHash, bytes32 expectedOwnersHash
     );
@@ -710,6 +711,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 || threshold > owners.length
         ) {
             revert InvalidProductionBootstrapHolder(holder);
+        }
+        if (threshold * 2 <= owners.length) {
+            revert InvalidProductionBootstrapHolderThresholdRatio(holder, threshold, owners.length);
         }
         if (expectedThreshold == 0 || threshold != expectedThreshold) {
             revert InvalidProductionBootstrapHolderThreshold(holder, threshold, expectedThreshold);
