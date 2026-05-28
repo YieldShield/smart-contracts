@@ -120,6 +120,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @notice Default minimum harmonic-average liquidity across the TWAP window
     uint128 public constant DEFAULT_MINIMUM_AVERAGE_LIQUIDITY = 1_000_000;
 
+    /// @notice Minimum number of initialized observations required for a TWAP pool
+    uint16 public constant MIN_TWAP_OBSERVATION_CARDINALITY = 2;
+
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
 
@@ -141,6 +144,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
     /// @notice Custom error for pools below the configured average-liquidity floor
     error InsufficientTWAPLiquidity(address pool, uint128 observedLiquidity, uint128 minimumLiquidity);
+
+    /// @notice Custom error for pools without enough initialized observation history
+    error InsufficientTWAPObservationCardinality(address pool, uint16 observedCardinality, uint16 minimumCardinality);
 
     /// @notice Thrown when the computed TWAP price truncates to zero after decimal normalization
     error PriceTruncatedToZero(address token);
@@ -422,11 +428,17 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         }
 
         address pool = tokenPools[token];
+        IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
+        (bool cardinalityAvailable, uint16 observationCardinality) = _tryObservationCardinality(v3Pool);
+        if (!cardinalityAvailable || observationCardinality < MIN_TWAP_OBSERVATION_CARDINALITY) {
+            return (true, 0);
+        }
+
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapPeriod;
         secondsAgos[1] = 0;
 
-        try IUniswapV3Pool(pool).observe(secondsAgos) returns (
+        try v3Pool.observe(secondsAgos) returns (
             int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s
         ) {
             if (tickCumulatives.length != 2 || secondsPerLiquidityCumulativeX128s.length != 2) {
@@ -523,6 +535,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         view
         returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
     {
+        _requireMinimumObservationCardinality(poolAddress, pool);
+
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapPeriod;
         secondsAgos[1] = 0;
@@ -538,6 +552,30 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
 
         if (tickCumulatives.length != 2 || secondsPerLiquidityCumulativeX128s.length != 2) {
             revert InvalidPool(poolAddress);
+        }
+    }
+
+    function _requireMinimumObservationCardinality(address poolAddress, IUniswapV3Pool pool) internal view {
+        (bool success, uint16 observationCardinality) = _tryObservationCardinality(pool);
+        if (!success) {
+            revert InvalidPool(poolAddress);
+        }
+        if (observationCardinality < MIN_TWAP_OBSERVATION_CARDINALITY) {
+            revert InsufficientTWAPObservationCardinality(
+                poolAddress, observationCardinality, MIN_TWAP_OBSERVATION_CARDINALITY
+            );
+        }
+    }
+
+    function _tryObservationCardinality(IUniswapV3Pool pool)
+        internal
+        view
+        returns (bool success, uint16 observationCardinality)
+    {
+        try pool.slot0() returns (uint160, int24, uint16, uint16 observedCardinality, uint16, uint8, bool) {
+            return (true, observedCardinality);
+        } catch {
+            return (false, 0);
         }
     }
 

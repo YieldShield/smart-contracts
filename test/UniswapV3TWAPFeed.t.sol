@@ -27,6 +27,7 @@ contract MockUniswapV3Pool {
     address public token1;
     int24 public tick;
     uint128 public averageLiquidity;
+    uint16 public observationCardinality = 2;
     bool public shouldRevertObserve;
     bool public shouldReturnDescendingLiquidityCumulatives;
 
@@ -39,6 +40,10 @@ contract MockUniswapV3Pool {
 
     function setAverageLiquidity(uint128 averageLiquidity_) external {
         averageLiquidity = averageLiquidity_;
+    }
+
+    function setObservationCardinality(uint16 observationCardinality_) external {
+        observationCardinality = observationCardinality_;
     }
 
     function setShouldRevertObserve(bool shouldRevertObserve_) external {
@@ -73,7 +78,7 @@ contract MockUniswapV3Pool {
     }
 
     function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint8, bool) {
-        return (0, tick, 0, 0, 0, 0, true);
+        return (0, tick, 0, observationCardinality, observationCardinality, 0, true);
     }
 }
 
@@ -198,6 +203,23 @@ contract UniswapV3TWAPFeedTest is Test {
         harness.setTokenPool(address(token), address(pool));
     }
 
+    function test_setTokenPool_RevertsWhenObservationCardinalityTooLow() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        pool.setObservationCardinality(harness.MIN_TWAP_OBSERVATION_CARDINALITY() - 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.InsufficientTWAPObservationCardinality.selector,
+                address(pool),
+                harness.MIN_TWAP_OBSERVATION_CARDINALITY() - 1,
+                harness.MIN_TWAP_OBSERVATION_CARDINALITY()
+            )
+        );
+        harness.setTokenPool(address(token), address(pool));
+    }
+
     function test_removeTokenPool_RequiresSchedule() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         MockUniswapV3Pool pool =
@@ -286,6 +308,25 @@ contract UniswapV3TWAPFeedTest is Test {
                 address(pool),
                 harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() - 1,
                 harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
+            )
+        );
+        harness.getPrice(address(token));
+    }
+
+    function test_getPrice_RevertsWhenRegisteredPoolObservationCardinalityFallsBelowMinimum() public {
+        MockERC20 token = new MockERC20("Token", "TOKEN");
+        MockUniswapV3Pool pool =
+            new MockUniswapV3Pool(address(token), address(quoteToken), 0, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
+        harness.setTokenPool(address(token), address(pool));
+
+        pool.setObservationCardinality(harness.MIN_TWAP_OBSERVATION_CARDINALITY() - 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.InsufficientTWAPObservationCardinality.selector,
+                address(pool),
+                harness.MIN_TWAP_OBSERVATION_CARDINALITY() - 1,
+                harness.MIN_TWAP_OBSERVATION_CARDINALITY()
             )
         );
         harness.getPrice(address(token));
@@ -399,6 +440,12 @@ contract UniswapV3TWAPFeedTest is Test {
 
         pool.setShouldRevertObserve(false);
         pool.setShouldReturnDescendingLiquidityCumulatives(true);
+        (isStale, publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+
+        pool.setShouldReturnDescendingLiquidityCumulatives(false);
+        pool.setObservationCardinality(harness.MIN_TWAP_OBSERVATION_CARDINALITY() - 1);
         (isStale, publishTime) = harness.isPriceStale(address(token));
         assertTrue(isStale);
         assertEq(publishTime, 0);
