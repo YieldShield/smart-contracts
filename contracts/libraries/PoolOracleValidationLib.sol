@@ -23,6 +23,8 @@ library PoolOracleValidationLib {
 
     bytes4 private constant INVALID_PRICE_UINT_SELECTOR = bytes4(keccak256("InvalidPrice(address,uint256)"));
     bytes4 private constant INVALID_PRICE_INT_SELECTOR = bytes4(keccak256("InvalidPrice(address,int256)"));
+    bytes4 private constant INSUFFICIENT_VAULT_VALUE_SELECTOR =
+        bytes4(keccak256("InsufficientVaultValue(address,uint256,uint256)"));
 
     /// @notice Validate that an oracle supports the pool's required pricing paths
     /// @param oracle The oracle address to validate
@@ -198,6 +200,7 @@ library PoolOracleValidationLib {
             bytes4 selector = bytes4(data);
             if (
                 selector == INVALID_PRICE_UINT_SELECTOR || selector == INVALID_PRICE_INT_SELECTOR
+                    || selector == INSUFFICIENT_VAULT_VALUE_SELECTOR
                     || selector == ErrorsLib.InvalidOraclePrice.selector
             ) {
                 revert ErrorsLib.InvalidOraclePrice();
