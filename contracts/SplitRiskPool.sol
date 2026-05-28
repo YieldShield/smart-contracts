@@ -748,10 +748,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /**
      * @notice Get the maximum amount withdrawable for a protector position in a single transaction
      * @dev Calculates the max withdrawable accounting for how utilization changes during withdrawal.
-     *      Uses formula: min(positionAmount, totalProtectorTokens - requiredCollateralInProtectorTokens)
-     *      Collateralization is based on original deposit values (valueAtDeposit), not current token amounts.
-     *      The pool-level lock is capped by the sum of each shield position's stored backing-token collateral cap,
-     *      so backing-token drawdowns cannot lock more protector capital than shield holders can actually claim.
+     *      Uses formula: min(positionAmount, totalProtectorTokens - totalShieldCollateralAmount).
+     *      Shield receipts store backing-token collateral caps at deposit time; protector exits must keep
+     *      those token-denominated caps funded while any shield liabilities remain.
      *      This allows users to withdraw all unlocked funds in one transaction instead of iterating.
      * @param tokenId The protector NFT token ID
      * @return availableAmount Maximum amount available for withdrawal
@@ -774,20 +773,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return 0;
         }
 
-        // Calculate required protector tokens based on USD collateral requirement using protected backing pricing.
-        (bool priceSuccess, uint256 uwPrice) = _tryGetProtectedBackingPrice();
+        // Preserve the existing fail-closed oracle liveness check while reserving
+        // the token-denominated shield caps instead of a current-price estimate.
+        (bool priceSuccess,) = _tryGetProtectedBackingPrice();
         if (!priceSuccess) {
             // Fail closed when protected backing pricing is unavailable.
             return 0;
         }
 
-        // M-4 FIX: Multiply before divide to avoid precision loss
-        uint256 requiredCollateralUsd = _getRequiredCollateralUsd(totalValueAtDeposit);
-        uint256 requiredProtectorTokens =
-            Math.mulDiv(requiredCollateralUsd, backingTokenScale, uwPrice, Math.Rounding.Ceil);
-        if (requiredProtectorTokens > totalShieldCollateralAmount) {
-            requiredProtectorTokens = totalShieldCollateralAmount;
-        }
+        uint256 requiredProtectorTokens = totalShieldCollateralAmount;
 
         // Pool-level max withdrawable
         if (requiredProtectorTokens >= totalProtectorTokens) {

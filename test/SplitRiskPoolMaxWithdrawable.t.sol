@@ -294,8 +294,8 @@ contract SplitRiskPoolMaxWithdrawableTest is Test, TestTimelockHelper {
         assertEq(availableAfter, 50e18, "Available should remain 50 after shielded price doubles (uses original value)");
     }
 
-    /// @notice Test that backing token price increase makes more available
-    function test_backingPriceIncreaseIncreasesAvailable() public {
+    /// @notice Backing-token price increases must not release stored shield collateral caps
+    function test_backingPriceIncreaseDoesNotReleaseStoredShieldCaps() public {
         // Protector deposits 100 tokens
         vm.prank(protector1);
         uint256 tokenId = pool.depositBackingAsset(address(backingToken), DEPOSIT_AMOUNT, 0);
@@ -310,15 +310,35 @@ contract SplitRiskPoolMaxWithdrawableTest is Test, TestTimelockHelper {
         assertEq(availableBefore, 20e18, "Available should be 20 at equal prices");
 
         // Backing token doubles in price - now worth $2 each
-        // This DOES affect available because collateral is in backing tokens
         oracle.setPrice(address(backingToken), 2e8);
 
-        // Required collateral = $80 USD (original valueAtDeposit) * 100% = $80 USD
-        // Protector value = 100 tokens * $2 = $200 USD
-        // Required in protector tokens = $80 / $2 = 40 tokens
-        // Available = 100 - 40 = 60
+        // Shield receipts still hold an 80-token backing cap, so only the
+        // original 20-token excess can leave the pool.
         uint256 availableAfter = pool.getAvailableForWithdrawal(tokenId);
-        assertEq(availableAfter, 60e18, "Available should increase to 60 after backing price doubles");
+        assertEq(availableAfter, 20e18, "Backing appreciation must not release stored shield collateral caps");
+    }
+
+    /// @notice A fully utilized shield cap remains reserved even if backing price temporarily rises
+    function test_backingPriceIncreaseCannotCreateWithdrawalGapAtFullUtilization() public {
+        vm.prank(protector1);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), DEPOSIT_AMOUNT, 0);
+
+        vm.prank(shielded);
+        pool.depositShieldedAsset(address(shieldedToken), DEPOSIT_AMOUNT, 0);
+
+        assertEq(pool.totalShieldCollateralAmount(), DEPOSIT_AMOUNT, "shield cap should consume protector deposit");
+        assertEq(pool.getAvailableForWithdrawal(tokenId), 0, "fully utilized pool starts locked");
+
+        oracle.setPrice(address(backingToken), 2e8);
+        assertEq(pool.getAvailableForWithdrawal(tokenId), 0, "price spike must not unlock shield collateral");
+
+        vm.prank(protector1);
+        pool.startUnlockProcess(tokenId);
+        vm.warp(block.timestamp + 28 days + 1);
+
+        vm.prank(protector1);
+        vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
+        pool.protectorWithdraw(tokenId, 1, address(backingToken), 0);
     }
 
     /// @notice Backing-price drawdowns should not lock more capital than shield

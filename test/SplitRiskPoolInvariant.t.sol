@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import { Test, console2 } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
-import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -584,21 +583,13 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     // ============ Invariant 4: Collateralization Ratio ============
 
-    /// @notice When the USD collateral lock consumes all protector assets, withdrawals should be blocked
+    /// @notice When stored shield collateral caps consume all protector assets, withdrawals should be blocked
     function invariant_collateralizationMaintained() public view {
         uint256 totalProtectorTokens = pool.totalProtectorTokens();
-        uint256 totalValueAtDeposit = pool.totalValueAtDeposit();
+        uint256 collateralCap = pool.totalShieldCollateralAmount();
 
-        if (totalProtectorTokens != 0 && totalValueAtDeposit != 0) {
-            uint256 backingPrice = oracle.getPrice(address(backingToken));
-            uint256 requiredProtectorTokens = (totalValueAtDeposit * pool.COLLATERAL_RATIO() * pool.backingTokenScale())
-                / (ConstantsLib.BASIS_POINT_SCALE * backingPrice);
-            uint256 collateralCap = pool.totalShieldCollateralAmount();
-            if (requiredProtectorTokens > collateralCap) {
-                requiredProtectorTokens = collateralCap;
-            }
-
-            if (requiredProtectorTokens < totalProtectorTokens) {
+        if (totalProtectorTokens != 0 && collateralCap != 0) {
+            if (collateralCap < totalProtectorTokens) {
                 return;
             }
 
