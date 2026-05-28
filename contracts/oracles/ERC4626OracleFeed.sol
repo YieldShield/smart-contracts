@@ -376,8 +376,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @inheritdoc IOracleFeed
     /// @notice Returns the protected (circuit-breaker validated) price of vault shares in USD (8 decimals)
     /// @dev Applies share-rate cap, share inflation attack protection (minimum supply check),
-    ///      and underlying price staleness check. Production callers must use this entry point;
-    ///      the unprotected share-rate path is available via `getPriceUnsafe`.
+    ///      underlying price staleness, and upward share-rate lagging against the reviewed
+    ///      reference. Production callers must use this entry point; live in-band share-rate
+    ///      moves remain visible through `getPriceUnsafe`.
     function getPrice(address vault) external view override returns (uint256) {
         return _getValidatedPrice(vault, true);
     }
@@ -578,7 +579,12 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         priceDecimals = uint8(decodedDecimals);
     }
 
-    function _boundedAssetsPerShare(address vault, uint256 assetsPerShare, VaultConfig memory config, bool)
+    function _boundedAssetsPerShare(
+        address vault,
+        uint256 assetsPerShare,
+        VaultConfig memory config,
+        bool useCircuitBreaker
+    )
         internal
         pure
         returns (uint256)
@@ -586,6 +592,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         _requireAssetsPerShareWithinReference(
             vault, assetsPerShare, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
         );
+        if (useCircuitBreaker && assetsPerShare > config.referenceAssetsPerShare) {
+            return config.referenceAssetsPerShare;
+        }
         return assetsPerShare;
     }
 

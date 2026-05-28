@@ -484,14 +484,39 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.getPrice(address(vault));
     }
 
-    function test_GetPrice_UsesRawShareRateAtUpperDeviationBoundary() public {
+    function test_GetPrice_ClampsInBandUpwardShareRateToReference() public {
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() / 2))
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 expectedUnsafePrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
+
+        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "protected price should use reviewed reference");
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedUnsafePrice, "unsafe price should expose live NAV");
+    }
+
+    function test_GetPrice_ClampsShareRateAtUpperDeviationBoundary() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())
                 / 10_000;
         underlyingAsset.mint(address(vault), donation);
 
         uint256 expectedPrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
-        // Exactly at the boundary the protected and unprotected paths agree (no clamp triggered).
+        // Exactly at the reviewed boundary, the protected path still lags upward moves.
+        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE);
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedPrice);
+    }
+
+    function test_GetPrice_AllowsInBandDownwardShareRateImmediately() public {
+        _seedVaultShares(IERC20(address(underlyingAsset)), IERC4626(address(vault)), erc4626Feed.minimumVaultSupply(address(vault)));
+        uint256 loss =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() / 2))
+                / 10_000;
+        underlyingAsset.burn(address(vault), loss);
+
+        uint256 expectedPrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
+        assertLt(expectedPrice, UNDERLYING_PRICE, "precondition: share rate moved down");
         assertEq(erc4626Feed.getPrice(address(vault)), expectedPrice);
         assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedPrice);
     }

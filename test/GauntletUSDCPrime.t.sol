@@ -67,6 +67,17 @@ contract GauntletUSDCPrimeTest is Test {
         usdc.mint(bob, 100000e6);
     }
 
+    function _accrueOneYearYield() internal {
+        vm.warp(block.timestamp + 365 days);
+        gtusdc.accrueYield();
+    }
+
+    function _refreshVaultSharePriceReference() internal {
+        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(gtusdc));
+        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
+        erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
+    }
+
     // ============ Vault Basic Tests ============
 
     function test_VaultInitialState() public view {
@@ -188,15 +199,19 @@ contract GauntletUSDCPrimeTest is Test {
     }
 
     function test_NAVPricing_AfterYieldAccrual() public {
-        // Fast forward 1 year
-        vm.warp(block.timestamp + 365 days);
-        gtusdc.accrueYield();
+        _accrueOneYearYield();
 
-        uint256 price = erc4626Feed.getPrice(address(gtusdc));
+        uint256 protectedPrice = erc4626Feed.getPrice(address(gtusdc));
+        uint256 unsafePrice = erc4626Feed.getPriceUnsafe(address(gtusdc));
 
-        // NAV should now be ~$1.05
         uint256 expectedPrice = USDC_PRICE + (USDC_PRICE * ANNUAL_YIELD_BPS / 10000);
-        assertApproxEqRel(price, expectedPrice, 0.01e18);
+        assertApproxEqRel(unsafePrice, expectedPrice, 0.01e18);
+        assertApproxEqRel(protectedPrice, USDC_PRICE, 0.01e18);
+
+        _refreshVaultSharePriceReference();
+
+        protectedPrice = erc4626Feed.getPrice(address(gtusdc));
+        assertApproxEqRel(protectedPrice, expectedPrice, 0.01e18);
     }
 
     function test_NAVPricing_WithUSDCPriceChange() public {
@@ -223,9 +238,9 @@ contract GauntletUSDCPrimeTest is Test {
     }
 
     function test_CompositeOracle_Challenge_SucceedsOnDeviation() public {
-        // Create deviation: accrue yield to increase NAV
-        vm.warp(block.timestamp + 365 days);
-        gtusdc.accrueYield();
+        // Create reviewed deviation: accrue yield, then refresh the protected NAV reference.
+        _accrueOneYearYield();
+        _refreshVaultSharePriceReference();
 
         // NAV is now ~$1.05, but market price is still $1.00
         uint256 navPrice = erc4626Feed.getPrice(address(gtusdc));
@@ -251,16 +266,11 @@ contract GauntletUSDCPrimeTest is Test {
     }
 
     function test_CompositeOracle_FinalizeChallenge() public {
-        // Create deviation and initiate challenge
-        vm.warp(block.timestamp + 365 days);
-        gtusdc.accrueYield();
-        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(gtusdc));
+        // Create reviewed deviation and initiate challenge.
+        _accrueOneYearYield();
+        _refreshVaultSharePriceReference();
 
         compositeOracle.challengeForToken(address(gtusdc));
-
-        // Wait for challenge duration
-        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
-        erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
 
         // Update market price to match NAV (simulating arbitrage)
         uint256 navPrice = erc4626Feed.getPrice(address(gtusdc));
@@ -274,17 +284,15 @@ contract GauntletUSDCPrimeTest is Test {
     }
 
     function test_CompositeOracle_ActiveBackupFailsClosedWhilePrimaryDisagrees() public {
-        // Create deviation
-        vm.warp(block.timestamp + 365 days);
-        gtusdc.accrueYield();
-        erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(gtusdc));
+        // Create reviewed deviation.
+        _accrueOneYearYield();
+        _refreshVaultSharePriceReference();
 
         // Challenge
         compositeOracle.challengeForToken(address(gtusdc));
 
         // Wait for challenge duration (deviation persists because market price unchanged)
-        vm.warp(block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY());
-        erc4626Feed.refreshVaultSharePriceReference(address(gtusdc));
+        vm.warp(block.timestamp + CHALLENGE_DURATION);
 
         // Finalize - should switch to backup since deviation persists
         compositeOracle.finalizeChallenge(address(gtusdc));
