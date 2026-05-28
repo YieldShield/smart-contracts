@@ -140,9 +140,6 @@ contract SplitRiskPoolFactory is
     address[] private _trackedCompositeOracleAuthorizedCallers;
     mapping(address => bool) private _compositeOracleAuthorizedCallerSeen;
     mapping(address => bool) private _compositeOracleAuthorizedCallerActive;
-    address private _pendingGovernancePoolTransferTarget;
-    uint256 private _pendingGovernancePoolTransfersRemaining;
-    mapping(address => address) private _poolGovernanceTransferTarget;
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
     event BootstrapModeFinalized(address indexed caller);
@@ -1708,6 +1705,9 @@ contract SplitRiskPoolFactory is
 
     /// @notice Governance-configurable active pool cap. Zero falls back to MAX_POOLS for legacy upgrades.
     uint256 public maxActivePools;
+    address private _pendingGovernancePoolTransferTarget;
+    uint256 private _pendingGovernancePoolTransfersRemaining;
+    mapping(address => address) private _poolGovernanceTransferTarget;
     uint256 private _governancePoolTransferEpoch;
     mapping(address => uint256) private _poolGovernanceTransferEpoch;
 
@@ -1716,5 +1716,5 @@ contract SplitRiskPoolFactory is
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[36] private __gap;
+    uint256[33] private __gap;
 }
