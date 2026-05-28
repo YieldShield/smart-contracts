@@ -36,7 +36,7 @@ interface IChainlinkAggregatorBounds {
 /// @author David Hawig
 /// @notice Oracle feed adapter for Chainlink price feeds
 /// @dev Implements IOracleFeed interface using Chainlink's AggregatorV3Interface
-///      Includes L2 sequencer uptime check for Arbitrum/Optimism/Base deployments
+///      Includes configurable L2 sequencer uptime checks, defaulting on for known supported L2s.
 ///      All price outputs are normalized to 8 decimals (USD format) regardless of source feed precision.
 /// - getPrice() returns: price with 8 decimals (e.g., $1.00 = 1e8, $1234.56 = 123456000000)
 /// - Chainlink feeds may use 8, 6, or other decimal formats but are normalized to 8 decimals
@@ -54,6 +54,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice L2 sequencer uptime feed (optional, only for L2 deployments)
     /// @dev Set to address(0) on L1 or if sequencer check not needed
     AggregatorV3Interface public sequencerUptimeFeed;
+
+    /// @notice Whether this deployment must have a sequencer uptime feed configured
+    bool public sequencerUptimeFeedRequired;
 
     /// @notice Mapping from token address to Chainlink aggregator
     mapping(address => AggregatorV3Interface) public tokenFeeds;
@@ -77,6 +80,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Emitted when sequencer uptime feed is set
     event SequencerUptimeFeedSet(address indexed oldFeed, address indexed newFeed);
+
+    /// @notice Emitted when the sequencer uptime feed requirement changes
+    event SequencerUptimeFeedRequiredSet(bool oldRequired, bool newRequired);
 
     /// @notice Emitted when min/max answer bounds are cached for a feed
     event FeedBoundsCached(address indexed token, address indexed feed, int192 minAnswer, int192 maxAnswer);
@@ -160,6 +166,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
         maxPriceAge = _maxPriceAge;
+        sequencerUptimeFeedRequired = _isKnownL2RequiringSequencer(block.chainid);
     }
 
     /// @notice Set the Chainlink feed for a token
@@ -349,6 +356,15 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         sequencerUptimeFeed = AggregatorV3Interface(_sequencerUptimeFeed);
         emit SequencerUptimeFeedSet(oldFeed, _sequencerUptimeFeed);
+    }
+
+    /// @notice Configure whether this deployment must use a sequencer uptime feed.
+    /// @dev Defaults to true for known L2 chain IDs, but can be enabled for newly
+    ///      supported L2s without redeploying a new oracle implementation.
+    function setSequencerUptimeFeedRequired(bool required) external onlyOwner {
+        bool oldRequired = sequencerUptimeFeedRequired;
+        sequencerUptimeFeedRequired = required;
+        emit SequencerUptimeFeedRequiredSet(oldRequired, required);
     }
 
     /// @inheritdoc IOracleFeed
@@ -591,7 +607,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     function _requiresSequencerUptimeFeed() internal view returns (bool) {
-        return _isKnownL2RequiringSequencer(block.chainid);
+        return sequencerUptimeFeedRequired;
     }
 
     function _isKnownL2RequiringSequencer(uint256 chainId) internal pure returns (bool) {

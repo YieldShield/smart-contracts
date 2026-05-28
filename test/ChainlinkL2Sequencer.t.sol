@@ -72,6 +72,11 @@ contract ChainlinkL2SequencerTest is Test {
         chainlinkFeed.setTokenFeed(testToken, address(mockPriceFeed));
     }
 
+    function _deployFeedForCurrentChain() internal returns (ChainlinkOracleFeed feed) {
+        feed = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        feed.setTokenFeed(testToken, address(mockPriceFeed));
+    }
+
     // ============ No Sequencer Feed (L1 or disabled) ============
 
     function test_GetPrice_WorksWithoutSequencerFeed() public view {
@@ -82,15 +87,17 @@ contract ChainlinkL2SequencerTest is Test {
 
     function test_GetPrice_RevertsWithoutSequencerFeedOnKnownL2() public {
         vm.chainId(42161);
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
 
         vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 42161));
-        chainlinkFeed.getPrice(testToken);
+        l2Feed.getPrice(testToken);
     }
 
     function test_IsPriceStale_ReturnsTrueWithoutSequencerFeedOnKnownL2() public {
         vm.chainId(8453);
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
 
-        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+        (bool isStale, uint256 updatedAt) = l2Feed.isPriceStale(testToken);
 
         assertTrue(isStale);
         assertEq(updatedAt, 0);
@@ -98,8 +105,9 @@ contract ChainlinkL2SequencerTest is Test {
 
     function test_GetSequencerStatus_FailsClosedWithoutFeedOnKnownL2() public {
         vm.chainId(10);
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
 
-        (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) = chainlinkFeed.getSequencerStatus();
+        (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) = l2Feed.getSequencerStatus();
 
         assertFalse(isUp);
         assertFalse(gracePeriodPassed);
@@ -153,10 +161,56 @@ contract ChainlinkL2SequencerTest is Test {
 
     function test_SetSequencerUptimeFeed_CannotDisableOnKnownL2() public {
         vm.chainId(42161);
-        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
+        l2Feed.setSequencerUptimeFeed(address(mockSequencerFeed));
 
         vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 42161));
-        chainlinkFeed.setSequencerUptimeFeed(address(0));
+        l2Feed.setSequencerUptimeFeed(address(0));
+    }
+
+    function test_Constructor_DefaultsSequencerRequiredOnKnownL2() public {
+        vm.chainId(42161);
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
+        assertTrue(l2Feed.sequencerUptimeFeedRequired());
+    }
+
+    function test_Constructor_DoesNotRequireSequencerOnUnlistedChainByDefault() public {
+        vm.chainId(534_352);
+        ChainlinkOracleFeed scrollFeed = _deployFeedForCurrentChain();
+        assertFalse(scrollFeed.sequencerUptimeFeedRequired());
+        assertEq(scrollFeed.getPrice(testToken), uint256(ETH_PRICE));
+    }
+
+    function test_SetSequencerUptimeFeedRequired_CanEnableUnlistedL2() public {
+        vm.chainId(534_352);
+        ChainlinkOracleFeed scrollFeed = _deployFeedForCurrentChain();
+
+        vm.expectEmit(false, false, false, true);
+        emit ChainlinkOracleFeed.SequencerUptimeFeedRequiredSet(false, true);
+        scrollFeed.setSequencerUptimeFeedRequired(true);
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 534_352));
+        scrollFeed.getPrice(testToken);
+
+        scrollFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        vm.warp(block.timestamp + 3601);
+        mockPriceFeed.setPrice(ETH_PRICE);
+        assertEq(scrollFeed.getPrice(testToken), uint256(ETH_PRICE));
+    }
+
+    function test_SetSequencerUptimeFeedRequired_CanDisableConfiguredRequirement() public {
+        chainlinkFeed.setSequencerUptimeFeedRequired(true);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, block.chainid));
+        chainlinkFeed.getPrice(testToken);
+
+        chainlinkFeed.setSequencerUptimeFeedRequired(false);
+        assertEq(chainlinkFeed.getPrice(testToken), uint256(ETH_PRICE));
+    }
+
+    function test_SetSequencerUptimeFeedRequired_OnlyOwner() public {
+        vm.prank(address(0x9999));
+        vm.expectRevert();
+        chainlinkFeed.setSequencerUptimeFeedRequired(true);
     }
 
     function test_SetSequencerUptimeFeed_OnlyOwner() public {

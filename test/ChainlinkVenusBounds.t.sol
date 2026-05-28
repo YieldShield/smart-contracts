@@ -108,10 +108,10 @@ contract ChainlinkVenusBoundsTest is Test {
     }
 
     function test_supportsStrictProtectedPrice_FalseOnKnownL2WithoutSequencerFeed() public {
+        vm.chainId(42161);
+        feed = new ChainlinkOracleFeed(3600);
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
-
-        vm.chainId(42161);
 
         assertFalse(feed.supportsStrictProtectedPrice(token));
     }
