@@ -147,6 +147,22 @@ contract SenderFeeToken is ERC20, Ownable {
     }
 }
 
+contract ScaledBalanceToken is MockERC20 {
+    constructor() MockERC20("Scaled Balance Token", "SBT") { }
+
+    function scaledBalanceOf(address account) external view returns (uint256) {
+        return balanceOf(account);
+    }
+}
+
+contract SharesBalanceToken is MockERC20 {
+    constructor() MockERC20("Shares Balance Token", "SHARE") { }
+
+    function sharesOf(address account) external view returns (uint256) {
+        return balanceOf(account);
+    }
+}
+
 contract RevertingUnsafeFeed {
     error UnsafeUnavailable();
 
@@ -894,6 +910,22 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.scheduledRemovalTime(address(tokenB)), 0, "schedule should be cleared");
     }
 
+    function testTransferManagedOracleOwnershipRejectsCurrentCompositeOracle() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(compositeOracle)));
+        factory.transferManagedOracleOwnership(address(compositeOracle), user1);
+    }
+
+    function testTransferManagedOracleOwnershipAllowsDormantFactoryOwnedOracle() public {
+        CompositeOracle spareOracle = new CompositeOracle();
+        spareOracle.transferOwnership(address(factory));
+
+        vm.prank(governanceTimelock);
+        factory.transferManagedOracleOwnership(address(spareOracle), user1);
+
+        assertEq(spareOracle.owner(), user1, "dormant oracle ownership should transfer");
+    }
+
     function testFactoryCanSetManagedPythEmaConfidence() public {
         PythOracle pythOracle = new PythOracle(address(0x1234), 60);
         pythOracle.transferOwnership(address(factory));
@@ -938,6 +970,15 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         assertEq(managedPyth.getPriceUnsafe(address(tokenB)), 1e8, "failed live update should roll back");
         assertEq(compositeOracle.getTokenOracleFeed(address(tokenB)), address(managedPyth));
+    }
+
+    function testTransferManagedOracleOwnershipRejectsCurrentPythOracle() public {
+        ManagedPythOracleMock managedPyth = new ManagedPythOracleMock(address(factory));
+        factory.setManagedPythOracle(address(managedPyth));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(managedPyth)));
+        factory.transferManagedOracleOwnership(address(managedPyth), user1);
     }
 
     function testFactoryCanRemoveManagedERC4626Vault() public {
@@ -1042,6 +1083,23 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000);
 
         assertTrue(factory.isWhitelisted(address(tokenC)), "Governance should retain token onboarding control");
+    }
+
+    function testAddTokenRejectsScaledBalanceToken() public {
+        ScaledBalanceToken scaledToken = new ScaledBalanceToken();
+        oracle.setPrice(address(scaledToken), 1e8);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(scaledToken)));
+        factory.addToken(address(scaledToken), "Scaled Balance Token", "SBT", address(oracle), address(0), 10000);
+    }
+
+    function testAddTokenRejectsSharesBalanceToken() public {
+        SharesBalanceToken sharesToken = new SharesBalanceToken();
+        oracle.setPrice(address(sharesToken), 1e8);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.BalanceMutatingTokenUnsupported.selector, address(sharesToken)));
+        factory.addTokenInitial(address(sharesToken), "Shares Balance Token", "SHARE", address(oracle), address(0), 10000);
     }
 
     function testAcceptGovernanceTimelockSyncsOwnerAndProtocolFeeRecipient() public {

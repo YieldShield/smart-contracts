@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -154,6 +155,19 @@ contract PythOracleTest is Test {
         // After the safe-default rename, the circuit-breaker-protected path lives under `getEquivalentAmount`.
         uint256 amountB = oracle.getEquivalentAmount(address(token6), 100e6, address(token8));
         assertEq(amountB, 100e8, "Circuit-breaker path should preserve destination token decimals");
+    }
+
+    function testSupportsStrictProtectedPriceTracksSupportedTokens() public view {
+        assertTrue(oracle.supportsStrictProtectedPrice(address(token1)), "configured Pyth feed should support strict path");
+        assertFalse(oracle.supportsStrictProtectedPrice(address(0xBEEF)), "unsupported token should not support strict path");
+    }
+
+    function testPythFeedCanSatisfyCompositeStrictProtectedPriceRequirement() public {
+        CompositeOracle composite = new CompositeOracle();
+        composite.setTokenOracleFeed(address(token1), address(oracle));
+        composite.setStrictCircuitBreakerRequired(address(token1), true);
+
+        assertEq(composite.getPriceWithStrictCircuitBreaker(address(token1)), 1e8);
     }
 
     /* ============ Staleness Tests ============ */

@@ -45,6 +45,8 @@ library ErrorsLib {
     error InvalidAccessControlAddress();
     /// @notice Thrown when a token uses unsupported decimals for pool math
     error InvalidTokenDecimals(address token, uint8 decimals);
+    /// @notice Thrown when a token exposes common rebasing/share-balance markers unsupported by nominal pool accounting
+    error BalanceMutatingTokenUnsupported(address token);
     /// @notice Thrown when pool creation requires a non-zero bond
     error InitialCreationBondRequired();
 

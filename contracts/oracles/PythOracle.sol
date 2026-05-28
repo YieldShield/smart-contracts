@@ -401,6 +401,12 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
         return isTokenSupported[token];
     }
 
+    /// @notice Whether this token feed satisfies the strict protected-price policy.
+    /// @dev Pyth's protected path checks freshness, confidence width, and spot/EMA deviation.
+    function supportsStrictProtectedPrice(address token) external view returns (bool) {
+        return isTokenSupported[token];
+    }
+
     /// @notice Calculate the protected USD value of an amount of tokens
     /// @dev Uses the same circuit-breaker-validated price as `getPrice`.
     function getValue(address token, uint256 amount) external view override returns (uint256) {

@@ -93,6 +93,7 @@ contract SplitRiskPoolFactory is
         address pool, address currentGovernance, address pendingGovernance, address expectedGovernance
     );
     error ActivePoolUsesCompositeOracle(address pool, address oracle);
+    error ManagedOracleInUse(address oracle);
 
     // Governance-controlled protocol parameters
     address public splitRiskPoolImplementation;
@@ -424,6 +425,7 @@ contract SplitRiskPoolFactory is
     function transferManagedOracleOwnership(address oracle, address newOwner) external onlyGovernance {
         if (newOwner == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _requireOwnedByFactory(oracle);
+        _requireManagedOracleNotInUse(oracle);
         IOwnableOracleAdmin(oracle).transferOwnership(newOwner);
     }
 
@@ -729,6 +731,8 @@ contract SplitRiskPoolFactory is
         PoolValidationLib.validateWhitelist(_shieldedToken, _backingToken, whitelistedTokens, isWhitelisted);
         PoolValidationLib.validatePoolParams(_commissionRate, _poolFee, _colleteralRatio);
         PoolValidationLib.validateERC4626Underlying(_shieldedToken, _backingToken);
+        _validateStaticBalanceToken(_shieldedToken);
+        _validateStaticBalanceToken(_backingToken);
 
         // Build TokenInfo structs from whitelisted tokens
         // Both tokens must be whitelisted (enforced by validateWhitelist above)
@@ -1146,6 +1150,26 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    function _validateStaticBalanceToken(address token) internal view {
+        if (
+            _supportsUintBalanceMarker(token, "scaledBalanceOf(address)")
+                || _supportsUintBalanceMarker(token, "sharesOf(address)")
+                || _supportsUintPairBalanceMarker(token, "getScaledUserBalanceAndSupply(address)")
+        ) {
+            revert ErrorsLib.BalanceMutatingTokenUnsupported(token);
+        }
+    }
+
+    function _supportsUintBalanceMarker(address token, string memory signature) internal view returns (bool) {
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature(signature, address(this)));
+        return success && data.length >= 32;
+    }
+
+    function _supportsUintPairBalanceMarker(address token, string memory signature) internal view returns (bool) {
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature(signature, address(this)));
+        return success && data.length >= 64;
+    }
+
     function _validateCompositeOracleTokenFeed(address token) internal view {
         PoolOracleValidationLib.validateBackingTokenOracle(
             compositeOracle, token, tokenRequiresStrictProtectedPrice[token]
@@ -1453,6 +1477,12 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    function _requireManagedOracleNotInUse(address oracle) internal view {
+        if (oracle == compositeOracle || oracle == pythOracle || oracle == erc4626OracleFeed) {
+            revert ManagedOracleInUse(oracle);
+        }
+    }
+
     function _compositeOracleAdmin() internal view returns (ICompositeOracleAdmin) {
         _requireManagedOracleConfigured(compositeOracle);
         return ICompositeOracleAdmin(compositeOracle);
@@ -1558,6 +1588,7 @@ contract SplitRiskPoolFactory is
         if (primaryOracleFeed == address(0)) revert ErrorsLib.InvalidAssetAddress();
         _validateMinCollateralRatioBp(minCollateralRatioBp);
         _validateTokenDecimals(token);
+        _validateStaticBalanceToken(token);
         TokenWhitelistLib.addToken(whitelistedTokens, isWhitelisted, token);
 
         tokenInfo[token] = TokenWhitelistLib.TokenInfo({
