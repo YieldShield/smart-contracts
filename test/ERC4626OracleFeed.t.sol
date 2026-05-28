@@ -66,9 +66,7 @@ contract MutableAssetERC4626 is MockERC4626 {
     address private reportedAsset;
     bool private shouldRevertAsset;
 
-    constructor(IERC20 initialAsset, string memory name, string memory symbol)
-        MockERC4626(initialAsset, name, symbol)
-    {
+    constructor(IERC20 initialAsset, string memory name, string memory symbol) MockERC4626(initialAsset, name, symbol) {
         reportedAsset = address(initialAsset);
     }
 
@@ -384,12 +382,13 @@ contract ERC4626OracleFeedTest is Test {
         MockOracle primary = new MockOracle();
         MockOracle backup = new MockOracle();
         primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
-        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
+        backup.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
         compositeUnderlyingOracle.setTokenOracleFeedDual(address(underlyingAsset), address(primary), address(backup));
 
         ERC4626OracleFeed challengedFeed = new ERC4626OracleFeed(address(compositeUnderlyingOracle));
         challengedFeed.registerVault(address(vault), address(underlyingAsset));
 
+        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
         compositeUnderlyingOracle.challengeForToken(address(underlyingAsset));
 
         (bool isStale, uint64 publishTime) = challengedFeed.isPriceStale(address(vault));
@@ -409,12 +408,13 @@ contract ERC4626OracleFeedTest is Test {
         MockOracle primary = new MockOracle();
         MockOracle backup = new MockOracle();
         primary.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
-        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
+        backup.setPrice(address(underlyingAsset), UNDERLYING_PRICE);
         compositeUnderlyingOracle.setTokenOracleFeedDual(address(underlyingAsset), address(primary), address(backup));
 
         ERC4626OracleFeed challengedFeed = new ERC4626OracleFeed(address(compositeUnderlyingOracle));
         challengedFeed.registerVault(address(vault), address(underlyingAsset));
 
+        backup.setPrice(address(underlyingAsset), (UNDERLYING_PRICE * 10076) / 10000);
         compositeUnderlyingOracle.challengeForToken(address(underlyingAsset));
 
         assertEq(challengedFeed.getPriceUnsafe(address(vault)), UNDERLYING_PRICE);

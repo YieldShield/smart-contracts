@@ -476,10 +476,10 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
-        _requireMinimumVaultValue(vault, config, useCircuitBreaker);
 
         uint256 assetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
         assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
+        _requireMinimumVaultValue(vault, config, useCircuitBreaker);
         // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
         // the vault's unsafe getter forwards useCircuitBreaker=false so the
         // underlying read must take the unsafe path too. `_getUnderlyingPrice`

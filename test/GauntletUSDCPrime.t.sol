@@ -48,10 +48,10 @@ contract GauntletUSDCPrimeTest is Test {
         // Deploy ERC4626OracleFeed for NAV-based pricing
         erc4626Feed = new ERC4626OracleFeed(address(mockOracle));
 
-        // Deposit enough to meet the vault's native minimum share threshold.
+        // Deposit enough to meet the vault's native minimum share and USD value thresholds.
         // Since shares are 18 decimals and USDC is 6 decimals, at 1:1 rate:
-        // 1000e18 shares needs 1000e6 USDC (1000 USDC).
-        uint256 initialDepositUSDC = 1000e6;
+        // 2000e18 shares needs 2000e6 USDC (2000 USDC), leaving room for depeg tests.
+        uint256 initialDepositUSDC = 2000e6;
         usdc.mint(owner, initialDepositUSDC);
         usdc.approve(address(gtusdc), initialDepositUSDC);
         gtusdc.deposit(initialDepositUSDC, owner);
