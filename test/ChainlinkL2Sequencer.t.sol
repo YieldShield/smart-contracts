@@ -80,6 +80,32 @@ contract ChainlinkL2SequencerTest is Test {
         assertEq(price, uint256(ETH_PRICE));
     }
 
+    function test_GetPrice_RevertsWithoutSequencerFeedOnKnownL2() public {
+        vm.chainId(42161);
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 42161));
+        chainlinkFeed.getPrice(testToken);
+    }
+
+    function test_IsPriceStale_ReturnsTrueWithoutSequencerFeedOnKnownL2() public {
+        vm.chainId(8453);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, 0);
+    }
+
+    function test_GetSequencerStatus_FailsClosedWithoutFeedOnKnownL2() public {
+        vm.chainId(10);
+
+        (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) = chainlinkFeed.getSequencerStatus();
+
+        assertFalse(isUp);
+        assertFalse(gracePeriodPassed);
+        assertEq(timeSinceUp, 0);
+    }
+
     function test_GetPriceWithCircuitBreaker_UsesChainlinkValidation() public view {
         // After the safe-default rename, the protected price is exposed under `getPrice`.
         uint256 price = chainlinkFeed.getPrice(testToken);
@@ -123,6 +149,14 @@ contract ChainlinkL2SequencerTest is Test {
         // Disable by setting to zero
         chainlinkFeed.setSequencerUptimeFeed(address(0));
         assertEq(address(chainlinkFeed.sequencerUptimeFeed()), address(0));
+    }
+
+    function test_SetSequencerUptimeFeed_CannotDisableOnKnownL2() public {
+        vm.chainId(42161);
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 42161));
+        chainlinkFeed.setSequencerUptimeFeed(address(0));
     }
 
     function test_SetSequencerUptimeFeed_OnlyOwner() public {

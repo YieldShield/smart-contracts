@@ -10,6 +10,8 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
+import { DecimalNormalizationLib } from "../contracts/libraries/DecimalNormalizationLib.sol";
+import { OracleValidationLib } from "../contracts/libraries/OracleValidationLib.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 
 contract PythConfigHarness {
@@ -27,6 +29,18 @@ contract PythConfigHarness {
 
     function getQuoteFeedIdBySymbol(string memory symbol) external pure returns (bytes32) {
         return PythConfig.getQuoteFeedIdBySymbol(symbol);
+    }
+}
+
+contract OracleMathHarness {
+    using DecimalNormalizationLib for uint256;
+
+    function normalize(uint256 price, uint8 fromDecimals, uint8 toDecimals) external pure returns (uint256) {
+        return price.normalize(fromDecimals, toDecimals);
+    }
+
+    function calculateDeviation(uint256 price1, uint256 price2) external pure returns (uint256) {
+        return OracleValidationLib.calculateDeviation(price1, price2);
     }
 }
 
@@ -176,6 +190,23 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
             PythConfig.DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE,
             "testnet should allow longer freshness window"
         );
+    }
+
+    function test_DecimalNormalizationOverflowRevertsWithCustomError() public {
+        OracleMathHarness harness = new OracleMathHarness();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DecimalNormalizationLib.DecimalNormalizationOverflow.selector, type(uint256).max, 0, 1
+            )
+        );
+        harness.normalize(type(uint256).max, 0, 1);
+    }
+
+    function test_OracleDeviationSaturatesInsteadOfOverflowing() public {
+        OracleMathHarness harness = new OracleMathHarness();
+
+        assertEq(harness.calculateDeviation(type(uint256).max, 1), type(uint256).max);
     }
 
     // ============ Bug 7: Factory removeToken Cleanup Tests ============

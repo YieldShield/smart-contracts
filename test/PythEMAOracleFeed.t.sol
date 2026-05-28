@@ -54,6 +54,14 @@ contract PythEMAOracleFeedTest is Test {
         feed.getPrice(address(token));
     }
 
+    function testGetPrice_RevertsForOverflowingPositiveExponent() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID, type(int64).max, 0, 70, uint64(block.timestamp));
+
+        vm.expectRevert(abi.encodeWithSelector(PythEMAOracleFeed.InvalidPrice.selector, address(token), int256(0)));
+        feed.getPrice(address(token));
+    }
+
     function testGetPriceUnsafeSelectorFailsClosed() public view {
         // After the safe-default rename, the marker for "feed advertises the safe/unsafe split"
         // is the `getPriceUnsafe(address)` selector. PythEMA deliberately does not expose it,

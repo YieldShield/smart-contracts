@@ -515,15 +515,23 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
             result = uint256(price);
         } else if (adjustment > 0) {
             // Need to multiply: price * 10^adjustment
-            result = uint256(price) * uint256(10 ** uint256(uint32(adjustment)));
+            uint256 scale = _pythPriceScaleOrRevert(token, uint256(uint32(adjustment)));
+            uint256 unsignedPrice = uint256(price);
+            if (unsignedPrice > type(uint256).max / scale) revert InvalidPrice(token, 0);
+            result = unsignedPrice * scale;
         } else {
             // Need to divide: price / 10^(-adjustment).
             // Truncation can yield zero for tiny prices with very negative expo;
             // fail closed so a silent zero never propagates into composition.
-            result = uint256(price) / uint256(10 ** uint256(uint32(-adjustment)));
+            result = uint256(price) / _pythPriceScaleOrRevert(token, uint256(uint32(-adjustment)));
         }
         if (result == 0) revert InvalidPrice(token, 0);
         return result;
+    }
+
+    function _pythPriceScaleOrRevert(address token, uint256 exponent) internal pure returns (uint256) {
+        if (exponent > 77) revert InvalidPrice(token, 0);
+        return 10 ** exponent;
     }
 
     function _validateConfidence(address token, PythStructs.Price memory priceData, bool useEma)

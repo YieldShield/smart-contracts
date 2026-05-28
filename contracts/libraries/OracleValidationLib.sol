@@ -67,6 +67,9 @@ library OracleValidationLib {
         uint256 diff = price1 > price2 ? price1 - price2 : price2 - price1;
         uint256 minPrice = price1 < price2 ? price1 : price2;
 
+        if (diff > type(uint256).max / 10_000) {
+            return type(uint256).max;
+        }
         return (diff * 10000) / minPrice;
     }
 }

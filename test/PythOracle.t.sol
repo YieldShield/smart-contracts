@@ -192,6 +192,14 @@ contract PythOracleTest is Test {
         assertEq(price, 1e8, "Fresh price should work");
     }
 
+    function testGetPrice_RevertsForOverflowingPositiveExponent() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, type(int64).max, 0, 70, uint64(block.timestamp));
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPrice.selector, address(token1), 0));
+        oracle.getPrice(address(token1));
+    }
+
     function testIsPriceStale() public {
         // Fresh price
         (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));

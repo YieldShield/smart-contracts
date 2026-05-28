@@ -107,6 +107,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Custom error when L2 sequencer is down
     error SequencerDown();
 
+    /// @notice Custom error when a known L2 deployment has no sequencer uptime feed configured
+    error SequencerUptimeFeedRequired(uint256 chainId);
+
     /// @notice Custom error when the feed answer has saturated at its min/max bound
     ///         (Venus-style attack pattern: aggregator pins at floor/ceiling instead
     ///         of reporting the true price).
@@ -321,6 +324,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @param _sequencerUptimeFeed The Chainlink sequencer uptime feed address
     function setSequencerUptimeFeed(address _sequencerUptimeFeed) external onlyOwner {
         address oldFeed = address(sequencerUptimeFeed);
+        if (_sequencerUptimeFeed == address(0) && _requiresSequencerUptimeFeed()) {
+            revert SequencerUptimeFeedRequired(block.chainid);
+        }
 
         // If setting a non-zero address, verify the feed is valid
         if (_sequencerUptimeFeed != address(0)) {
@@ -375,6 +381,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      min/max-answer circuit-breaker values cannot be treated as valid prices.
     function supportsStrictProtectedPrice(address token) external view returns (bool) {
         if (!isTokenSupported[token]) {
+            return false;
+        }
+        if (_requiresSequencerUptimeFeed() && address(sequencerUptimeFeed) == address(0)) {
             return false;
         }
 
@@ -494,6 +503,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @return timeSinceUp Seconds since sequencer came back up (0 if no feed)
     function getSequencerStatus() external view returns (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) {
         if (address(sequencerUptimeFeed) == address(0)) {
+            if (_requiresSequencerUptimeFeed()) {
+                return (false, false, 0);
+            }
             return (true, true, 0); // No sequencer feed = always OK
         }
 
@@ -511,7 +523,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     function _isSequencerUnavailableForStaleness() internal view returns (bool) {
         if (address(sequencerUptimeFeed) == address(0)) {
-            return false;
+            return _requiresSequencerUptimeFeed();
         }
 
         try sequencerUptimeFeed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
@@ -535,6 +547,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @dev Only performs check if sequencerUptimeFeed is set (non-zero address)
     function _checkSequencerUptime() internal view {
         if (address(sequencerUptimeFeed) == address(0)) {
+            if (_requiresSequencerUptimeFeed()) {
+                revert SequencerUptimeFeedRequired(block.chainid);
+            }
             return; // No sequencer feed configured, skip check (L1 or not needed)
         }
 
@@ -573,5 +588,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (timeSinceUp <= GRACE_PERIOD_TIME) {
             revert GracePeriodNotOver(timeSinceUp, GRACE_PERIOD_TIME);
         }
+    }
+
+    function _requiresSequencerUptimeFeed() internal view returns (bool) {
+        return _isKnownL2RequiringSequencer(block.chainid);
+    }
+
+    function _isKnownL2RequiringSequencer(uint256 chainId) internal pure returns (bool) {
+        return chainId == 10 || chainId == 11155420 || chainId == 8453 || chainId == 84532 || chainId == 42161
+            || chainId == 421614;
     }
 }
