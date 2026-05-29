@@ -1533,6 +1533,97 @@ contract SplitRiskPoolFactory is
         if (oracle == compositeOracle || oracle == pythOracle || oracle == erc4626OracleFeed) {
             revert ManagedOracleInUse(oracle);
         }
+        if (_activePoolUsesPriceOracle(oracle) || _whitelistedRouteReferencesOracle(oracle)) {
+            revert ManagedOracleInUse(oracle);
+        }
+    }
+
+    function _activePoolUsesPriceOracle(address oracle) internal view returns (bool) {
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            (,,,,,,,,, address priceOracle) = ISplitRiskPool(activePools[i]).poolConfig();
+            if (priceOracle == oracle) {
+                return true;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return false;
+    }
+
+    function _whitelistedRouteReferencesOracle(address oracle) internal view returns (bool) {
+        uint256 tokenCount = whitelistedTokens.length;
+        for (uint256 i = 0; i < tokenCount;) {
+            address token = whitelistedTokens[i];
+            TokenWhitelistLib.TokenInfo storage info = tokenInfo[token];
+            if (
+                _oracleFeedReferencesOracle(info.primaryOracleFeed, token, oracle)
+                    || _oracleFeedReferencesOracle(info.backupOracleFeed, token, oracle)
+            ) {
+                return true;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return false;
+    }
+
+    function _oracleFeedReferencesOracle(address feed, address token, address oracle) internal view returns (bool) {
+        if (feed == address(0)) {
+            return false;
+        }
+        if (feed == oracle) {
+            return true;
+        }
+        if (feed.code.length == 0) {
+            return false;
+        }
+
+        try IERC4626OracleFeedAdmin(feed).underlyingPriceOracle() returns (address underlyingOracle) {
+            if (underlyingOracle == oracle) {
+                return true;
+            }
+
+            address underlying = _erc4626VaultUnderlyingFromFeed(feed, token);
+            if (underlying != address(0) && _oracleRouteReferencesOracle(underlyingOracle, underlying, oracle)) {
+                return true;
+            }
+        } catch { }
+
+        return false;
+    }
+
+    function _oracleRouteReferencesOracle(address routeOracle, address token, address oracle)
+        internal
+        view
+        returns (bool)
+    {
+        if (routeOracle == address(0)) {
+            return false;
+        }
+        if (routeOracle == oracle) {
+            return true;
+        }
+
+        (bool statusSuccess, bytes memory statusData) =
+            routeOracle.staticcall(abi.encodeCall(ICompositeOracle.getTokenDualFeedStatus, (token)));
+        if (!statusSuccess || statusData.length < 192) {
+            return false;
+        }
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            abi.decode(statusData, (bool, address, address, bool, bool, uint256));
+        return primaryFeed == oracle || (isDualFeed && backupFeed == oracle);
+    }
+
+    function _erc4626VaultUnderlyingFromFeed(address feed, address vault) internal view returns (address underlying) {
+        try IERC4626OracleFeedAdmin(feed).vaultToUnderlying(vault) returns (address configuredUnderlying) {
+            underlying = configuredUnderlying;
+        } catch {
+            return address(0);
+        }
     }
 
     function _compositeOracleAdmin() internal view returns (ICompositeOracleAdmin) {

@@ -1021,6 +1021,51 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.transferManagedOracleOwnership(address(managedPyth), user1);
     }
 
+    function testTransferManagedOracleOwnershipRejectsFormerPythStillReferencedByTokenRoute() public {
+        ManagedPythOracleMock oldPyth = new ManagedPythOracleMock(address(factory));
+        factory.setManagedPythOracle(address(oldPyth));
+
+        vm.prank(governanceTimelock);
+        factory.setPythTokenPriceFeed(address(tokenB), bytes32(uint256(1)));
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeed(address(tokenB), address(oldPyth));
+
+        ManagedPythOracleMock newPyth = new ManagedPythOracleMock(address(factory));
+        vm.prank(governanceTimelock);
+        factory.setManagedPythOracle(address(newPyth));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(oldPyth)));
+        factory.transferManagedOracleOwnership(address(oldPyth), user1);
+    }
+
+    function testTransferManagedOracleOwnershipRejectsFormerERC4626FeedStillReferencedByTokenRoute() public {
+        (, ERC4626OracleFeed oldFeed) = _installManagedERC4626FeedForTokenA();
+
+        ERC4626OracleFeed newFeed = new ERC4626OracleFeed(address(oracle));
+        newFeed.transferOwnership(address(factory));
+
+        vm.prank(governanceTimelock);
+        factory.setManagedERC4626OracleFeed(address(newFeed));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(oldFeed)));
+        factory.transferManagedOracleOwnership(address(oldFeed), user1);
+    }
+
+    function testTransferManagedOracleOwnershipRejectsFormerPythUsedByERC4626Route() public {
+        (ManagedPythOracleMock oldPyth,) = _installManagedERC4626FeedForTokenA();
+
+        ManagedPythOracleMock newPyth = new ManagedPythOracleMock(address(factory));
+        vm.prank(governanceTimelock);
+        factory.setManagedPythOracle(address(newPyth));
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.ManagedOracleInUse.selector, address(oldPyth)));
+        factory.transferManagedOracleOwnership(address(oldPyth), user1);
+    }
+
     function testCreatePoolRejectsERC4626NavFeedAsBackingOracle() public {
         (, ERC4626OracleFeed erc4626Feed) = _installManagedERC4626FeedForTokenA();
 
