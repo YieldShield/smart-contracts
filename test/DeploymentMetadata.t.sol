@@ -61,7 +61,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
     uint256 internal constant FRESHEST_RESOLUTION_TEST_CHAIN_ID = 777_777_782;
     uint256 internal constant EMPTY_EXPORT_TEST_CHAIN_ID = 777_777_783;
-    uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_784;
+    uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_900;
 
     function test_exportDeployments_PreservesExistingEntriesNotSupersededByCurrentRun() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);
