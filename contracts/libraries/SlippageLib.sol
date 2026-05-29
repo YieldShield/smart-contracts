@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.35;
 
 /// @title SlippageLib
 /// @notice Shared helpers to enforce user-provided min-out constraints.

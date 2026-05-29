@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.35;
 
 import { ConstantsLib } from "./ConstantsLib.sol";
 import { ErrorsLib } from "./ErrorsLib.sol";

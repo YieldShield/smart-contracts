@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.35;
 
 import { ISplitRiskPool } from "../interfaces/ISplitRiskPool.sol";
 import { TokenWhitelistLib } from "./TokenWhitelistLib.sol";

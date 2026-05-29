@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.35;
 
 /// @title IPoolAccessControl
 /// @notice Interface for access control contracts that restrict pool operations

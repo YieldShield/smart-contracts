@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.35;
 
 import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
