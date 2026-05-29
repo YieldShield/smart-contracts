@@ -4,7 +4,11 @@ const { join } = require("path");
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
 const PUBLIC_BROADCAST_SCRIPTS = new Set(["DeployYieldShieldProduction.s.sol"]);
-const LOCAL_BROADCAST_SCRIPTS = new Set(["DeployYieldShield.s.sol", "Deploy.s.sol", "DeployYieldShieldProduction.s.sol"]);
+const LOCAL_BROADCAST_SCRIPTS = new Set([
+    "DeployYieldShield.s.sol",
+    "Deploy.s.sol",
+    "DeployYieldShieldProduction.s.sol",
+]);
 
 const PYTH_TOKEN_CONFIGS = [
     {
@@ -123,7 +127,10 @@ function isLocalChain(chainId) {
 }
 
 function isValidNonZeroAddress(address) {
-    return /^0x[a-fA-F0-9]{40}$/u.test(String(address || "")) && address.toLowerCase() !== ZERO_ADDRESS;
+    return (
+        /^0x[a-fA-F0-9]{40}$/u.test(String(address || "")) &&
+        address.toLowerCase() !== ZERO_ADDRESS
+    );
 }
 
 function allowsBroadcastFallback(chainId, env = process.env, explicitAllow) {
@@ -172,7 +179,9 @@ function listLatestBroadcastRecords(rootDir, chainId) {
         return [];
     }
 
-    const allowedScripts = isLocalChain(normalizedChainId) ? LOCAL_BROADCAST_SCRIPTS : PUBLIC_BROADCAST_SCRIPTS;
+    const allowedScripts = isLocalChain(normalizedChainId)
+        ? LOCAL_BROADCAST_SCRIPTS
+        : PUBLIC_BROADCAST_SCRIPTS;
 
     return readdirSync(broadcastDir)
         .filter((scriptName) => allowedScripts.has(scriptName))
@@ -250,19 +259,24 @@ function getBroadcastAddresses(broadcast, contractName) {
             addAddress(transaction.contractAddress);
         }
 
-        const additionalContracts = Array.isArray(transaction.additionalContracts)
+        const additionalContracts = Array.isArray(
+            transaction.additionalContracts,
+        )
             ? transaction.additionalContracts
             : [];
         const proxyWrapsTarget =
             transaction.contractName === "ERC1967Proxy" &&
-            additionalContracts.some((entry) => (entry.name || entry.contractName) === contractName);
+            additionalContracts.some(
+                (entry) => (entry.name || entry.contractName) === contractName,
+            );
         if (proxyWrapsTarget) {
             addAddress(transaction.contractAddress);
         }
 
         for (const entry of additionalContracts) {
             if ((entry.name || entry.contractName) !== contractName) continue;
-            if (entry.transactionType && entry.transactionType !== "CREATE") continue;
+            if (entry.transactionType && entry.transactionType !== "CREATE")
+                continue;
             addAddress(entry.address || entry.contractAddress);
         }
     }
@@ -411,21 +425,33 @@ function resolveContractAddress({
         return latestDeploymentAddress;
     }
 
-    if (!allowsBroadcastFallback(resolvedChainId, env, allowBroadcastFallback)) {
+    if (
+        !allowsBroadcastFallback(resolvedChainId, env, allowBroadcastFallback)
+    ) {
         return null;
     }
 
-    return getLatestBroadcastAddress(rootDir, resolvedChainId, contractName).address;
+    return getLatestBroadcastAddress(rootDir, resolvedChainId, contractName)
+        .address;
 }
 
-function resolvePythTokenConfigs({ rootDir, chainId, env = process.env, allowBroadcastFallback } = {}) {
+function resolvePythTokenConfigs({
+    rootDir,
+    chainId,
+    env = process.env,
+    allowBroadcastFallback,
+} = {}) {
     const resolvedChainId = resolveDeploymentChainId({ rootDir, chainId, env });
     const deploymentRecord =
         rootDir && resolvedChainId
             ? readDeploymentRecord(rootDir, resolvedChainId)
             : null;
     const deploymentData = deploymentRecord?.data || null;
-    const useBroadcastFallback = allowsBroadcastFallback(resolvedChainId, env, allowBroadcastFallback);
+    const useBroadcastFallback = allowsBroadcastFallback(
+        resolvedChainId,
+        env,
+        allowBroadcastFallback,
+    );
 
     return PYTH_TOKEN_CONFIGS.map((config) => {
         const deploymentAddress = getDeploymentAddresses(
@@ -434,9 +460,16 @@ function resolvePythTokenConfigs({ rootDir, chainId, env = process.env, allowBro
         )[config.broadcastIndex];
         let broadcastAddress = null;
         if (useBroadcastFallback) {
-            const broadcastRecord = getLatestBroadcastAddress(rootDir, resolvedChainId, config.contractName).record;
+            const broadcastRecord = getLatestBroadcastAddress(
+                rootDir,
+                resolvedChainId,
+                config.contractName,
+            ).record;
             broadcastAddress = broadcastRecord
-                ? getBroadcastAddresses(broadcastRecord.data, config.contractName)[config.broadcastIndex]
+                ? getBroadcastAddresses(
+                      broadcastRecord.data,
+                      config.contractName,
+                  )[config.broadcastIndex]
                 : null;
         }
         const envAddress = env[config.env] || null;
@@ -444,10 +477,7 @@ function resolvePythTokenConfigs({ rootDir, chainId, env = process.env, allowBro
             ...config,
             chainId: resolvedChainId,
             address:
-                envAddress ||
-                deploymentAddress ||
-                broadcastAddress ||
-                null,
+                envAddress || deploymentAddress || broadcastAddress || null,
         };
     });
 }

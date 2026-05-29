@@ -488,11 +488,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         VaultConfig memory config,
         bool useProtectedUnderlying,
         bool clampUpwardToReference
-    )
-        internal
-        view
-        returns (uint256)
-    {
+    ) internal view returns (uint256) {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
 
@@ -602,11 +598,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         uint256 assetsPerShare,
         VaultConfig memory config,
         bool clampUpwardToReference
-    )
-        internal
-        pure
-        returns (uint256)
-    {
+    ) internal pure returns (uint256) {
         _requireAssetsPerShareWithinReference(
             vault, assetsPerShare, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
         );

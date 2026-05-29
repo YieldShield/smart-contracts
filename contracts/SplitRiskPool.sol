@@ -551,9 +551,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      protected underlying oracle checks. Oracles without the dedicated
     ///      selector fall back to the standard protected price.
     function _tryGetShieldedFeeAccrualPrice() internal view returns (bool success, uint256 price) {
-        (bool callSuccess, bytes memory data) = poolConfig.priceOracle.staticcall(
-            abi.encodeWithSignature("getPriceForFeeAccrual(address)", SHIELDED_TOKEN)
-        );
+        (bool callSuccess, bytes memory data) =
+            poolConfig.priceOracle.staticcall(abi.encodeWithSignature("getPriceForFeeAccrual(address)", SHIELDED_TOKEN));
 
         if (callSuccess) {
             if (data.length < 32) return (false, 0);
@@ -1048,8 +1047,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
-        uint256 rewardPerShareIncrement =
-            Math.mulDiv(pendingDust, ConstantsLib.REWARD_PRECISION, totalProtectorShares);
+        uint256 rewardPerShareIncrement = Math.mulDiv(pendingDust, ConstantsLib.REWARD_PRECISION, totalProtectorShares);
         if (rewardPerShareIncrement == 0) {
             return;
         }

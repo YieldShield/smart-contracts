@@ -511,8 +511,14 @@ function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
     for (const chainId of chainIds) {
         const chainContracts = allGeneratedContracts[chainId] || {};
         const factoryAddress =
-            generatedContractAddressFor(chainContracts, "SplitRiskPoolFactory") ||
-            deploymentJsonAddressFor(deployments[chainId], "SplitRiskPoolFactory");
+            generatedContractAddressFor(
+                chainContracts,
+                "SplitRiskPoolFactory",
+            ) ||
+            deploymentJsonAddressFor(
+                deployments[chainId],
+                "SplitRiskPoolFactory",
+            );
         const governorAddress =
             generatedContractAddressFor(chainContracts, "YSGovernor") ||
             deploymentJsonAddressFor(deployments[chainId], "YSGovernor");
@@ -525,7 +531,10 @@ function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
             chainId,
             factoryAddress,
             governorAddress,
-            governorBlock: generatedContractBlockFor(chainContracts, "YSGovernor"),
+            governorBlock: generatedContractBlockFor(
+                chainContracts,
+                "YSGovernor",
+            ),
         };
     }
 
@@ -671,7 +680,11 @@ async function main() {
         explicitTargetChainId,
     );
 
-    const ponderDeployment = selectPonderDeployment(chainIds, allGeneratedContracts, deployments);
+    const ponderDeployment = selectPonderDeployment(
+        chainIds,
+        allGeneratedContracts,
+        deployments,
+    );
 
     if (ponderDeployment) {
         updatePonderConfig(

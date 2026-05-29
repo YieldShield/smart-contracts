@@ -1121,11 +1121,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
-    function _tryGetFeeAccrualPrice(address feed, address token)
-        internal
-        view
-        returns (bool supported, uint256 price)
-    {
+    function _tryGetFeeAccrualPrice(address feed, address token) internal view returns (bool supported, uint256 price) {
         if (feed.code.length == 0) {
             return (false, 0);
         }

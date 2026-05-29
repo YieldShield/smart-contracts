@@ -5,12 +5,12 @@ test("selectPonderDeployment never mixes factory and governor chains", async () 
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
     const chainIds = ["421614", "31337"];
     const allGeneratedContracts = {
-        "421614": {
+        421614: {
             SplitRiskPoolFactory: {
                 address: "0x00000000000000000000000000000000000000a1",
             },
         },
-        "31337": {
+        31337: {
             YSGovernor: {
                 address: "0x00000000000000000000000000000000000000b1",
                 deployedOnBlock: 1234,
@@ -28,12 +28,12 @@ test("selectPonderDeployment selects both addresses from the first complete chai
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
     const chainIds = ["421614", "31337"];
     const allGeneratedContracts = {
-        "421614": {
+        421614: {
             SplitRiskPoolFactory: {
                 address: "0x00000000000000000000000000000000000000a1",
             },
         },
-        "31337": {
+        31337: {
             SplitRiskPoolFactory: {
                 address: "0x00000000000000000000000000000000000000c1",
             },

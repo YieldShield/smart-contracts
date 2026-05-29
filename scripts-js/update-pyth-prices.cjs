@@ -82,14 +82,15 @@ function isValidKeystoreName(keystoreName) {
 function parseCliArgs(args) {
     const config = {};
 
-    for (let i = 0; i < args.length;) {
+    for (let i = 0; i < args.length; ) {
         const rawKey = args[i];
         if (!rawKey?.startsWith("--")) {
             i++;
             continue;
         }
         const rawKeyName = rawKey.replace("--", "");
-        const key = rawKeyName === "allow-partial" ? "allowPartial" : rawKeyName;
+        const key =
+            rawKeyName === "allow-partial" ? "allowPartial" : rawKeyName;
         const value = args[i + 1];
         if (value && !value.startsWith("--")) {
             config[key] = value;
@@ -185,18 +186,32 @@ async function queryPythTokenEvents(oracleContract) {
     const latestBlock = provider?.getBlockNumber
         ? await provider.getBlockNumber()
         : null;
-    const chunkSize = Number(process.env.PYTH_EVENT_SCAN_CHUNK_SIZE || DEFAULT_EVENT_SCAN_CHUNK_SIZE);
+    const chunkSize = Number(
+        process.env.PYTH_EVENT_SCAN_CHUNK_SIZE || DEFAULT_EVENT_SCAN_CHUNK_SIZE,
+    );
     const events = [];
 
     for (const filter of filters) {
         if (!latestBlock || latestBlock <= chunkSize) {
-            events.push(...(await oracleContract.queryFilter(filter, 0, "latest")));
+            events.push(
+                ...(await oracleContract.queryFilter(filter, 0, "latest")),
+            );
             continue;
         }
 
-        for (let fromBlock = 0; fromBlock <= latestBlock; fromBlock += chunkSize + 1) {
+        for (
+            let fromBlock = 0;
+            fromBlock <= latestBlock;
+            fromBlock += chunkSize + 1
+        ) {
             const toBlock = Math.min(fromBlock + chunkSize, latestBlock);
-            events.push(...(await oracleContract.queryFilter(filter, fromBlock, toBlock)));
+            events.push(
+                ...(await oracleContract.queryFilter(
+                    filter,
+                    fromBlock,
+                    toBlock,
+                )),
+            );
         }
     }
 
@@ -222,15 +237,20 @@ async function collectTokenCandidates({
 
     if (factoryContract) {
         try {
-            const whitelistedTokens = await factoryContract.getWhitelistedTokens();
-            whitelistedTokens.forEach((address) => addCandidate(address, "factory"));
+            const whitelistedTokens =
+                await factoryContract.getWhitelistedTokens();
+            whitelistedTokens.forEach((address) =>
+                addCandidate(address, "factory"),
+            );
         } catch (error) {
             const message = `Could not read factory whitelist: ${error.message}`;
             if (requireCompleteDiscovery) throw new Error(message);
             console.warn(`  ⚠ ${message}`);
         }
     } else if (requireCompleteDiscovery) {
-        throw new Error("Strict Pyth updates require a factory address for whitelist discovery");
+        throw new Error(
+            "Strict Pyth updates require a factory address for whitelist discovery",
+        );
     }
 
     for (const token of registryTokens) {
@@ -239,7 +259,9 @@ async function collectTokenCandidates({
 
     try {
         const pythEvents = await queryPythTokenEvents(oracleContract);
-        pythEvents.forEach((event) => addCandidate(event.args?.token, "pyth-event"));
+        pythEvents.forEach((event) =>
+            addCandidate(event.args?.token, "pyth-event"),
+        );
     } catch (error) {
         const message = `Could not scan Pyth token events: ${error.message}`;
         if (requireCompleteDiscovery) throw new Error(message);
@@ -267,7 +289,9 @@ async function discoverConfiguredPythTokens({
     const missingConfigs = [];
 
     for (const candidate of candidates) {
-        const registryToken = registryLookup.get(candidate.address.toLowerCase());
+        const registryToken = registryLookup.get(
+            candidate.address.toLowerCase(),
+        );
         const name = registryToken?.name || candidate.address;
 
         try {
@@ -277,7 +301,9 @@ async function discoverConfiguredPythTokens({
             ]);
             let quoteFeedId = ethers.ZeroHash;
             try {
-                quoteFeedId = await oracleContract.tokenToQuotePriceFeedId(candidate.address);
+                quoteFeedId = await oracleContract.tokenToQuotePriceFeedId(
+                    candidate.address,
+                );
             } catch (_) {
                 quoteFeedId = ethers.ZeroHash;
             }
@@ -287,7 +313,10 @@ async function discoverConfiguredPythTokens({
                 continue;
             }
 
-            if (registryToken && feedId.toLowerCase() !== registryToken.feedId.toLowerCase()) {
+            if (
+                registryToken &&
+                feedId.toLowerCase() !== registryToken.feedId.toLowerCase()
+            ) {
                 console.warn(
                     `  ⚠ ${name}: using on-chain feed ${feedId}, registry expected ${registryToken.feedId}`,
                 );
@@ -295,7 +324,8 @@ async function discoverConfiguredPythTokens({
             if (
                 registryToken &&
                 !isZeroHash(quoteFeedId) &&
-                (registryToken.quoteFeedId || ethers.ZeroHash).toLowerCase() !== quoteFeedId.toLowerCase()
+                (registryToken.quoteFeedId || ethers.ZeroHash).toLowerCase() !==
+                    quoteFeedId.toLowerCase()
             ) {
                 console.warn(
                     `  ⚠ ${name}: using on-chain quote ${quoteFeedId}, registry expected ${
@@ -331,8 +361,8 @@ async function verifyPythTokenFreshness({
     requireAllPriceUpdates,
 }) {
     const requiredAddresses = new Set(
-        (requireAllPriceUpdates ? configuredTokens : refreshedTokens).map((token) =>
-            token.address.toLowerCase()
+        (requireAllPriceUpdates ? configuredTokens : refreshedTokens).map(
+            (token) => token.address.toLowerCase(),
         ),
     );
     const requiredFailures = [];
@@ -340,8 +370,14 @@ async function verifyPythTokenFreshness({
 
     for (const token of configuredTokens) {
         try {
-            const [isStale, publishTime] = await oracleContract.isPriceStale(token.address);
-            const failure = { token, publishTime: Number(publishTime), reason: "stale" };
+            const [isStale, publishTime] = await oracleContract.isPriceStale(
+                token.address,
+            );
+            const failure = {
+                token,
+                publishTime: Number(publishTime),
+                reason: "stale",
+            };
             if (isStale) {
                 if (requiredAddresses.has(token.address.toLowerCase())) {
                     requiredFailures.push(failure);
@@ -360,15 +396,21 @@ async function verifyPythTokenFreshness({
     }
 
     if (optionalFailures.length > 0) {
-        console.warn("\nConfigured Pyth tokens still stale or unreadable after partial update:");
+        console.warn(
+            "\nConfigured Pyth tokens still stale or unreadable after partial update:",
+        );
         optionalFailures.forEach(({ token, reason }) => {
             console.warn(`  - ${token.name}: ${reason}`);
         });
     }
 
     if (requiredFailures.length > 0) {
-        const names = requiredFailures.map(({ token, reason }) => `${token.name} (${reason})`).join(", ");
-        throw new Error(`Pyth price freshness verification failed for: ${names}`);
+        const names = requiredFailures
+            .map(({ token, reason }) => `${token.name} (${reason})`)
+            .join(", ");
+        throw new Error(
+            `Pyth price freshness verification failed for: ${names}`,
+        );
     }
 
     return { staleTokens: optionalFailures };
@@ -637,7 +679,9 @@ async function fetchPriceUpdateDataBestEffort(
                 !Array.isArray(response.binary.data) ||
                 response.binary.data.length === 0
             ) {
-                throw new Error(`No update data returned for feed ${index + 1}`);
+                throw new Error(
+                    `No update data returned for feed ${index + 1}`,
+                );
             }
             const updateHex = response.binary.data[0];
             return {
@@ -873,12 +917,18 @@ async function main() {
         cliFactory: config.factory,
     });
     if (requireAllPriceUpdates && !factoryAddress) {
-        throw new Error("Strict Pyth updates require a factory address for whitelist discovery");
+        throw new Error(
+            "Strict Pyth updates require a factory address for whitelist discovery",
+        );
     }
     let factoryContract = null;
     let oracleAddress = config.oracle || null;
     if (factoryAddress) {
-        factoryContract = new ethers.Contract(factoryAddress, factoryAbi, provider);
+        factoryContract = new ethers.Contract(
+            factoryAddress,
+            factoryAbi,
+            provider,
+        );
         if (!oracleAddress) {
             try {
                 const factoryPythOracle = await factoryContract.pythOracle();
@@ -886,7 +936,9 @@ async function main() {
                     oracleAddress = factoryPythOracle;
                 }
             } catch (error) {
-                console.warn(`  ⚠ Could not resolve factory Pyth oracle: ${error.message}`);
+                console.warn(
+                    `  ⚠ Could not resolve factory Pyth oracle: ${error.message}`,
+                );
             }
         }
     }
@@ -919,12 +971,13 @@ async function main() {
         rootDir,
         chainId,
     });
-    const { configuredTokens, missingConfigs } = await discoverConfiguredPythTokens({
-        oracleContract,
-        factoryContract,
-        registryTokens,
-        requireCompleteDiscovery: requireAllPriceUpdates,
-    });
+    const { configuredTokens, missingConfigs } =
+        await discoverConfiguredPythTokens({
+            oracleContract,
+            factoryContract,
+            registryTokens,
+            requireCompleteDiscovery: requireAllPriceUpdates,
+        });
     configuredTokens.forEach((token) => {
         console.log(`  ✓ ${token.name} (${token.address}): configured`);
     });
@@ -940,7 +993,9 @@ async function main() {
         console.warn("    node scripts-js/configure-pyth-tokens.cjs");
         console.warn("\n  Missing configurations:");
         missingConfigs.forEach((token) => {
-            const feedSuffix = token.feedId ? ` → Feed ID: ${token.feedId}` : "";
+            const feedSuffix = token.feedId
+                ? ` → Feed ID: ${token.feedId}`
+                : "";
             const quoteSuffix = token.quoteFeedId
                 ? `, Quote Feed ID: ${token.quoteFeedId}`
                 : "";
@@ -955,7 +1010,9 @@ async function main() {
             "  configured through governance after this updater's token discovery sources.\n",
         );
         if (requireAllPriceUpdates) {
-            throw new Error(`${missingConfigs.length} discovered token(s) are missing Pyth oracle configuration`);
+            throw new Error(
+                `${missingConfigs.length} discovered token(s) are missing Pyth oracle configuration`,
+            );
         }
     } else {
         console.log("\n✓ All tokens are properly configured\n");
@@ -1028,15 +1085,17 @@ async function main() {
         });
         if (skippedTokens.length > 0) {
             console.warn("\nSkipped configured token feeds:");
-            skippedTokens.forEach(({ token, missingFeedIds, failedFeedIds }) => {
-                const failedSuffix =
-                    failedFeedIds.length > 0
-                        ? ` (failed: ${failedFeedIds.join(", ")})`
-                        : "";
-                console.warn(
-                    `  - ${token.name}: missing update for ${missingFeedIds.join(", ")}${failedSuffix}`,
-                );
-            });
+            skippedTokens.forEach(
+                ({ token, missingFeedIds, failedFeedIds }) => {
+                    const failedSuffix =
+                        failedFeedIds.length > 0
+                            ? ` (failed: ${failedFeedIds.join(", ")})`
+                            : "";
+                    console.warn(
+                        `  - ${token.name}: missing update for ${missingFeedIds.join(", ")}${failedSuffix}`,
+                    );
+                },
+            );
         }
     } catch (error) {
         console.error("\n❌ Failed to update price feeds:", error.message);

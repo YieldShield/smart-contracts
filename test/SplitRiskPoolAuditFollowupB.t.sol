@@ -288,9 +288,7 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ErrorsLib.ProtectorShareLimitExceeded.selector,
-                overCapDeposit,
-                ConstantsLib.MAX_PROTECTOR_REWARD_SHARES
+                ErrorsLib.ProtectorShareLimitExceeded.selector, overCapDeposit, ConstantsLib.MAX_PROTECTOR_REWARD_SHARES
             )
         );
         vm.prank(protector);

@@ -492,7 +492,9 @@ contract ERC4626OracleFeedTest is Test {
 
         uint256 expectedUnsafePrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
 
-        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "protected price should use reviewed reference");
+        assertEq(
+            erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "protected price should use reviewed reference"
+        );
         assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedUnsafePrice, "unsafe price should expose live NAV");
     }
 
@@ -510,7 +512,9 @@ contract ERC4626OracleFeedTest is Test {
         underlyingOracle.setShouldRevertOnCircuitBreaker(true);
         vm.expectRevert();
         erc4626Feed.getPriceForFeeAccrual(address(vault));
-        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedFeePrice, "unsafe path still bypasses underlying CB");
+        assertEq(
+            erc4626Feed.getPriceUnsafe(address(vault)), expectedFeePrice, "unsafe path still bypasses underlying CB"
+        );
     }
 
     function test_GetPriceForFeeAccrual_RevertsAboveReviewedBand() public {
@@ -545,7 +549,9 @@ contract ERC4626OracleFeedTest is Test {
     }
 
     function test_GetPrice_AllowsInBandDownwardShareRateImmediately() public {
-        _seedVaultShares(IERC20(address(underlyingAsset)), IERC4626(address(vault)), erc4626Feed.minimumVaultSupply(address(vault)));
+        _seedVaultShares(
+            IERC20(address(underlyingAsset)), IERC4626(address(vault)), erc4626Feed.minimumVaultSupply(address(vault))
+        );
         uint256 loss =
             (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() / 2))
                 / 10_000;

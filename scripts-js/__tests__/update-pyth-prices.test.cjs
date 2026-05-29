@@ -11,7 +11,12 @@ const {
 const ZERO_HASH =
     "0x0000000000000000000000000000000000000000000000000000000000000000";
 
-function makeOracleMock({ configured = {}, eventTokens = [], queryFails = false, stale = {} } = {}) {
+function makeOracleMock({
+    configured = {},
+    eventTokens = [],
+    queryFails = false,
+    stale = {},
+} = {}) {
     return {
         filters: {
             TokenPriceFeedSet: () => "TokenPriceFeedSet",
@@ -58,21 +63,12 @@ test("parseCliArgs rejects conflicting strict and allow-partial flags", () => {
 });
 
 test("shouldRequireAllPriceUpdates defaults to relaxed local chains", () => {
-    assert.equal(
-        shouldRequireAllPriceUpdates({ chainId: "31337" }),
-        false,
-    );
-    assert.equal(
-        shouldRequireAllPriceUpdates({ chainId: "1337" }),
-        false,
-    );
+    assert.equal(shouldRequireAllPriceUpdates({ chainId: "31337" }), false);
+    assert.equal(shouldRequireAllPriceUpdates({ chainId: "1337" }), false);
 });
 
 test("shouldRequireAllPriceUpdates defaults to strict non-local chains", () => {
-    assert.equal(
-        shouldRequireAllPriceUpdates({ chainId: "421614" }),
-        true,
-    );
+    assert.equal(shouldRequireAllPriceUpdates({ chainId: "421614" }), true);
 });
 
 test("shouldRequireAllPriceUpdates honors explicit flags", () => {
@@ -108,8 +104,8 @@ test("classifyConfiguredTokenRefreshes separates refreshed and skipped feeds", (
     const baseD =
         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
-    const { refreshedTokens, skippedTokens } =
-        classifyConfiguredTokenRefreshes({
+    const { refreshedTokens, skippedTokens } = classifyConfiguredTokenRefreshes(
+        {
             configuredTokens: [
                 { name: "A", actualFeedId: baseA },
                 { name: "B", actualFeedId: baseB, actualQuoteFeedId: quoteB },
@@ -126,7 +122,8 @@ test("classifyConfiguredTokenRefreshes separates refreshed and skipped feeds", (
                 { feedId: quoteB, reason: "missing quote" },
                 { feedId: baseD, reason: "missing base" },
             ],
-        });
+        },
+    );
 
     assert.deepEqual(
         refreshedTokens.map((token) => token.name),
@@ -153,11 +150,12 @@ test("discoverConfiguredPythTokens includes governance-added factory tokens abse
     });
     const factoryContract = makeFactoryMock([token]);
 
-    const { configuredTokens, missingConfigs } = await discoverConfiguredPythTokens({
-        oracleContract,
-        factoryContract,
-        registryTokens: [],
-    });
+    const { configuredTokens, missingConfigs } =
+        await discoverConfiguredPythTokens({
+            oracleContract,
+            factoryContract,
+            registryTokens: [],
+        });
 
     assert.equal(missingConfigs.length, 0);
     assert.equal(configuredTokens.length, 1);
@@ -193,11 +191,14 @@ test("discoverConfiguredPythTokens reports unsupported registry tokens as missin
     const token = "0x00000000000000000000000000000000000000cc";
     const oracleContract = makeOracleMock();
 
-    const { configuredTokens, missingConfigs } = await discoverConfiguredPythTokens({
-        oracleContract,
-        factoryContract: null,
-        registryTokens: [{ name: "MISSING", address: token, feedId: ZERO_HASH }],
-    });
+    const { configuredTokens, missingConfigs } =
+        await discoverConfiguredPythTokens({
+            oracleContract,
+            factoryContract: null,
+            registryTokens: [
+                { name: "MISSING", address: token, feedId: ZERO_HASH },
+            ],
+        });
 
     assert.equal(configuredTokens.length, 0);
     assert.equal(missingConfigs.length, 1);

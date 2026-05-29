@@ -520,7 +520,9 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
 
         assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId1), 0, "old position 1 should stay wiped");
         assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId2), 0, "old position 2 should stay wiped");
-        assertEq(pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "new depositor should get only fresh backing");
+        assertEq(
+            pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "new depositor should get only fresh backing"
+        );
         assertEq(pool.totalProtectorTokens(), 100e18, "pool should track only the fresh deposit");
         assertEq(pool.totalProtectorShares(), 100e18, "fresh deposit should reset active share supply");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
