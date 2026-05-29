@@ -797,18 +797,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (!primaryProtectedAvailable) {
             revert RevertNotPossible(token, "Primary oracle unavailable");
         }
+        if (!backupSuccess) {
+            revert RevertNotPossible(token, "Backup oracle unavailable");
+        }
 
-        uint256 currentDeviation =
-            backupSuccess ? OracleValidationLib.calculateDeviation(primaryPrice, backupPrice) : type(uint256).max;
-        if (backupSuccess && currentDeviation > deviationThresholdBps) {
+        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+        if (currentDeviation > deviationThresholdBps) {
             revert RevertNotPossible(token, "Deviation still exceeds threshold");
         }
 
         config.isBackupActive = false;
         config.lastChallengeTime = block.timestamp;
 
-        string memory reason = backupSuccess ? "reverted_to_primary" : "reverted_to_primary_backup_unavailable";
-        emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, reason);
+        emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, "reverted_to_primary");
         emit RevertedToPrimary(token, msg.sender, currentDeviation);
         emit OracleSwitched(token, false);
     }

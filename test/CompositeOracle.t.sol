@@ -1008,14 +1008,18 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.revertToPrimary(address(token));
     }
 
-    function test_RevertToPrimary_SucceedsWhenBackupUnavailableAndPrimaryHealthy() public {
+    function test_RevertToPrimary_RevertsWhenBackupUnavailableAndPrimaryHealthy() public {
         _challengeAndFinalize();
         backupOracle.setPrice(address(token), 0);
 
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.RevertNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
         compositeOracle.revertToPrimary(address(token));
 
-        assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
-        assertEq(compositeOracle.getPrice(address(token)), PRIMARY_PRICE);
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)));
     }
 
     function test_RevertToPrimary_RevertsWhenPrimaryAlreadyActive() public {
