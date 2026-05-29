@@ -1021,6 +1021,20 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.transferManagedOracleOwnership(address(managedPyth), user1);
     }
 
+    function testCreatePoolRejectsERC4626NavFeedAsBackingOracle() public {
+        (, ERC4626OracleFeed erc4626Feed) = _installManagedERC4626FeedForTokenA();
+
+        uint256 creationBondAmount = _defaultCreationBondAmount(address(tokenA));
+        _prepareCreationBond(address(this), address(tokenA), creationBondAmount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.ERC4626BackingOracleUnsupported.selector, address(tokenA), address(erc4626Feed)
+            )
+        );
+        factory.createPool(address(tokenB), "TKNB", address(tokenA), "TKNA", 500, 200, 15000, creationBondAmount);
+    }
+
     function testFactoryCanRemoveManagedERC4626Vault() public {
         ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(oracle));
         erc4626Feed.transferOwnership(address(factory));

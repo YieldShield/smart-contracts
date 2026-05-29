@@ -37,6 +37,14 @@ library PoolOracleValidationLib {
         address backingToken,
         bool requiresStrictProtectedPrice
     ) internal view {
+        validateShieldedTokenOracle(oracle, shieldedToken);
+        validateBackingTokenOracle(oracle, backingToken, requiresStrictProtectedPrice);
+    }
+
+    /// @notice Validate the shielded-token pricing path required by a pool
+    /// @param oracle The oracle address to validate
+    /// @param shieldedToken The shielded token address
+    function validateShieldedTokenOracle(address oracle, address shieldedToken) internal view {
         if (oracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
 
         _validateProtectedPriceSelector(oracle, shieldedToken);
@@ -49,7 +57,6 @@ library PoolOracleValidationLib {
         // discipline, regressing what the old getPriceWithCircuitBreaker
         // probe would have rejected.
         _validateCompositeFeedsAdvertiseProtectedSelector(oracle, shieldedToken);
-        validateBackingTokenOracle(oracle, backingToken, requiresStrictProtectedPrice);
     }
 
     /// @notice Validate the backing-token pricing path required by a pool
@@ -60,6 +67,8 @@ library PoolOracleValidationLib {
         internal
         view
     {
+        _rejectERC4626NavFeedForBacking(oracle, backingToken);
+
         if (requiresStrictProtectedPrice) {
             (bool strictSuccess, bytes memory strictData) =
                 oracle.staticcall(abi.encodeCall(ICompositeOracle.getPriceWithStrictCircuitBreaker, (backingToken)));
@@ -78,6 +87,46 @@ library PoolOracleValidationLib {
         // advertises the safe/unsafe split: otherwise a pool would silently rely on a
         // feed (e.g. PythEMA-only, ad-hoc fallback) that has no circuit-breaker discipline.
         _validateCompositeFeedsAdvertiseProtectedSelector(oracle, backingToken);
+    }
+
+    /// @dev ERC4626 NAV feeds intentionally lag in-band share-rate increases on
+    ///      their protected path. That is conservative for shielded-value
+    ///      accounting, but unsafe as the backing-token denominator because it
+    ///      overpays backing shares when a vault's live NAV has risen. Reject
+    ///      those feeds anywhere they can price the backing token.
+    function _rejectERC4626NavFeedForBacking(address oracle, address backingToken) private view {
+        if (_feedPricesERC4626Vault(oracle, backingToken)) {
+            revert ErrorsLib.ERC4626BackingOracleUnsupported(backingToken, oracle);
+        }
+
+        (bool statusSuccess, bytes memory statusData) =
+            oracle.staticcall(abi.encodeCall(ICompositeOracle.getTokenDualFeedStatus, (backingToken)));
+        if (!statusSuccess || statusData.length < 192) {
+            return;
+        }
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            abi.decode(statusData, (bool, address, address, bool, bool, uint256));
+        if (primaryFeed != address(0) && _feedPricesERC4626Vault(primaryFeed, backingToken)) {
+            revert ErrorsLib.ERC4626BackingOracleUnsupported(backingToken, primaryFeed);
+        }
+        if (isDualFeed && backupFeed != address(0) && _feedPricesERC4626Vault(backupFeed, backingToken)) {
+            revert ErrorsLib.ERC4626BackingOracleUnsupported(backingToken, backupFeed);
+        }
+    }
+
+    function _feedPricesERC4626Vault(address feed, address token) private view returns (bool) {
+        if (feed.code.length == 0) {
+            return false;
+        }
+
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeWithSignature("vaultToUnderlying(address)", token));
+        if (!success || data.length < 32) {
+            return false;
+        }
+
+        return abi.decode(data, (address)) != address(0);
     }
 
     /// @dev Walks the CompositeOracle's configured primary/backup feeds for a token and

@@ -150,6 +150,8 @@ library ErrorsLib {
     // ============ ERC4626 Validation Errors ============
     /// @notice Thrown when two ERC4626 vaults share the same underlying asset
     error SameUnderlyingAsset(address shieldedToken, address backingToken, address underlyingAsset);
+    /// @notice Thrown when an ERC4626 NAV feed is used as the backing-token payout oracle
+    error ERC4626BackingOracleUnsupported(address token, address oracleFeed);
 
     // ============ Oracle Errors ============
     /// @notice Thrown when an oracle returns a zero or invalid price

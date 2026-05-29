@@ -1206,9 +1206,12 @@ contract SplitRiskPoolFactory is
     }
 
     function _validateCompositeOracleTokenFeed(address token) internal view {
-        PoolOracleValidationLib.validateBackingTokenOracle(
-            compositeOracle, token, tokenRequiresStrictProtectedPrice[token]
-        );
+        PoolOracleValidationLib.validateShieldedTokenOracle(compositeOracle, token);
+        if (_tokenUsedAsActiveBackingToken(token)) {
+            PoolOracleValidationLib.validateBackingTokenOracle(
+                compositeOracle, token, tokenRequiresStrictProtectedPrice[token]
+            );
+        }
     }
 
     function _validateWhitelistedCompositeOracleTokenFeed(address token) internal view {
@@ -1249,6 +1252,20 @@ contract SplitRiskPoolFactory is
                 ++i;
             }
         }
+    }
+
+    function _tokenUsedAsActiveBackingToken(address token) internal view returns (bool) {
+        uint256 activePoolLength = activePools.length;
+        for (uint256 i = 0; i < activePoolLength;) {
+            ISplitRiskPoolFactory.PoolInfo storage info = _poolInfo[activePools[i]];
+            if (info.backingToken == token) {
+                return true;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return false;
     }
 
     function _requireNoActivePoolUsesCompositeOracle(address oracle) internal view {
