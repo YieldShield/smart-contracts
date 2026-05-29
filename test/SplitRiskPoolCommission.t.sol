@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
+import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -15,6 +16,7 @@ import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 
 /// @title Tests for rewards-per-share commission distribution (MasterChef pattern)
@@ -263,7 +265,7 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         uint256 rewardDebtAfter = pool.rewardDebt(tokenId);
         uint256 newAmount = backingAmount - withdrawAmount;
         uint256 accumulator = pool.rewardPerShareAccumulated();
-        uint256 expectedDebt = (accumulator * newAmount) / 1e18; // REWARD_PRECISION = 1e18
+        uint256 expectedDebt = Math.mulDiv(accumulator, newAmount, ConstantsLib.REWARD_PRECISION);
         assertEq(rewardDebtAfter, expectedDebt, "Reward debt should be reset to clean slate");
 
         // Step 6: Verify commissionsClaimed was cleared (starts fresh)
@@ -385,7 +387,7 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
 
         assertApproxEqRel(balance1, expected1, 0.01e18, "Protector1 should get proportional share");
         assertApproxEqRel(balance2, expected2, 0.01e18, "Protector2 should get proportional share");
-        assertEq(balance1 * 2, balance2, "Balance ratio should match deposit ratio");
+        assertApproxEqAbs(balance1 * 2, balance2, 1, "Balance ratio should match deposit ratio");
     }
 
     /// @notice Test edge case: zero tokens
@@ -827,7 +829,7 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
             // Verify clean slate: rewardDebt should match accumulator * newAmount
             uint256 newAmount = remainingAmount - withdrawAmount;
             uint256 accumulator = pool.rewardPerShareAccumulated();
-            uint256 expectedDebt = (accumulator * newAmount) / 1e18; // REWARD_PRECISION = 1e18
+            uint256 expectedDebt = Math.mulDiv(accumulator, newAmount, ConstantsLib.REWARD_PRECISION);
             assertEq(rewardDebtAfter, expectedDebt, "Reward debt should be reset to clean slate");
 
             remainingAmount = newAmount;

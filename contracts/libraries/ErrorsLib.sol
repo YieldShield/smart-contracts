@@ -97,6 +97,8 @@ library ErrorsLib {
     error AccessControlDenied(address account, string operation);
     /// @notice Thrown when a creation bond is below the configured USD minimum
     error CreationBondBelowMinimum(uint256 providedUsd, uint256 minimumUsd);
+    /// @notice Thrown when normalized protector shares would exceed reward precision bounds
+    error ProtectorShareLimitExceeded(uint256 shares, uint256 maxShares);
 
     // ============ Operation Failed Errors ============
     /// @notice Thrown when token transfer fails

@@ -11,6 +11,7 @@ import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
@@ -46,7 +47,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
     // Constants from ConstantsLib
     uint256 constant BASIS_POINT_SCALE = 1e4;
-    uint256 constant REWARD_PRECISION = 1e18;
+    uint256 constant REWARD_PRECISION = ConstantsLib.REWARD_PRECISION;
     uint256 constant USD_ONE = 1e8;
     uint256 constant TOKEN_UNITS_PER_USD_8 = 1e10;
 
@@ -561,7 +562,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
         // Verify late joiner has correct rewardDebt
         uint256 rewardDebt2 = pool.rewardDebt(tokenId2);
-        uint256 expectedDebt = (rewardPerShareBeforeLateJoiner * lateDeposit) / REWARD_PRECISION;
+        uint256 expectedDebt = Math.mulDiv(rewardPerShareBeforeLateJoiner, lateDeposit, REWARD_PRECISION);
         assertEq(rewardDebt2, expectedDebt, "Reward debt should match accumulated rewards at deposit time");
 
         // Verify late joiner cannot claim historical rewards
@@ -610,7 +611,7 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
             // Verify reward debt is correctly set
             uint256 rewardDebt = pool.rewardDebt(protectorTokenIds[i]);
-            uint256 expectedDebt = (rewardPerShareBefore * depositAmounts[i]) / REWARD_PRECISION;
+            uint256 expectedDebt = Math.mulDiv(rewardPerShareBefore, depositAmounts[i], REWARD_PRECISION);
             assertEq(rewardDebt, expectedDebt, "Reward debt should match accumulator at deposit time");
 
             // Warp time and generate more yield

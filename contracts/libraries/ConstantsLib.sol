@@ -40,7 +40,13 @@ library ConstantsLib {
 
     // ============ Precision Constants ============
     /// @notice Precision for reward per share calculations (MasterChef pattern)
-    uint256 public constant REWARD_PRECISION = 1e18;
+    /// @dev Kept above protector share decimals so sub-native-unit rewards do
+    ///      not become material when backing assets have very large supplies.
+    uint256 public constant REWARD_PRECISION = 1e36;
+    /// @notice Maximum normalized protector share supply.
+    /// @dev Bounds the largest reward that can round to zero to less than 100
+    ///      native shielded-token units at REWARD_PRECISION.
+    uint256 public constant MAX_PROTECTOR_REWARD_SHARES = 1e38;
     /// @notice Standard token decimals (18) as a scale factor (1e18)
     uint256 public constant TOKEN_DECIMALS = 1e18;
     /// @notice Standard token decimals as uint8 (for ERC20.decimals() compatibility)

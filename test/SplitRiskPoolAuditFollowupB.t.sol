@@ -207,7 +207,7 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     function test_B4_claimRewards_CarriesSubPrecisionProtectorRewardDust() public {
         (uint256 protectorTokenId, uint256 shieldTokenId) = _seedPositions();
 
-        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(type(uint128).max);
+        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(type(uint256).max / 2);
         primaryOracle.setPrice(address(shieldedToken), 1.1e8);
         backupOracle.setPrice(address(shieldedToken), 1.1e8);
 
@@ -246,18 +246,11 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     }
 
     function test_B4_depositBackingRedirectsPendingDustBeforeMintingNewShares() public {
-        (, uint256 shieldTokenId) = _seedPositions();
+        _seedPositions();
 
-        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(type(uint128).max);
-        primaryOracle.setPrice(address(shieldedToken), 1.1e8);
-        backupOracle.setPrice(address(shieldedToken), 1.1e8);
-
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.prank(shielded);
-        pool.claimRewards(shieldTokenId);
-
-        uint256 carriedDust = pool.pendingProtectorRewardDust();
-        assertGt(carriedDust, 0, "test setup must create pending dust");
+        stdstore.target(address(pool)).sig("pendingProtectorRewardDust()").checked_write(uint256(1));
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(uint256(1));
+        stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(1));
 
         address newProtector = address(0xCAFE);
         backingToken.mintShares(newProtector, 100e18);
@@ -271,8 +264,57 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         pool.depositBackingAsset(address(backingToken), 100e18, 0);
 
         assertEq(pool.pendingProtectorRewardDust(), 0, "pending dust must be cleared before share mint");
-        assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore + carriedDust, "dust redirects to protocol");
-        assertEq(pool.accumulatedCommissions(), commissionsBefore - carriedDust, "dust is no longer protector-reserved");
+        assertEq(pool.accumulatedProtocolFee(), protocolFeeBefore + 1, "dust redirects to protocol");
+        assertEq(pool.accumulatedCommissions(), commissionsBefore - 1, "dust is no longer protector-reserved");
+    }
+
+    function test_B4_depositBackingRevertsAboveProtectorRewardShareCap() public {
+        vm.prank(governance);
+        pool.updatePoolConfig(
+            1e18,
+            type(uint128).max,
+            1e18,
+            type(uint128).max,
+            type(uint128).max,
+            1 days,
+            28 days,
+            100,
+            protocolFeeRecipient,
+            address(compositeOracle)
+        );
+
+        uint256 overCapDeposit = ConstantsLib.MAX_PROTECTOR_REWARD_SHARES + 1;
+        backingToken.mintShares(protector, overCapDeposit);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.ProtectorShareLimitExceeded.selector,
+                overCapDeposit,
+                ConstantsLib.MAX_PROTECTOR_REWARD_SHARES
+            )
+        );
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), overCapDeposit, 0);
+    }
+
+    function test_B4_rewardPerShareDoesNotAdvanceWhenRepresentedRewardIsZero() public {
+        (uint256 protectorTokenId,) = _seedPositions();
+
+        stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(uint256(3));
+        stdstore.target(address(pool)).sig("pendingProtectorRewardDust()").checked_write(uint256(1));
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(uint256(1));
+        stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(1));
+
+        uint256 rewardPerShareBefore = pool.rewardPerShareAccumulated();
+        uint256 protectorBalanceBefore = shieldedToken.balanceOf(protector);
+
+        vm.prank(protector);
+        pool.claimCommission(protectorTokenId);
+
+        assertEq(pool.rewardPerShareAccumulated(), rewardPerShareBefore, "zero represented reward must not advance");
+        assertEq(pool.pendingProtectorRewardDust(), 1, "dust remains pending");
+        assertEq(pool.accumulatedCommissions(), 1, "commission reserve stays intact");
+        assertEq(shieldedToken.balanceOf(protector), protectorBalanceBefore, "nothing is paid from unrepresented dust");
     }
 
     function test_B4_pendingDustRedirectDoesNotCreateUnbackedProtocolFees() public {

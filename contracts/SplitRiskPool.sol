@@ -409,6 +409,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return amount * multiplier;
     }
 
+    function _requireProtectorShareRewardCapacity(uint256 shares) internal pure {
+        if (shares > ConstantsLib.MAX_PROTECTOR_REWARD_SHARES) {
+            revert ErrorsLib.ProtectorShareLimitExceeded(shares, ConstantsLib.MAX_PROTECTOR_REWARD_SHARES);
+        }
+    }
+
     /// @notice Returns the current backing-token claim for a protector position.
     function getProtectorPositionAmount(uint256 tokenId) public view returns (uint256) {
         uint256 shares = _getActiveProtectorPositionShares(tokenId);
@@ -1020,12 +1026,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
-        uint256 rewardPerShareIncrement = (pendingDust * ConstantsLib.REWARD_PRECISION) / totalProtectorShares;
+        uint256 rewardPerShareIncrement =
+            Math.mulDiv(pendingDust, ConstantsLib.REWARD_PRECISION, totalProtectorShares);
         if (rewardPerShareIncrement == 0) {
             return;
         }
 
-        uint256 representedReward = (rewardPerShareIncrement * totalProtectorShares) / ConstantsLib.REWARD_PRECISION;
+        uint256 representedReward =
+            Math.mulDiv(rewardPerShareIncrement, totalProtectorShares, ConstantsLib.REWARD_PRECISION);
+        if (representedReward == 0) {
+            return;
+        }
         rewardPerShareAccumulated += rewardPerShareIncrement;
         pendingProtectorRewardDust = pendingDust > representedReward ? pendingDust - representedReward : 0;
     }
@@ -1093,7 +1104,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         uint256 distributableReward = pendingProtectorRewardDust + rewardAmount;
-        uint256 rewardPerShareIncrement = (distributableReward * ConstantsLib.REWARD_PRECISION) / currentTotalShares;
+        uint256 rewardPerShareIncrement =
+            Math.mulDiv(distributableReward, ConstantsLib.REWARD_PRECISION, currentTotalShares);
         if (rewardPerShareIncrement == 0) {
             pendingProtectorRewardDust = distributableReward;
             accumulatedCommissions += rewardAmount;
@@ -1102,7 +1114,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (rewardAmount, 0);
         }
 
-        uint256 representedReward = (rewardPerShareIncrement * currentTotalShares) / ConstantsLib.REWARD_PRECISION;
+        uint256 representedReward =
+            Math.mulDiv(rewardPerShareIncrement, currentTotalShares, ConstantsLib.REWARD_PRECISION);
+        if (representedReward == 0) {
+            pendingProtectorRewardDust = distributableReward;
+            accumulatedCommissions += rewardAmount;
+            currentEpochCommissionReserve += rewardAmount;
+            totalCommissionsEverAccumulated += rewardAmount;
+            return (rewardAmount, 0);
+        }
         rewardPerShareAccumulated += rewardPerShareIncrement;
         pendingProtectorRewardDust =
             distributableReward > representedReward ? distributableReward - representedReward : 0;
@@ -1452,7 +1472,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             effectiveRewardPerShare = protectorEpochFinalRewardPerShare[positionEpoch];
         }
 
-        uint256 totalEarned = (effectiveRewardPerShare * positionShares_) / ConstantsLib.REWARD_PRECISION;
+        uint256 totalEarned = Math.mulDiv(effectiveRewardPerShare, positionShares_, ConstantsLib.REWARD_PRECISION);
         uint256 debt = rewardDebt[tokenId];
         uint256 alreadyClaimed = commissionsClaimed[tokenId];
         return totalEarned > (debt + alreadyClaimed) ? totalEarned - debt - alreadyClaimed : 0;
@@ -1736,11 +1756,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             ? _backingAmountToProtectorShares(received)
             : Math.mulDiv(received, currentTotalShares, totalProtectorTokens);
         if (sharesMinted == 0) revert ErrorsLib.InsufficientDepositAmount();
+        uint256 newTotalShares = currentTotalShares + sharesMinted;
+        _requireProtectorShareRewardCapacity(newTotalShares);
 
         // Update pool balances (TOKEN-BASED)
         poolState.totalBackingTokenBalance += received;
         totalProtectorTokens += received;
-        totalProtectorShares = currentTotalShares + sharesMinted;
+        totalProtectorShares = newTotalShares;
 
         // M-12: pre-compute the tokenId and initialise per-id mappings BEFORE
         // the external mint call. _safeMint invokes onERC721Received on
@@ -1750,7 +1772,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         tokenId = IProtectorReceiptNFT(protectorReceiptNFT).nextTokenId();
         protectorShares[tokenId] = sharesMinted;
         protectorShareEpochs[tokenId] = protectorShareEpoch;
-        rewardDebt[tokenId] = (rewardPerShareAccumulated * sharesMinted) / ConstantsLib.REWARD_PRECISION;
+        rewardDebt[tokenId] = Math.mulDiv(rewardPerShareAccumulated, sharesMinted, ConstantsLib.REWARD_PRECISION);
 
         uint256 mintedTokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
         require(mintedTokenId == tokenId, "protector tokenId mismatch");
@@ -2293,7 +2315,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         } else {
             // Partial withdrawal - reset to clean slate to avoid rounding exploits
             // Set rewardDebt to current accumulator for new amount (fresh start)
-            rewardDebt[tokenId] = (rewardPerShareAccumulated * newShares) / ConstantsLib.REWARD_PRECISION;
+            rewardDebt[tokenId] = Math.mulDiv(rewardPerShareAccumulated, newShares, ConstantsLib.REWARD_PRECISION);
             // Clear commissions claimed - position gets fresh accounting
             delete commissionsClaimed[tokenId];
             protectorShares[tokenId] = newShares;
