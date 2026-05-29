@@ -547,6 +547,28 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    /// @dev Fee-accrual pricing can use live in-band ERC4626 NAV while keeping
+    ///      protected underlying oracle checks. Oracles without the dedicated
+    ///      selector fall back to the standard protected price.
+    function _tryGetShieldedFeeAccrualPrice() internal view returns (bool success, uint256 price) {
+        (bool callSuccess, bytes memory data) = poolConfig.priceOracle.staticcall(
+            abi.encodeWithSignature("getPriceForFeeAccrual(address)", SHIELDED_TOKEN)
+        );
+
+        if (callSuccess) {
+            if (data.length < 32) return (false, 0);
+            uint256 feePrice = abi.decode(data, (uint256));
+            if (feePrice == 0) return (false, 0);
+            return (true, feePrice);
+        }
+
+        if (data.length == 0) {
+            return _tryGetShieldedProtectedPrice();
+        }
+
+        return (false, 0);
+    }
+
     /// @dev Returns shielded-token USD value using native shielded token units.
     function _getShieldedValue(uint256 amount) internal view returns (uint256) {
         return Math.mulDiv(amount, _getShieldedPrice(), shieldedTokenScale);
@@ -1236,9 +1258,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
-        // Probe the protected shielded price up-front. Same-asset exits burn the receipt
+        // Probe the shielded fee price up-front. Same-asset exits burn the receipt
         // and delete the fee baseline, so they cannot proceed while fees cannot be priced.
-        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedFeeAccrualPrice();
         if (!priceAvailable) {
             revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
         }
@@ -1257,7 +1279,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (0, 0, 0);
         }
 
-        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedFeeAccrualPrice();
         if (!priceAvailable) return (0, 0, 0);
 
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);

@@ -314,6 +314,35 @@ contract CompositeOracleTest is Test {
         assertTrue(isStaleNow, "stale underlying should report stale through composite");
         assertEq(publishTimeNow, uint64(block.timestamp - 1 hours));
     }
+
+    function testGetPriceForFeeAccrual_ForwardsERC4626Selector() public {
+        MockERC20 underlyingAsset = new MockERC20("Underlying", "UND");
+        MockERC4626 vault = new MockERC4626(IERC20(address(underlyingAsset)), "Vault", "VLT");
+        MockOracle underlyingOracle = new MockOracle();
+        underlyingOracle.setPrice(address(underlyingAsset), 1e8);
+
+        ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(underlyingOracle));
+        uint256 minSupply = erc4626Feed.MIN_VAULT_SHARE_COUNT() * 1e18;
+        underlyingAsset.mint(address(this), minSupply);
+        underlyingAsset.approve(address(vault), minSupply);
+        vault.deposit(minSupply, address(this));
+        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
+
+        compositeOracle.setTokenOracleFeedWithType(address(vault), address(erc4626Feed), "erc4626");
+
+        uint256 donation = (minSupply * 400) / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+        uint256 expectedFeePrice = (vault.convertToAssets(1e18) * 1e8) / 1e18;
+
+        assertEq(compositeOracle.getPrice(address(vault)), 1e8, "protected price remains clamped");
+        assertEq(compositeOracle.getPriceForFeeAccrual(address(vault)), expectedFeePrice, "fee path forwards selector");
+    }
+
+    function testGetPriceForFeeAccrual_FallsBackForFeedsWithoutSelector() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        assertEq(compositeOracle.getPriceForFeeAccrual(address(tokenA)), compositeOracle.getPrice(address(tokenA)));
+    }
 }
 
 contract MockFeedWithoutCircuitBreaker is IOracleFeed {

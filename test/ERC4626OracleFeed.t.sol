@@ -496,6 +496,42 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedUnsafePrice, "unsafe price should expose live NAV");
     }
 
+    function test_GetPriceForFeeAccrual_UsesLiveInBandShareRateWithProtectedUnderlying() public {
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() / 2))
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 expectedFeePrice = (vault.convertToAssets(1e18) * UNDERLYING_PRICE) / 1e18;
+
+        assertEq(erc4626Feed.getPrice(address(vault)), UNDERLYING_PRICE, "protected price remains clamped");
+        assertEq(erc4626Feed.getPriceForFeeAccrual(address(vault)), expectedFeePrice, "fee price sees live NAV");
+
+        underlyingOracle.setShouldRevertOnCircuitBreaker(true);
+        vm.expectRevert();
+        erc4626Feed.getPriceForFeeAccrual(address(vault));
+        assertEq(erc4626Feed.getPriceUnsafe(address(vault)), expectedFeePrice, "unsafe path still bypasses underlying CB");
+    }
+
+    function test_GetPriceForFeeAccrual_RevertsAboveReviewedBand() public {
+        uint256 donation =
+            (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() + 1))
+                / 10_000;
+        underlyingAsset.mint(address(vault), donation);
+
+        uint256 assetsPerShare = vault.convertToAssets(1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(vault),
+                assetsPerShare,
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.getPriceForFeeAccrual(address(vault));
+    }
+
     function test_GetPrice_ClampsShareRateAtUpperDeviationBoundary() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())

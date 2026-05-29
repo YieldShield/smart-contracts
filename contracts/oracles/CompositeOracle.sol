@@ -1043,6 +1043,29 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
     }
 
+    function _getPriceForFeeAccrual(address token) internal view returns (uint256) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
+        if (_hasUnresolvedDualFeedDeviation(config, token)) revert OraclePriceDisputed(token);
+
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+
+        if (!_supportsCircuitBreaker(activeFeed, token)) {
+            revert CircuitBreakerNotSupported(token, activeFeed);
+        }
+
+        (bool feePriceSupported, uint256 feePrice) = _tryGetFeeAccrualPrice(activeFeed, token);
+        uint8 feedDecimals = IOracleFeed(activeFeed).decimals();
+        if (feePriceSupported) {
+            return _normalizeFeedPriceOrRevert(token, feePrice, feedDecimals);
+        }
+
+        uint256 price = IOracleFeed(activeFeed).getPrice(token);
+        return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
+    }
+
     /// @notice Internal helper for the UNSAFE price path
     /// @dev Bypasses challenge-gate checks and returns the active feed's price even when
     ///      the dual-feed challenge mechanism flags it as disputed. Used only by the
@@ -1098,6 +1121,34 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
+    function _tryGetFeeAccrualPrice(address feed, address token)
+        internal
+        view
+        returns (bool supported, uint256 price)
+    {
+        if (feed.code.length == 0) {
+            return (false, 0);
+        }
+
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeWithSignature("getPriceForFeeAccrual(address)", token));
+
+        if (success) {
+            if (data.length < 32) {
+                return (false, 0);
+            }
+            return (true, abi.decode(data, (uint256)));
+        }
+
+        if (data.length == 0) {
+            return (false, 0);
+        }
+
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
+
     /// @notice Get the safest-available price for a token via its registered oracle feed
     /// @dev Honours the dual-feed challenge gate and feed-level circuit breakers.
     ///      Production write paths must use this entry point.
@@ -1105,6 +1156,12 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @return price The price in USD with 8 decimals
     function getPrice(address token) external view override returns (uint256) {
         return _getPrice(token);
+    }
+
+    /// @notice Fee-accrual price that preserves challenge gates but lets feeds expose live bounded NAV
+    /// @dev Falls back to protected `getPrice` for feeds without a dedicated fee-accrual selector.
+    function getPriceForFeeAccrual(address token) external view returns (uint256) {
+        return _getPriceForFeeAccrual(token);
     }
 
     /// @notice Unprotected price getter — bypasses dual-feed challenge gates

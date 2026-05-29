@@ -380,7 +380,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     ///      reference. Production callers must use this entry point; live in-band share-rate
     ///      moves remain visible through `getPriceUnsafe`.
     function getPrice(address vault) external view override returns (uint256) {
-        return _getValidatedPrice(vault, true);
+        return _getValidatedPrice(vault, true, true);
     }
 
     /// @notice Unprotected price getter that skips underlying circuit-breaker gates
@@ -389,7 +389,16 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
     function getPriceUnsafe(address vault) external view returns (uint256) {
-        return _getValidatedPrice(vault, false);
+        return _getValidatedPrice(vault, false, false);
+    }
+
+    /// @notice Fee-accrual price with protected underlying data and live in-band share rate
+    /// @dev Keeps all share-rate deviation, minimum-liquidity, and underlying staleness
+    ///      checks, but does not clamp organic upward NAV growth to the reviewed
+    ///      reference. This is only for fee accounting; payout/collateral paths
+    ///      must continue using `getPrice`.
+    function getPriceForFeeAccrual(address vault) external view returns (uint256) {
+        return _getValidatedPrice(vault, true, false);
     }
 
     /// @notice Whether this feed exposes protected `getPrice` and explicit unsafe pricing for `vault`.
@@ -397,18 +406,22 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         return vaultConfigs[vault].underlying != address(0);
     }
 
-    function _getValidatedPrice(address vault, bool useCircuitBreaker) internal view returns (uint256) {
+    function _getValidatedPrice(address vault, bool useProtectedUnderlying, bool clampUpwardToReference)
+        internal
+        view
+        returns (uint256)
+    {
         VaultConfig memory config = _getVaultConfig(vault);
         _requireLiveUnderlying(vault, config.underlying);
 
-        if (useCircuitBreaker) {
+        if (useProtectedUnderlying) {
             (bool isStale,) = _checkUnderlyingStaleness(config.underlying);
             if (isStale) {
                 revert StaleUnderlyingPrice(vault, config.underlying);
             }
         }
 
-        return _getPriceFromConfig(vault, config, useCircuitBreaker);
+        return _getPriceFromConfig(vault, config, useProtectedUnderlying, clampUpwardToReference);
     }
 
     /// @inheritdoc IOracleFeed
@@ -451,7 +464,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         // If stale, still calculate price but return stale flag
         // This allows callers to make informed decisions
         // Note: getPrice() will revert on stale, but this function provides flexibility
-        price = _getPriceFromConfig(vault, config, false);
+        price = _getPriceFromConfig(vault, config, false, false);
     }
 
     // ============ Internal Helper Functions ============
@@ -470,7 +483,12 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         }
     }
 
-    function _getPriceFromConfig(address vault, VaultConfig memory config, bool useCircuitBreaker)
+    function _getPriceFromConfig(
+        address vault,
+        VaultConfig memory config,
+        bool useProtectedUnderlying,
+        bool clampUpwardToReference
+    )
         internal
         view
         returns (uint256)
@@ -479,14 +497,14 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
 
         uint256 assetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
-        assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, useCircuitBreaker);
-        _requireMinimumVaultValue(vault, config, useCircuitBreaker);
+        assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, clampUpwardToReference);
+        _requireMinimumVaultValue(vault, config, useProtectedUnderlying);
         // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
         // the vault's unsafe getter forwards useCircuitBreaker=false so the
         // underlying read must take the unsafe path too. `_getUnderlyingPrice`
         // (introduced on main alongside this PR) picks the right delegate and
         // propagates revert reasons faithfully.
-        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useCircuitBreaker);
+        uint256 underlyingPrice = _getUnderlyingPrice(config.underlying, useProtectedUnderlying);
         uint8 priceDecimals = _getUnderlyingPriceDecimals();
 
         uint256 sharePrice = Math.mulDiv(assetsPerShare, underlyingPrice, config.underlyingUnit);
@@ -583,7 +601,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         address vault,
         uint256 assetsPerShare,
         VaultConfig memory config,
-        bool useCircuitBreaker
+        bool clampUpwardToReference
     )
         internal
         pure
@@ -592,7 +610,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         _requireAssetsPerShareWithinReference(
             vault, assetsPerShare, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
         );
-        if (useCircuitBreaker && assetsPerShare > config.referenceAssetsPerShare) {
+        if (clampUpwardToReference && assetsPerShare > config.referenceAssetsPerShare) {
             return config.referenceAssetsPerShare;
         }
         return assetsPerShare;
