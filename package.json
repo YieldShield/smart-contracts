@@ -44,6 +44,9 @@
     "qrcode": "~1.5.3",
     "toml": "~4.1.1"
   },
+  "overrides": {
+    "ws": "^8.20.1"
+  },
   "devDependencies": {
     "shx": "^0.4.0"
   }
