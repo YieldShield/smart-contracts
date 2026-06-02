@@ -7,6 +7,8 @@ import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol"
 import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFactory.sol";
+import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
+import { IPriceOracle } from "../contracts/interfaces/IPriceOracle.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -17,6 +19,75 @@ import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+
+contract DivergentProtectedPriceOracle is IPriceOracle, IOracleFeed {
+    uint256 public spotPrice;
+    uint256 public protectedPrice;
+    bool public shouldRevertProtectedPrice;
+
+    error ProtectedPriceUnavailable(address token);
+
+    constructor(uint256 spotPrice_, uint256 protectedPrice_) {
+        spotPrice = spotPrice_;
+        protectedPrice = protectedPrice_;
+    }
+
+    function setPrices(uint256 spotPrice_, uint256 protectedPrice_) external {
+        spotPrice = spotPrice_;
+        protectedPrice = protectedPrice_;
+    }
+
+    function setShouldRevertProtectedPrice(bool shouldRevertProtectedPrice_) external {
+        shouldRevertProtectedPrice = shouldRevertProtectedPrice_;
+    }
+
+    function getPrice(address) external view override(IPriceOracle, IOracleFeed) returns (uint256) {
+        return spotPrice;
+    }
+
+    function getValue(address token, uint256 amount) external view override returns (uint256) {
+        return Math.mulDiv(amount, spotPrice, _tokenScale(token));
+    }
+
+    function getPriceWithCircuitBreaker(address token) external view override returns (uint256) {
+        if (shouldRevertProtectedPrice) revert ProtectedPriceUnavailable(token);
+        return protectedPrice;
+    }
+
+    function getEquivalentAmount(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint256 amountAUsd = Math.mulDiv(amountA, spotPrice, _tokenScale(tokenA));
+        return Math.mulDiv(amountAUsd, _tokenScale(tokenB), spotPrice);
+    }
+
+    function getEquivalentAmountWithCircuitBreaker(address tokenA, uint256 amountA, address tokenB)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        if (shouldRevertProtectedPrice) revert ProtectedPriceUnavailable(tokenA);
+        uint256 amountAUsd = Math.mulDiv(amountA, protectedPrice, _tokenScale(tokenA));
+        return Math.mulDiv(amountAUsd, _tokenScale(tokenB), protectedPrice);
+    }
+
+    function decimals() external pure override returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure override returns (string memory) {
+        return "Divergent Protected Price Oracle";
+    }
+
+    function _tokenScale(address token) internal view returns (uint256) {
+        return 10 ** IERC20Metadata(token).decimals();
+    }
+}
 
 contract SplitRiskPoolFactoryV2Mock is SplitRiskPoolFactory {
     uint256 public futureConfigValue;
@@ -640,6 +711,66 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(factory.activePoolCount(), 1, "Active pool count should increment");
         assertTrue(factory.isPoolActive(poolAddress), "Pool should be marked active");
         assertEq(factory.getActivePools()[0], poolAddress, "Pool should be in active set");
+    }
+
+    function testCreatePoolCreationBondUsesProtectedPriceNotSpot() public {
+        MockERC20 bondToken = new MockERC20("Bond Token", "BOND");
+        DivergentProtectedPriceOracle bondOracle = new DivergentProtectedPriceOracle(10e8, 1e8);
+        factory.addTokenInitial(address(bondToken), "Bond Token", "BOND", address(bondOracle), address(0), 10000);
+
+        uint256 spotPassingBond = 50e18;
+        _prepareCreationBond(address(this), address(bondToken), spotPassingBond);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.CreationBondBelowMinimum.selector, 50e8, 500e8));
+        factory.createPool(address(tokenA), "TKNA", address(bondToken), "BOND", 500, 200, 15000, spotPassingBond);
+
+        assertEq(_historicalPoolCount(), 0, "failed creation should not store a pool");
+        assertEq(factory.activePoolCount(), 0, "failed creation should not occupy an active slot");
+    }
+
+    function testCreatePoolCreationBondProtectedPriceRevertFailsClosed() public {
+        MockERC20 bondToken = new MockERC20("Protected Revert Token", "PRT");
+        DivergentProtectedPriceOracle bondOracle = new DivergentProtectedPriceOracle(1e8, 1e8);
+        factory.addTokenInitial(address(bondToken), "Protected Revert Token", "PRT", address(bondOracle), address(0), 10000);
+        bondOracle.setShouldRevertProtectedPrice(true);
+
+        uint256 bondAmount = 500e18;
+        _prepareCreationBond(address(this), address(bondToken), bondAmount);
+        uint256 balanceBefore = bondToken.balanceOf(address(this));
+
+        vm.expectRevert();
+        factory.createPool(address(tokenA), "TKNA", address(bondToken), "PRT", 500, 200, 15000, bondAmount);
+
+        assertEq(bondToken.balanceOf(address(this)), balanceBefore, "reverted creation should refund transferred bond");
+        assertEq(_historicalPoolCount(), 0, "failed creation should not store a pool");
+        assertEq(factory.activePoolCount(), 0, "failed creation should not occupy an active slot");
+    }
+
+    function testCreatePoolCreationBondUsesTokenDecimalsAtUsdFloor() public {
+        MockUSDC usdc = new MockUSDC();
+        oracle.setPrice(address(usdc), 1e8);
+        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
+
+        uint256 exactFloorBond = 500e6;
+        _prepareCreationBond(address(this), address(usdc), exactFloorBond);
+
+        address poolAddress = factory.createPool(
+            address(tokenA), "TKNA", address(usdc), "USDC", 500, 200, 15000, exactFloorBond
+        );
+        (,, uint256 storedAmount) = factory.creationBonds(poolAddress);
+        assertEq(storedAmount, exactFloorBond, "exact six-decimal USD floor should be accepted");
+    }
+
+    function testCreatePoolCreationBondRejectsOneSixDecimalUnitBelowUsdFloor() public {
+        MockUSDC usdc = new MockUSDC();
+        oracle.setPrice(address(usdc), 1e8);
+        factory.addTokenInitial(address(usdc), "USD Coin", "USDC", address(oracle), address(0), 10000);
+
+        uint256 belowFloorBond = 500e6 - 1;
+        _prepareCreationBond(address(this), address(usdc), belowFloorBond);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.CreationBondBelowMinimum.selector, 500e8 - 100, 500e8));
+        factory.createPool(address(tokenA), "TKNA", address(usdc), "USDC", 500, 200, 15000, belowFloorBond);
     }
 
     function testClosePoolReturnsCreationBondAndRecyclesActiveSlot() public {

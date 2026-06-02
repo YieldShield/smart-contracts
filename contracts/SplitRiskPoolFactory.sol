@@ -19,6 +19,7 @@ import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title SplitRiskPoolFactory
 /// @author David Hawig
@@ -623,8 +624,7 @@ contract SplitRiskPoolFactory is
         return whitelistedTokens;
     }
 
-    function _validateTokenDecimals(address token) internal view {
-        uint8 tokenDecimals = 0;
+    function _getValidatedTokenDecimals(address token) internal view returns (uint8 tokenDecimals) {
         try IERC20Metadata(token).decimals() returns (uint8 reportedDecimals) {
             tokenDecimals = reportedDecimals;
         } catch {
@@ -635,6 +635,10 @@ contract SplitRiskPoolFactory is
         ) {
             revert ErrorsLib.InvalidTokenDecimals(token, tokenDecimals);
         }
+    }
+
+    function _validateTokenDecimals(address token) internal view {
+        _getValidatedTokenDecimals(token);
     }
 
     /// @dev Bounds the per-token minimum collateral ratio. Zero is the sentinel for
@@ -674,7 +678,13 @@ contract SplitRiskPoolFactory is
             return receivedBond;
         }
 
-        uint256 receivedUsd = ICompositeOracle(compositeOracle).getValue(token, receivedBond);
+        uint256 protectedPrice = tokenRequiresStrictProtectedPrice[token]
+            ? ICompositeOracle(compositeOracle).getPriceWithStrictCircuitBreaker(token)
+            : ICompositeOracle(compositeOracle).getPriceWithCircuitBreaker(token);
+        if (protectedPrice == 0) revert ErrorsLib.InvalidOraclePrice();
+
+        uint256 tokenScale = 10 ** _getValidatedTokenDecimals(token);
+        uint256 receivedUsd = Math.mulDiv(receivedBond, protectedPrice, tokenScale);
         if (receivedUsd < minimumCreationBondUsd) {
             revert ErrorsLib.CreationBondBelowMinimum(receivedUsd, minimumCreationBondUsd);
         }
