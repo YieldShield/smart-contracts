@@ -163,7 +163,7 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         assertEq(pool.totalShieldedTokens(), 0, "no collateral value should be locked");
     }
 
-    function test_ShieldedOracleChallenge_AllowsFullSameAssetExitButBlocksFeeAccrualPaths() public {
+    function test_ShieldedOracleChallenge_BlocksSameAssetExitBeforeBurningReceipt() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
 
@@ -180,12 +180,12 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.claimRewards(shieldTokenId);
 
-        uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
         assertEq(
-            shieldedToken.balanceOf(shielded),
-            shieldedBalanceBefore + 1_000e18,
-            "full same-asset exit should bypass disputed fee pricing"
+            ShieldReceiptNFT(pool.shieldReceiptNFT()).ownerOf(shieldTokenId),
+            shielded,
+            "reverted exit should keep receipt"
         );
         vm.stopPrank();
 
@@ -194,7 +194,7 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
         pool.depositBackingAsset(address(backingToken), 1e18, 0);
     }
 
-    function test_ShieldedOracleChallengeablePrice_AllowsFullSameAssetExit() public {
+    function test_ShieldedOracleChallengeablePrice_BlocksSameAssetExitBeforeBurningReceipt() public {
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 2_000e18, 0);
 
@@ -205,14 +205,16 @@ contract SecurityFixesTest is Test, TestTimelockHelper {
 
         uint256 shieldedBalanceBefore = shieldedToken.balanceOf(shielded);
         vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.shieldedWithdraw(shieldTokenId, address(shieldedToken), 0);
 
+        assertEq(shieldedToken.balanceOf(shielded), shieldedBalanceBefore, "failed exit should not transfer tokens");
+        assertEq(pool.totalShieldedTokens(), 1_000e18, "failed exit should keep position accounting");
         assertEq(
-            shieldedToken.balanceOf(shielded),
-            shieldedBalanceBefore + 1_000e18,
-            "challengeable pricing should not trap same-asset exits"
+            ShieldReceiptNFT(pool.shieldReceiptNFT()).ownerOf(shieldTokenId),
+            shielded,
+            "failed exit should keep receipt"
         );
-        assertEq(pool.totalShieldedTokens(), 0, "position should be cleared after full exit");
     }
 
     function test_PoolGovernanceMigrationSyncsProtocolFeeRecipientWhenAligned() public {

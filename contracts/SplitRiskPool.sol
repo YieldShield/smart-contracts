@@ -905,23 +905,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
     }
 
-    /// @dev Best-effort fee accrual for exit flows that can safely continue without
-    ///      newly priced fees. If protected shielded pricing is unavailable or
-    ///      disputed, returns zero new fees and leaves the position amount intact.
-    function _tryCalculateAndAccumulateFees(uint256 tokenId)
-        internal
-        returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
-    {
-        if (_hasOraclePendingChallenge(SHIELDED_TOKEN) || _hasOracleChallengeablePrice(SHIELDED_TOKEN)) {
-            return (0, 0, 0);
-        }
-
-        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedProtectedPrice();
-        if (!priceAvailable) return (0, 0, 0);
-
-        return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
-    }
-
     function _calculateAndAccumulateFeesAtPrice(uint256 tokenId, uint256 currentPrice)
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
@@ -1405,10 +1388,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 totalFees;
         if (preferredAsset == SHIELDED_TOKEN) {
-            // Same-asset withdrawals may proceed even when protected shielded pricing is unavailable.
-            // In those cases the position exits with no newly priced fees rather than freezing the user.
+            // Same-asset withdrawals burn the receipt and delete the fee baseline,
+            // so they must fail closed while newly accrued fees cannot be priced.
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-                _tryCalculateAndAccumulateFees(tokenId);
+                _calculateAndAccumulateFees(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         } else {
             // Shield activation also consumes the shielded position, so it must
