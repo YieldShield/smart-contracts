@@ -34,6 +34,21 @@ interface IProductionCompositeOracle is IProductionOwnable {
  * yarn deploy --file DeployYieldShieldProduction.s.sol --network arbitrum
  */
 contract DeployYieldShieldProduction is ScaffoldETHDeploy {
+    /// @dev Bundles the production protocol addresses so the finalize/validate
+    /// helpers take a single memory struct instead of 8+ stack arguments. Passing
+    /// them individually pushes those helpers one slot past the EVM stack limit
+    /// when compiled with `forge coverage --ir-minimum` (optimizer disabled).
+    struct ProtocolDeployment {
+        address factoryAddr;
+        address factoryImplementationAddr;
+        address poolImplementationAddr;
+        address compositeOracleAddr;
+        address pythOracleAddr;
+        address erc4626OracleFeedAddr;
+        address timelockAddr;
+        address governorAddr;
+    }
+
     uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
@@ -149,14 +164,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
         _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
         _finalizeProductionProtocolBootstrap(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr,
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
             deployer
         );
 
@@ -179,14 +196,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external view {
         _validateProductionProtocolFinalized(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
         );
     }
 
@@ -301,14 +320,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             "Factory minimum creation bond not set correctly"
         );
         _finalizeProductionProtocolBootstrap(
-            factoryAddr,
-            address(factoryImplementation),
-            address(poolImplementation),
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr,
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: address(factoryImplementation),
+                poolImplementationAddr: address(poolImplementation),
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
             deployer
         );
 
@@ -352,174 +373,148 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         return block.chainid == 31337 || block.chainid == 1337;
     }
 
-    function _finalizeProductionProtocolBootstrap(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address pythOracleAddr,
-        address erc4626OracleFeedAddr,
-        address timelockAddr,
-        address governorAddr,
-        address bootstrapAdmin
-    ) internal {
-        _requireProductionContract(NAME_FACTORY, factoryAddr);
-        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+    function _finalizeProductionProtocolBootstrap(ProtocolDeployment memory d, address bootstrapAdmin) internal {
+        _requireProductionContract(NAME_FACTORY, d.factoryAddr);
+        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr);
         _requireMandatoryProductionCodehash(
-            NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
+            NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
         );
-        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
+        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, d.poolImplementationAddr);
         _requireMandatoryProductionCodehash(
-            NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
+            NAME_POOL_IMPLEMENTATION, d.poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
         );
         _requireProductionContractCodehash(
-            NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
+            NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         _requireProductionContractCodehash(
-            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
+            NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
-        _requireProductionContract(NAME_TIMELOCK, timelockAddr);
-        _requireProductionContract(NAME_GOVERNOR, governorAddr);
-        _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
+        _requireProductionContract(NAME_TIMELOCK, d.timelockAddr);
+        _requireProductionContract(NAME_GOVERNOR, d.governorAddr);
+        _requireProductionCodehash(NAME_TIMELOCK, d.timelockAddr, type(YSTimelockController).runtimeCode);
 
-        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(d.factoryAddr));
         _requireProductionAddress(
-            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(factoryAddr), factoryImplementationAddr
+            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(d.factoryAddr), d.factoryImplementationAddr
         );
         _requireProductionAddress(
-            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), poolImplementationAddr
+            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), d.poolImplementationAddr
         );
-        _validateProductionGovernanceController(timelockAddr, governorAddr);
-        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
+        _validateProductionGovernanceController(d.timelockAddr, d.governorAddr);
+        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), d.timelockAddr);
 
         address configuredCompositeOracle = factory.compositeOracle();
         if (configuredCompositeOracle != address(0)) {
-            _requireProductionAddress(FIELD_COMPOSITE_ORACLE, configuredCompositeOracle, compositeOracleAddr);
+            _requireProductionAddress(FIELD_COMPOSITE_ORACLE, configuredCompositeOracle, d.compositeOracleAddr);
         }
         address configuredProtocolFeeRecipient = factory.defaultProtocolFeeRecipient();
         if (configuredProtocolFeeRecipient != address(0)) {
-            _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, configuredProtocolFeeRecipient, timelockAddr);
+            _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, configuredProtocolFeeRecipient, d.timelockAddr);
         }
         address configuredPythOracle = factory.pythOracle();
         if (configuredPythOracle != address(0)) {
-            _requireProductionAddress(FIELD_PYTH_ORACLE, configuredPythOracle, pythOracleAddr);
+            _requireProductionAddress(FIELD_PYTH_ORACLE, configuredPythOracle, d.pythOracleAddr);
         }
         address configuredERC4626OracleFeed = factory.erc4626OracleFeed();
         if (configuredERC4626OracleFeed != address(0)) {
-            _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, configuredERC4626OracleFeed, erc4626OracleFeedAddr);
+            _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, configuredERC4626OracleFeed, d.erc4626OracleFeedAddr);
         }
 
-        _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, compositeOracleAddr, factoryAddr, bootstrapAdmin);
-        _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, pythOracleAddr, factoryAddr, bootstrapAdmin);
+        _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, d.factoryAddr, bootstrapAdmin);
+        _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, d.pythOracleAddr, d.factoryAddr, bootstrapAdmin);
         _transferOwnershipToFactoryIfNeeded(
-            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, factoryAddr, bootstrapAdmin
+            NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, d.factoryAddr, bootstrapAdmin
         );
 
         if (factory.compositeOracle() == address(0)) {
-            factory.setCompositeOracle(compositeOracleAddr);
+            factory.setCompositeOracle(d.compositeOracleAddr);
         }
-        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), compositeOracleAddr);
+        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), d.compositeOracleAddr);
 
         if (factory.defaultProtocolFeeRecipient() == address(0)) {
-            factory.setDefaultProtocolFeeRecipient(timelockAddr);
+            factory.setDefaultProtocolFeeRecipient(d.timelockAddr);
         }
-        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), timelockAddr);
+        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), d.timelockAddr);
 
         if (factory.pythOracle() == address(0)) {
-            factory.setManagedPythOracle(pythOracleAddr);
+            factory.setManagedPythOracle(d.pythOracleAddr);
         }
-        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), pythOracleAddr);
+        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
 
         if (factory.erc4626OracleFeed() == address(0)) {
-            factory.setManagedERC4626OracleFeed(erc4626OracleFeedAddr);
+            factory.setManagedERC4626OracleFeed(d.erc4626OracleFeedAddr);
         }
-        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), erc4626OracleFeedAddr);
+        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), d.erc4626OracleFeedAddr);
 
         if (factory.bootstrapModeEnabled()) {
             if (factory.owner() != bootstrapAdmin) {
-                revert ProductionProtocolBootstrapModeOpen(factoryAddr);
+                revert ProductionProtocolBootstrapModeOpen(d.factoryAddr);
             }
             factory.finalizeBootstrap();
         }
 
         if (factory.owner() == bootstrapAdmin) {
-            factory.transferOwnership(timelockAddr);
+            factory.transferOwnership(d.timelockAddr);
         }
 
-        _validateProductionProtocolFinalized(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
-        );
+        _validateProductionProtocolFinalized(d);
     }
 
-    function _validateProductionProtocolFinalized(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address pythOracleAddr,
-        address erc4626OracleFeedAddr,
-        address timelockAddr,
-        address governorAddr
-    ) internal view {
-        _requireProductionContract(NAME_FACTORY, factoryAddr);
-        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr);
+    function _validateProductionProtocolFinalized(ProtocolDeployment memory d) internal view {
+        _requireProductionContract(NAME_FACTORY, d.factoryAddr);
+        _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr);
         _requireMandatoryProductionCodehash(
-            NAME_FACTORY_IMPLEMENTATION, factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
+            NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr, ENV_FACTORY_IMPLEMENTATION_CODEHASH
         );
-        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, poolImplementationAddr);
+        _requireProductionImplementation(NAME_POOL_IMPLEMENTATION, d.poolImplementationAddr);
         _requireMandatoryProductionCodehash(
-            NAME_POOL_IMPLEMENTATION, poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
+            NAME_POOL_IMPLEMENTATION, d.poolImplementationAddr, ENV_POOL_IMPLEMENTATION_CODEHASH
         );
         _requireProductionContractCodehash(
-            NAME_COMPOSITE_ORACLE, compositeOracleAddr, type(CompositeOracle).runtimeCode
+            NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         _requireProductionContractCodehash(
-            NAME_ERC4626_ORACLE_FEED, erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
+            NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
-        _requireProductionContract(NAME_TIMELOCK, timelockAddr);
-        _requireProductionContract(NAME_GOVERNOR, governorAddr);
-        _requireProductionCodehash(NAME_TIMELOCK, timelockAddr, type(YSTimelockController).runtimeCode);
+        _requireProductionContract(NAME_TIMELOCK, d.timelockAddr);
+        _requireProductionContract(NAME_GOVERNOR, d.governorAddr);
+        _requireProductionCodehash(NAME_TIMELOCK, d.timelockAddr, type(YSTimelockController).runtimeCode);
 
-        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(d.factoryAddr));
         _requireProductionAddress(
-            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(factoryAddr), factoryImplementationAddr
+            FIELD_FACTORY_IMPLEMENTATION, _proxyImplementation(d.factoryAddr), d.factoryImplementationAddr
         );
         _requireProductionAddress(
-            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), poolImplementationAddr
+            FIELD_POOL_IMPLEMENTATION, factory.splitRiskPoolImplementation(), d.poolImplementationAddr
         );
-        _validateProductionGovernanceController(timelockAddr, governorAddr);
-        _requireProductionOwner(NAME_FACTORY, factory.owner(), timelockAddr);
-        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), timelockAddr);
+        _validateProductionGovernanceController(d.timelockAddr, d.governorAddr);
+        _requireProductionOwner(NAME_FACTORY, factory.owner(), d.timelockAddr);
+        _requireProductionAddress(FIELD_FACTORY_GOVERNANCE_TIMELOCK, factory.governanceTimelock(), d.timelockAddr);
         if (factory.bootstrapModeEnabled()) {
-            revert ProductionProtocolBootstrapModeOpen(factoryAddr);
+            revert ProductionProtocolBootstrapModeOpen(d.factoryAddr);
         }
         if (factory.poolCount() != 0 || factory.getWhitelistedTokens().length != 0) {
-            revert ProductionProtocolLaunchAssetsPresent(factoryAddr);
+            revert ProductionProtocolLaunchAssetsPresent(d.factoryAddr);
         }
 
-        _requireProductionOwner(NAME_COMPOSITE_ORACLE, IProductionOwnable(compositeOracleAddr).owner(), factoryAddr);
+        _requireProductionOwner(NAME_COMPOSITE_ORACLE, IProductionOwnable(d.compositeOracleAddr).owner(), d.factoryAddr);
         uint256 compositeOracleAuthorizedCallerCount =
-            IProductionCompositeOracle(compositeOracleAddr).authorizedCallerCount();
+            IProductionCompositeOracle(d.compositeOracleAddr).authorizedCallerCount();
         if (compositeOracleAuthorizedCallerCount != 0) {
-            revert ProductionProtocolAuthorizedCallersPresent(compositeOracleAddr, compositeOracleAuthorizedCallerCount);
+            revert ProductionProtocolAuthorizedCallersPresent(
+                d.compositeOracleAddr, compositeOracleAuthorizedCallerCount
+            );
         }
-        _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(pythOracleAddr).owner(), factoryAddr);
+        _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(d.pythOracleAddr).owner(), d.factoryAddr);
         _requireProductionOwner(
-            NAME_ERC4626_ORACLE_FEED, IProductionOwnable(erc4626OracleFeedAddr).owner(), factoryAddr
+            NAME_ERC4626_ORACLE_FEED, IProductionOwnable(d.erc4626OracleFeedAddr).owner(), d.factoryAddr
         );
-        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), compositeOracleAddr);
-        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), timelockAddr);
-        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), pythOracleAddr);
-        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), erc4626OracleFeedAddr);
+        _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), d.compositeOracleAddr);
+        _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), d.timelockAddr);
+        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
+        _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), d.erc4626OracleFeedAddr);
     }
 
     function _transferOwnershipToFactoryIfNeeded(

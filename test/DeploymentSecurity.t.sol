@@ -96,14 +96,16 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     ) external {
         _pinProductionProtocolCodehashesForHarness(factoryImplementationAddr, poolImplementationAddr, pythOracleAddr);
         _finalizeProductionProtocolBootstrap(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr,
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
             bootstrapAdmin
         );
     }
@@ -120,14 +122,16 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     ) external {
         _pinProductionProtocolCodehashesForHarness(factoryImplementationAddr, poolImplementationAddr, pythOracleAddr);
         _validateProductionProtocolFinalized(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
         );
     }
 
@@ -146,14 +150,16 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
             factoryImplementationAddr, poolImplementationAddr, expectedPythOracleCodehashAddr
         );
         _validateProductionProtocolFinalized(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            pythOracleAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: pythOracleAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
         );
     }
 
