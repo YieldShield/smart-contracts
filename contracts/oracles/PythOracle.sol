@@ -213,6 +213,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Update price feeds only when the caller provides exactly the Pyth fee
     /// @param priceUpdateData Array of price update data from Pyth's Hermes API
     /// @dev Avoids any refund path and reverts on both underpayment and overpayment.
+    // slither-disable-next-line arbitrary-send-eth
     function updatePriceFeedsExact(bytes[] calldata priceUpdateData) external payable {
         uint256 updateFee = pyth.getUpdateFee(priceUpdateData);
         if (msg.value != updateFee) {
