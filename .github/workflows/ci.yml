@@ -305,7 +305,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Install Aderyn
-        run: npm install -g @cyfrin/aderyn@0.5.6
+        run: npm install -g @cyfrin/aderyn@0.6.8
 
       - name: Run Aderyn report
         run: aderyn . -o aderyn-report.md --no-snippets --skip-update-check
