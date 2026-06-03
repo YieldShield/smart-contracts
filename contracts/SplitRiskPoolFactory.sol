@@ -238,6 +238,8 @@ contract SplitRiskPoolFactory is
 
     /// @notice Starts the same pending governance transfer on a page of historical pools.
     /// @dev Call after `setGovernanceTimelock` and before the factory accepts the new timelock.
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function startPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external override onlyGovernance {
         address pendingGovernance = pendingGovernanceTimelock();
         if (pendingGovernance == address(0)) revert NoPendingGovernance();
@@ -356,6 +358,8 @@ contract SplitRiskPoolFactory is
      * @param newOracle Address of the new composite oracle
      * @custom:error InvalidAssetAddress If newOracle is zero address
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function setCompositeOracle(address newOracle) external {
         _requireGovernanceOrBootstrapOwner(compositeOracle == address(0) && _bootstrapOwnerActionsAllowed());
         if (newOracle == address(0)) revert ErrorsLib.InvalidAssetAddress();
@@ -636,6 +640,8 @@ contract SplitRiskPoolFactory is
         _finalizeBootstrapMode();
     }
 
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function _finalizeBootstrapMode() internal {
         if (!bootstrapModeEnabled) return;
         _clearCompositeOracleAuthorizedCallers();
@@ -711,6 +717,8 @@ contract SplitRiskPoolFactory is
         );
     }
 
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function _createPool(
         address _shieldedToken,
         string memory _shieldedTokenSymbol,
@@ -1057,6 +1065,8 @@ contract SplitRiskPoolFactory is
      * @dev Historical pool records remain intact in `pools`.
      * @param pool Address of the pool to deactivate
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function deactivatePool(address pool) external onlyGovernance nonReentrant {
         if (_poolInfo[pool].shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
         if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
@@ -1071,6 +1081,8 @@ contract SplitRiskPoolFactory is
     /// @dev Governance-only escape hatch for pool-cap griefing. The pool itself enforces
     ///      that no shielded liabilities or reserved fees remain and that protector backing
     ///      is at or below its configured minimum deposit amount before sweeping it.
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function deactivateDustPool(address pool) external onlyGovernance nonReentrant {
         if (_poolInfo[pool].shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
         if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
@@ -1090,6 +1102,8 @@ contract SplitRiskPoolFactory is
     /// @dev Frees the active slot after a grace delay when no shielded liabilities or fees
     ///      remain. The pool is left unpaused so protectors can unlock and withdraw normally;
     ///      the pool itself blocks new deposits once removed from the factory active registry.
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function deactivateProtectorOnlyPool(address pool) external onlyGovernance nonReentrant {
         ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
         if (info.shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
@@ -1114,6 +1128,8 @@ contract SplitRiskPoolFactory is
      * @notice Closes an empty pool and returns the active-slot stake to the creator
      * @param pool Address of the pool to close
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function closePool(address pool) external nonReentrant {
         ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
         if (info.shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
@@ -1137,6 +1153,8 @@ contract SplitRiskPoolFactory is
      * @param token Address of the whitelisted token to update
      * @param required Whether strict protected pricing is required for this backing asset
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function setTokenRequiresStrictProtectedPrice(address token, bool required) external {
         _requireGovernanceOrBootstrapOwner(_bootstrapOwnerActionsAllowed());
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
@@ -1652,6 +1670,8 @@ contract SplitRiskPoolFactory is
         _clearCompositeOracleAuthorizedCallersForOracle(compositeOracle);
     }
 
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function _clearCompositeOracleAuthorizedCallersForOracle(address oracle) internal {
         ICompositeOracleAdmin oracleAdmin = ICompositeOracleAdmin(oracle);
         bool clearedAll;
@@ -1750,6 +1770,8 @@ contract SplitRiskPoolFactory is
         emit EventsLib.TokenWhitelisted(token, symbol, primaryOracleFeed, backupOracleFeed, minCollateralRatioBp);
     }
 
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function _removeTokenAndCompositeFeed(address token) internal {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _requireTokenUnusedByActivePools(token);

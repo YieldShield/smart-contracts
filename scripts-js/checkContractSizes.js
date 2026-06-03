@@ -66,8 +66,13 @@ function formatRow(row) {
 
 function isSizeLimitOnlyFailure(result) {
     const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
+    // forge prints "Compiler run successful!" with no warnings, but
+    // "Compiler run successful with warnings:" when warnings are present.
+    // Match the common prefix so a clean compile that only trips the EIP-170
+    // size limit is still treated as a size-only failure (and honored as
+    // report-only), rather than being misclassified as a hard build error.
     return (
-        output.includes("Compiler run successful!") &&
+        output.includes("Compiler run successful") &&
         SIZE_LIMIT_ERROR_MARKERS.some((marker) => output.includes(marker))
     );
 }

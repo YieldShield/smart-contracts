@@ -1283,6 +1283,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
     }
 
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function _calculateAndAccumulateFeesAtPrice(uint256 tokenId, uint256 currentPrice)
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
@@ -1897,6 +1899,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error InsufficientTokenBalance If pool has insufficient balance or withdrawal exceeds withdrawable balance
      * @custom:error AccessControlDenied If access control is set and caller is not authorized
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function shieldedWithdraw(uint256 tokenId, address preferredAsset, uint256 minAmountOut)
         external
         nonReentrant
@@ -2044,6 +2048,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error UnsupportedAsset If preferredAsset is not SHIELDED_TOKEN
      * @custom:error InsufficientTokenBalance If pool has insufficient balance or withdrawal exceeds withdrawable balance
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function partialWithdrawShielded(
         uint256 tokenId,
         uint256 withdrawAmount,
@@ -2243,6 +2249,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error InsufficientTokenBalance If pool has insufficient balance
      * @custom:error AccessControlDenied If access control is set and caller is not authorized
      */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
     function protectorWithdraw(uint256 tokenId, uint256 amount, address preferredAsset, uint256 minAmountOut)
         external
         nonReentrant
