@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IPyth } from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
+import { SequencerUptimeGuard } from "./SequencerUptimeGuard.sol";
 
 /// @title PythEMAOracleFeed
 /// @author David Hawig
@@ -17,7 +17,7 @@ import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 /// - getPrice() returns: EMA price with 8 decimals (e.g., $1.00 = 1e8, $1234.56 = 123456000000)
 /// - Pyth native feeds may use different exponents (-8, -9, etc) but are normalized to 8 decimals
 /// - EMA prices are smoother and less susceptible to short-term manipulation than spot prices
-contract PythEMAOracleFeed is IOracleFeed, Ownable {
+contract PythEMAOracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @notice Pyth contract instance
     IPyth public immutable pyth;
 
@@ -89,7 +89,7 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract
     /// @param _maxPriceAge Maximum age of price data in seconds
-    constructor(address _pythAddress, uint256 _maxPriceAge) Ownable(msg.sender) {
+    constructor(address _pythAddress, uint256 _maxPriceAge) SequencerUptimeGuard() {
         if (_pythAddress == address(0)) revert("Invalid Pyth address");
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
@@ -214,6 +214,10 @@ contract PythEMAOracleFeed is IOracleFeed, Ownable {
         if (!isTokenSupported[token]) {
             revert TokenNotSupported(token);
         }
+
+        // SEC-01: reject prices read while the L2 sequencer is down or within its
+        // post-restart grace period.
+        _checkSequencerUptime();
 
         bytes32 feedId = tokenToPriceFeedId[token];
 

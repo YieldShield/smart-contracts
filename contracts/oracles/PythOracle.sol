@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -10,13 +9,14 @@ import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IPyth } from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
+import { SequencerUptimeGuard } from "./SequencerUptimeGuard.sol";
 
 /// @title PythOracle
 /// @author David Hawig
 /// @notice Price oracle implementation using Pyth Network's pull integration
 /// @dev Implements IPriceOracle and IOracleFeed interfaces using Pyth Network price feeds with staleness checks.
 ///      All price outputs are normalized to 8 decimals (USD format) regardless of source feed precision.
-contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
+contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
     using OracleValidationLib for uint256;
 
     /// @notice Pyth contract instance
@@ -179,7 +179,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract on the current network
     /// @param _maxPriceAge The maximum age of price data in seconds (default: 60)
-    constructor(address _pythAddress, uint256 _maxPriceAge) Ownable(msg.sender) {
+    constructor(address _pythAddress, uint256 _maxPriceAge) SequencerUptimeGuard() {
         if (_pythAddress == address(0)) revert("Invalid Pyth address");
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
@@ -641,6 +641,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     }
 
     function _getPythPrice(address token, bool useEma) internal view returns (uint256) {
+        // SEC-01: reject prices read while the L2 sequencer is down or within its
+        // post-restart grace period. Every Pyth read funnels through here.
+        _checkSequencerUptime();
         bytes32 feedId = _getFeedId(token);
         (uint256 basePrice, uint256 basePublishTime, uint256 baseConfidenceBps) =
             _readPythPrice(token, feedId, useEma, effectiveMaxPriceAge(token));
@@ -802,20 +805,37 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @return price The price in USD with 8 decimals
     /// @return isReliable True if spot price passed circuit breaker, false if using EMA fallback
     function getPriceWithFallback(address token) external view returns (uint256 price, bool isReliable) {
-        uint256 spotPrice = _getPythPrice(token, false);
+        // EMA is the stable fallback; if EMA itself is unusable there is nothing
+        // safer to return, so let that revert propagate (fail closed).
         uint256 emaPrice = _getPythPrice(token, true);
-
-        // Prevent division by zero in deviation calculation
         if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
 
-        // Calculate deviation and check threshold
-        uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
-        if (deviation > maxPriceDeviation) {
+        // INC-02: this helper must degrade — not revert — during volatility. The
+        // spot read can revert on wide confidence / staleness (exactly when the
+        // EMA fallback is wanted), so route it through an external self-call to
+        // catch that and fall back to EMA. `_getPythPrice` is internal, so a
+        // try/catch needs an external boundary.
+        try this.getPythPriceExternal(token, false) returns (uint256 spotPrice) {
+            uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
+            if (deviation > maxPriceDeviation) {
+                return (emaPrice, false);
+            }
+            // Spot price passed circuit breaker check.
+            return (spotPrice, true);
+        } catch {
+            // Spot unusable during volatility: degrade to EMA, mark unreliable.
             return (emaPrice, false);
         }
+    }
 
-        // Spot price passed circuit breaker check
-        return (spotPrice, true);
+    /// @notice External self-call shim so `getPriceWithFallback` can `try/catch`
+    ///         the spot read. `_getPythPrice` is internal and try/catch requires
+    ///         an external call. Not for protected write paths — use `getPrice`.
+    /// @param token The token address
+    /// @param useEma Whether to read the EMA price instead of the spot price
+    /// @return price The price in USD with 8 decimals
+    function getPythPriceExternal(address token, bool useEma) external view returns (uint256 price) {
+        return _getPythPrice(token, useEma);
     }
 
     /// @notice Get value with graceful fallback to EMA if circuit breaker triggers

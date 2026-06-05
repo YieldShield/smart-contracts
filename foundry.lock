@@ -8,13 +8,13 @@
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.6.1",
-      "rev": "74edc4baff50b93c06977021ee9ba25987803291"
+      "rev": "48ab75f29abaa315fad7fa7b8338f92bb07376a7"
     }
   },
   "lib/openzeppelin-contracts-upgradeable": {
     "tag": {
       "name": "v5.6.1",
-      "rev": "a8bbd0d9288e0c77d1b1a472e0e2e12acb3ccd00"
+      "rev": "e202a370c60af820aabb003fb348523869c82606"
     }
   },
   "lib/pyth-sdk-solidity": {
