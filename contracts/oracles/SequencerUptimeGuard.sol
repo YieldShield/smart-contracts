@@ -77,6 +77,9 @@ abstract contract SequencerUptimeGuard is Ownable {
             // surface as an opaque decode revert instead of a clear error.
             if (_sequencerUptimeFeed.code.length == 0) revert InvalidSequencerFeedAddress(_sequencerUptimeFeed);
             ISequencerUptimeFeed feed = ISequencerUptimeFeed(_sequencerUptimeFeed);
+            // Only answer + startedAt are relevant for a sequencer uptime feed;
+            // roundId/updatedAt/answeredInRound are intentionally unused.
+            // slither-disable-next-line unused-return
             try feed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
                 // Sequencer status: 0 = up, 1 = down. Reject anything else.
                 if (answer != 0 && answer != 1) revert InvalidSequencerFeedAddress(_sequencerUptimeFeed);
@@ -112,6 +115,9 @@ abstract contract SequencerUptimeGuard is Ownable {
             return (true, true, 0);
         }
 
+        // Only answer + startedAt are needed; the rest of the round tuple is
+        // intentionally unused.
+        // slither-disable-next-line unused-return
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
         isUp = answer == 0;
         if (startedAt > block.timestamp) return (isUp, false, 0);
@@ -127,6 +133,9 @@ abstract contract SequencerUptimeGuard is Ownable {
             return;
         }
 
+        // Only answer + startedAt are needed; the rest of the round tuple is
+        // intentionally unused.
+        // slither-disable-next-line unused-return
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
 
         // Reject incomplete rounds: startedAt == 0 would let the grace check pass trivially.
