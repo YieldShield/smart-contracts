@@ -173,6 +173,16 @@ contract SequencerUptimeGuardTest is Test {
         feed.getPrice(TOKEN);
     }
 
+    function test_ERC4626GetPriceWithStalenessGatedOnL2() public {
+        vm.chainId(ARBITRUM_ONE);
+        PythOracle underlying = new PythOracle(DUMMY_PYTH, 3600);
+        ERC4626OracleFeed feed = new ERC4626OracleFeed(address(underlying));
+        // Codex P2: getPriceWithStaleness also returns a USD price and must hit
+        // the gate first, before the vault-config lookup.
+        vm.expectRevert(abi.encodeWithSelector(SequencerUptimeGuard.SequencerUptimeFeedRequired.selector, ARBITRUM_ONE));
+        feed.getPriceWithStaleness(TOKEN);
+    }
+
     function test_PythEMAGatedOnL2() public {
         vm.chainId(ARBITRUM_ONE);
         PythEMAOracleFeed feed = new PythEMAOracleFeed(DUMMY_PYTH, 3600);

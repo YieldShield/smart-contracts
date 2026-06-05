@@ -412,7 +412,8 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         returns (uint256)
     {
         // SEC-01: reject prices read while the L2 sequencer is down or within its
-        // post-restart grace period. Covers all three public price getters.
+        // post-restart grace period. Covers getPrice / getPriceUnsafe /
+        // getPriceForFeeAccrual. getPriceWithStaleness guards itself separately.
         _checkSequencerUptime();
         VaultConfig memory config = _getVaultConfig(vault);
         _requireLiveUnderlying(vault, config.underlying);
@@ -455,6 +456,10 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @return price The price in USD with 8 decimals
     /// @return isStale True if the underlying price is stale
     function getPriceWithStaleness(address vault) external returns (uint256 price, bool isStale) {
+        // SEC-01 (Codex P2): this helper returns a USD price too, so it must fail
+        // closed on the same L2 sequencer gate as _getValidatedPrice — otherwise
+        // an integrator using it could receive a price during a sequencer outage.
+        _checkSequencerUptime();
         VaultConfig memory config = _getVaultConfig(vault);
         _requireLiveUnderlying(vault, config.underlying);
 
