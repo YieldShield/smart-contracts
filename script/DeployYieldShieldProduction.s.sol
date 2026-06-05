@@ -297,6 +297,27 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         erc4626OracleFeedAddr = address(erc4626OracleFeed);
         console.log("ERC4626OracleFeed deployed at:", erc4626OracleFeedAddr);
 
+        // SEC-01: PythOracle and ERC4626OracleFeed inherit SequencerUptimeGuard,
+        // which defaults sequencerUptimeFeedRequired = true on known L2s (Arbitrum
+        // One 42161 / Sepolia 421614). Configure the gate while the deployer is
+        // still the owner — otherwise every subsequent price read reverts.
+        if (block.chainid == PythConfig.ARBITRUM_MAINNET_CHAIN_ID) {
+            // Chainlink Arbitrum One sequencer uptime feed. Verify against
+            // Chainlink docs before mainnet; override with YS_ARBITRUM_SEQUENCER_FEED.
+            address sequencerFeed =
+                vm.envOr("YS_ARBITRUM_SEQUENCER_FEED", address(0xFdB631F5EE196F0ed6FAa767959853A9F217697D));
+            pythOracle.setSequencerUptimeFeed(sequencerFeed);
+            erc4626OracleFeed.setSequencerUptimeFeed(sequencerFeed);
+            console.log("Sequencer uptime feed set:", sequencerFeed);
+        } else {
+            // Arbitrum Sepolia has no official Chainlink sequencer-uptime feed.
+            // Disable the requirement so testnet pricing is usable; an operator can
+            // enable it later via setSequencerUptimeFeed once a feed is available.
+            pythOracle.setSequencerUptimeFeedRequired(false);
+            erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
+            console.log("Sequencer uptime requirement disabled (no feed on this chain)");
+        }
+
         CompositeOracle compositeOracle = new CompositeOracle();
         compositeOracleAddr = address(compositeOracle);
         console.log("CompositeOracle deployed at:", compositeOracleAddr);

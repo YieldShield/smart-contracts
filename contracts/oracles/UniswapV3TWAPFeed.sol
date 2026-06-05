@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { FullMath } from "./libraries/FullMath.sol";
 import { TickMath } from "./libraries/TickMath.sol";
+import { SequencerUptimeGuard } from "./SequencerUptimeGuard.sol";
 
 /// @title IUniswapV3Pool
 /// @notice Minimal interface for Uniswap V3 pools needed for TWAP
@@ -44,7 +44,7 @@ interface IUniswapV3Pool {
 /// - getPrice() returns: TWAP price with 8 decimals (e.g., $1.00 = 1e8)
 /// - Uniswap V3 tick prices are converted to sqrtPriceX96 format and normalized
 /// - Quote token oracle MUST also return 8 decimal prices for proper USD conversion
-contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
+contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     using DecimalNormalizationLib for uint256;
     /// @notice TWAP observation period in seconds (default: 30 minutes)
 
@@ -155,7 +155,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
     /// @param _twapPeriod TWAP observation period in seconds
     /// @param _quoteToken Quote token address (e.g., USDC)
     /// @param _quoteTokenOracle Oracle for quote token USD price
-    constructor(uint32 _twapPeriod, address _quoteToken, address _quoteTokenOracle) Ownable(msg.sender) {
+    constructor(uint32 _twapPeriod, address _quoteToken, address _quoteTokenOracle) SequencerUptimeGuard() {
         if (_twapPeriod < MIN_TWAP_PERIOD) revert InvalidTWAPPeriod(_twapPeriod, MIN_TWAP_PERIOD);
         if (_quoteToken == address(0)) revert("Invalid quote token");
         if (_quoteTokenOracle == address(0)) revert("Invalid quote token oracle");
@@ -381,6 +381,10 @@ contract UniswapV3TWAPFeed is IOracleFeed, Ownable {
         if (!isTokenSupported[token]) {
             revert TokenNotSupported(token);
         }
+
+        // SEC-01: reject prices read while the L2 sequencer is down or within its
+        // post-restart grace period.
+        _checkSequencerUptime();
 
         address pool = tokenPools[token];
         bool _isToken0 = isToken0[token];

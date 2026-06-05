@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -10,13 +9,14 @@ import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IPyth } from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
+import { SequencerUptimeGuard } from "./SequencerUptimeGuard.sol";
 
 /// @title PythOracle
 /// @author David Hawig
 /// @notice Price oracle implementation using Pyth Network's pull integration
 /// @dev Implements IPriceOracle and IOracleFeed interfaces using Pyth Network price feeds with staleness checks.
 ///      All price outputs are normalized to 8 decimals (USD format) regardless of source feed precision.
-contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
+contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
     using OracleValidationLib for uint256;
 
     /// @notice Pyth contract instance
@@ -179,7 +179,7 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     /// @notice Constructor
     /// @param _pythAddress The address of the Pyth contract on the current network
     /// @param _maxPriceAge The maximum age of price data in seconds (default: 60)
-    constructor(address _pythAddress, uint256 _maxPriceAge) Ownable(msg.sender) {
+    constructor(address _pythAddress, uint256 _maxPriceAge) SequencerUptimeGuard() {
         if (_pythAddress == address(0)) revert("Invalid Pyth address");
         if (_maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
         if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
@@ -641,6 +641,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, Ownable {
     }
 
     function _getPythPrice(address token, bool useEma) internal view returns (uint256) {
+        // SEC-01: reject prices read while the L2 sequencer is down or within its
+        // post-restart grace period. Every Pyth read funnels through here.
+        _checkSequencerUptime();
         bytes32 feedId = _getFeedId(token);
         (uint256 basePrice, uint256 basePublishTime, uint256 baseConfidenceBps) =
             _readPythPrice(token, feedId, useEma, effectiveMaxPriceAge(token));

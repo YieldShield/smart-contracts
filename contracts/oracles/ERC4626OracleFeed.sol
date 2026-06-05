@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { ConstantsLib } from "../libraries/ConstantsLib.sol";
+import { SequencerUptimeGuard } from "./SequencerUptimeGuard.sol";
 
 /// @title ERC4626OracleFeed
 /// @author David Hawig
 /// @notice NAV-based pricing oracle for ERC4626 yield-bearing vaults
 /// @dev Calculates share price using vault's convertToAssets() and underlying asset price oracle.
 ///      All price outputs are normalized to 8 decimals (USD format).
-contract ERC4626OracleFeed is IOracleFeed, Ownable {
+contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     using DecimalNormalizationLib for uint256;
 
     struct VaultConfig {
@@ -166,7 +166,7 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
 
     /// @notice Constructor
     /// @param _underlyingPriceOracle Address of the oracle that provides USD prices for underlying assets
-    constructor(address _underlyingPriceOracle) Ownable(msg.sender) {
+    constructor(address _underlyingPriceOracle) SequencerUptimeGuard() {
         if (_underlyingPriceOracle == address(0)) {
             revert InvalidOracleAddress(_underlyingPriceOracle);
         }
@@ -411,6 +411,9 @@ contract ERC4626OracleFeed is IOracleFeed, Ownable {
         view
         returns (uint256)
     {
+        // SEC-01: reject prices read while the L2 sequencer is down or within its
+        // post-restart grace period. Covers all three public price getters.
+        _checkSequencerUptime();
         VaultConfig memory config = _getVaultConfig(vault);
         _requireLiveUnderlying(vault, config.underlying);
 
