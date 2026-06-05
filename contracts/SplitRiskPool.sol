@@ -2349,6 +2349,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             protectorShares[tokenId] = newShares;
             protectorShareEpochs[tokenId] = protectorShareEpoch;
             IProtectorReceiptNFT(protectorReceiptNFT).updateAmount(tokenId, newAmount);
+            // Re-arm the unlock window for the remaining position. Without this,
+            // the already-elapsed unlockRequestTime persists, leaving the
+            // remainder permanently in the "unlocked" state so the protector
+            // could withdraw again with no fresh cooldown — defeating the
+            // unlock-duration exit-notice protection shielders rely on. The
+            // protector must call startUnlockProcess again before the remaining
+            // position can exit. (Mirrors cancelUnlockProcess.)
+            IProtectorReceiptNFT(protectorReceiptNFT).setUnlockRequestTime(tokenId, 0);
         }
 
         // Update pool balances (TOKEN-BASED)

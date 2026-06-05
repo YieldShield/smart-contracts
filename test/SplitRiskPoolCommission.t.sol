@@ -137,6 +137,15 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         pool.claimRewards(tokenId);
     }
 
+    /// @dev Re-initiate and mature a protector unlock window. Kept in its own
+    ///      call frame so the `vm.warp` reliably advances time (an inline warp
+    ///      inside a loop is elided by the via-IR optimizer in this suite).
+    function _rearmAndMatureProtectorUnlock(uint256 tokenId) internal {
+        vm.prank(protector1);
+        pool.startUnlockProcess(tokenId);
+        vm.warp(block.timestamp + 40 days);
+    }
+
     /// @notice Test that new depositor cannot claim historical rewards (late-joiner exploit fix)
     function testNewDepositorCannotClaimHistoricalRewards() public {
         uint256 backingAmount1 = 1000e18;
@@ -809,6 +818,15 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         uint256 remainingAmount = backingAmount;
 
         for (uint256 i = 0; i < 5; i++) {
+            if (i > 0) {
+                // BUG-01: each partial withdrawal re-arms a fresh unlock window,
+                // so the unlock must be re-initiated and matured before each
+                // subsequent withdrawal. Done via a helper (separate call frame) —
+                // an inline `vm.warp(block.timestamp + N days)` inside this loop is
+                // elided by the via-IR optimizer and silently fails to advance time.
+                _rearmAndMatureProtectorUnlock(tokenId);
+            }
+
             uint256 withdrawAmount = remainingAmount / 10; // 10% of remaining each time
             uint256 available = pool.getAvailableForWithdrawal(tokenId);
             if (withdrawAmount == 0 || available == 0) break;

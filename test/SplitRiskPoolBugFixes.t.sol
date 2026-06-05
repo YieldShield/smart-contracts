@@ -198,16 +198,17 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
 
         uint256 tokenId = 0;
 
-        // Do multiple small partial withdrawals
-        _matureProtectorUnlock(tokenId);
-        vm.startPrank(protector);
+        // Do multiple small partial withdrawals. Each partial withdrawal now
+        // re-arms a fresh unlock window (BUG-01 fix), so the unlock must be
+        // re-matured before every withdrawal rather than reused.
         for (uint256 i = 0; i < 5; i++) {
             IProtectorReceiptNFT.ProtectorPosition memory pos = protectorNFT.getPosition(tokenId);
             if (pos.amount > 10e18) {
+                _matureProtectorUnlock(tokenId);
+                vm.prank(protector);
                 pool.protectorWithdraw(tokenId, 1e18, address(backingToken), 0);
             }
         }
-        vm.stopPrank();
 
         // Pool should still be consistent after multiple partial withdrawals
         IProtectorReceiptNFT.ProtectorPosition memory finalPos = protectorNFT.getPosition(tokenId);
