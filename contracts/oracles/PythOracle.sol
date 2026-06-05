@@ -805,20 +805,37 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
     /// @return price The price in USD with 8 decimals
     /// @return isReliable True if spot price passed circuit breaker, false if using EMA fallback
     function getPriceWithFallback(address token) external view returns (uint256 price, bool isReliable) {
-        uint256 spotPrice = _getPythPrice(token, false);
+        // EMA is the stable fallback; if EMA itself is unusable there is nothing
+        // safer to return, so let that revert propagate (fail closed).
         uint256 emaPrice = _getPythPrice(token, true);
-
-        // Prevent division by zero in deviation calculation
         if (emaPrice == 0) revert InvalidEMAPrice(token, emaPrice);
 
-        // Calculate deviation and check threshold
-        uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
-        if (deviation > maxPriceDeviation) {
+        // INC-02: this helper must degrade — not revert — during volatility. The
+        // spot read can revert on wide confidence / staleness (exactly when the
+        // EMA fallback is wanted), so route it through an external self-call to
+        // catch that and fall back to EMA. `_getPythPrice` is internal, so a
+        // try/catch needs an external boundary.
+        try this.getPythPriceExternal(token, false) returns (uint256 spotPrice) {
+            uint256 deviation = _calculateDeviation(spotPrice, emaPrice);
+            if (deviation > maxPriceDeviation) {
+                return (emaPrice, false);
+            }
+            // Spot price passed circuit breaker check.
+            return (spotPrice, true);
+        } catch {
+            // Spot unusable during volatility: degrade to EMA, mark unreliable.
             return (emaPrice, false);
         }
+    }
 
-        // Spot price passed circuit breaker check
-        return (spotPrice, true);
+    /// @notice External self-call shim so `getPriceWithFallback` can `try/catch`
+    ///         the spot read. `_getPythPrice` is internal and try/catch requires
+    ///         an external call. Not for protected write paths — use `getPrice`.
+    /// @param token The token address
+    /// @param useEma Whether to read the EMA price instead of the spot price
+    /// @return price The price in USD with 8 decimals
+    function getPythPriceExternal(address token, bool useEma) external view returns (uint256 price) {
+        return _getPythPrice(token, useEma);
     }
 
     /// @notice Get value with graceful fallback to EMA if circuit breaker triggers

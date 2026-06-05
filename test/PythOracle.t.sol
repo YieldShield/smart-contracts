@@ -955,4 +955,31 @@ contract PythOracleTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPrice.selector, address(token1), 0));
         oracle.getPriceWithFallback(address(token1));
     }
+
+    function testGetPriceWithFallback_StaleSpotDegradesToEma() public {
+        // INC-02: getPriceWithFallback must NOT revert when the spot read fails
+        // during volatility/staleness — it must degrade to the EMA price with
+        // isReliable=false. Here the spot is published 300s ago (> 60s max age)
+        // while the EMA is fresh, so the spot read reverts internally and the
+        // function must fall back to EMA instead of propagating the revert.
+        vm.warp(block.timestamp + 1000);
+        uint64 nowTs = uint64(block.timestamp);
+        _updatePriceFeedWithEmaPublishTime(FEED_ID_1, 1e8, 1e6, -8, nowTs - 300, nowTs);
+
+        (uint256 price, bool isReliable) = oracle.getPriceWithFallback(address(token1));
+        assertEq(price, 1e8, "should degrade to the EMA price");
+        assertFalse(isReliable, "stale spot must mark the price unreliable");
+    }
+
+    function testGetValueWithFallback_StaleSpotDegradesToEma() public {
+        // The value helper delegates to getPriceWithFallback, so it inherits the
+        // same graceful degradation (returns EMA-derived value, isReliable=false).
+        vm.warp(block.timestamp + 1000);
+        uint64 nowTs = uint64(block.timestamp);
+        _updatePriceFeedWithEmaPublishTime(FEED_ID_1, 1e8, 1e6, -8, nowTs - 300, nowTs);
+
+        (uint256 value, bool isReliable) = oracle.getValueWithFallback(address(token1), 100e18);
+        assertEq(value, 100e8, "should value at the EMA price ($100)");
+        assertFalse(isReliable, "stale spot must mark the value unreliable");
+    }
 }
