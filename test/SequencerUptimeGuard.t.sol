@@ -119,7 +119,9 @@ contract SequencerUptimeGuardTest is Test {
         vm.chainId(ARBITRUM_ONE);
         GuardHarness h = new GuardHarness();
         // address(0xdead) has no code → latestRoundData() reverts → rejected.
-        vm.expectRevert(abi.encodeWithSelector(SequencerUptimeGuard.InvalidSequencerFeedAddress.selector, address(0xdead)));
+        vm.expectRevert(
+            abi.encodeWithSelector(SequencerUptimeGuard.InvalidSequencerFeedAddress.selector, address(0xdead))
+        );
         h.setSequencerUptimeFeed(address(0xdead));
     }
 
