@@ -486,17 +486,35 @@ function updatePonderConfig(
     }
 }
 
+function isAddressKey(value) {
+    return typeof value === "string" && value.startsWith("0x");
+}
+
 function deploymentJsonAddressFor(deploymentData, contractName) {
     if (!deploymentData) return null;
 
     let address = null;
     for (const [key, value] of Object.entries(deploymentData)) {
-        if (key.startsWith("0x") && value === contractName) {
+        if (isAddressKey(key) && value === contractName) {
             address = key;
         }
     }
 
     return address;
+}
+
+function deploymentJsonNameForAddress(deploymentData, address) {
+    if (!deploymentData || !address) return null;
+
+    const normalizedAddress = address.toLowerCase();
+    for (const [key, value] of Object.entries(deploymentData)) {
+        if (!isAddressKey(key)) continue;
+        if (key.toLowerCase() === normalizedAddress && typeof value === "string") {
+            return value;
+        }
+    }
+
+    return null;
 }
 
 function generatedContractAddressFor(chainContracts, contractName) {
@@ -599,10 +617,24 @@ async function main() {
     // Update contract keys based on deployments if they exist
     Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {
         Object.entries(contracts).forEach(([contractName, contractData]) => {
-            const deployedName = deployments[chainId]?.[contractData.address];
-            if (deployedName) {
+            const deployedName = deploymentJsonNameForAddress(
+                deployments[chainId],
+                contractData.address,
+            );
+            if (deployedName && deployedName !== contractName) {
+                const deployedArtifact = getArtifactOfContract(deployedName);
+                const deployedContractData = deployedArtifact
+                    ? {
+                          ...contractData,
+                          abi: deployedArtifact.abi,
+                          inheritedFunctions:
+                              getInheritedFunctions(deployedArtifact),
+                      }
+                    : contractData;
+
                 // If we have a deployment name, use it instead of the contract name
-                allGeneratedContracts[chainId][deployedName] = contractData;
+                allGeneratedContracts[chainId][deployedName] =
+                    deployedContractData;
                 delete allGeneratedContracts[chainId][contractName];
             }
         });
@@ -613,7 +645,7 @@ async function main() {
             for (const [address, name] of Object.entries(
                 deployments[chainId],
             )) {
-                if (!address.startsWith("0x")) continue;
+                if (!isAddressKey(address)) continue;
                 if (typeof name !== "string") continue;
 
                 if (allGeneratedContracts[chainId][name]) {
@@ -715,4 +747,8 @@ if (process.argv[1] === __filename) {
     });
 }
 
-export { selectPonderDeployment, sortChainIdsForSelection };
+export {
+    deploymentJsonNameForAddress,
+    selectPonderDeployment,
+    sortChainIdsForSelection,
+};

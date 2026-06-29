@@ -24,6 +24,23 @@ test("selectPonderDeployment never mixes factory and governor chains", async () 
     );
 });
 
+test("deploymentJsonNameForAddress matches deployment aliases case-insensitively", async () => {
+    const { deploymentJsonNameForAddress } = await import(
+        "../generateTsAbis.js"
+    );
+
+    assert.equal(
+        deploymentJsonNameForAddress(
+            {
+                "0xe1Aa25618fA0c7A1CFDab5d6B456af611873b629":
+                    "TimelockController",
+            },
+            "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
+        ),
+        "TimelockController",
+    );
+});
+
 test("selectPonderDeployment selects both addresses from the first complete chain", async () => {
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
     const chainIds = ["421614", "31337"];
