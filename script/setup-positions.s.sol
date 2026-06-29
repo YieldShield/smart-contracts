@@ -83,13 +83,13 @@ contract SetupPositions is ScaffoldETHDeploy {
         console.log("Found", poolCount, "pools");
 
         // Get pool instances
-        SplitRiskPool pool1 = SplitRiskPool(payable(pools[0])); // SUSDE/gtUSDC
+        SplitRiskPool pool1 = SplitRiskPool(payable(pools[0])); // SUSDE/SUSDS
         SplitRiskPool pool2 = SplitRiskPool(payable(pools[1])); // SDAI/USDY
         SplitRiskPool pool3 = SplitRiskPool(payable(pools[2])); // STETH/STONE
         SplitRiskPool pool4 = SplitRiskPool(payable(pools[3])); // JAAA/USTB
         // Get token addresses from pools
         address susdeAddr = pool1.SHIELDED_TOKEN();
-        address gtusdcAddr = pool1.BACKING_TOKEN();
+        address susdsAddr = pool1.BACKING_TOKEN();
         address sdaiAddr = pool2.SHIELDED_TOKEN();
         address usdyAddr = pool2.BACKING_TOKEN();
         address stethAddr = pool3.SHIELDED_TOKEN();
@@ -104,26 +104,26 @@ contract SetupPositions is ScaffoldETHDeploy {
         // ============================================================
         console.log("\n========== PHASE 1: PROTECTOR POSITIONS ==========");
 
-        // Account #2: Small Protector - Pool 1: 200 gtUSDC
+        // Account #2: Small Protector - Pool 1: 200 SUSDS
         console.log("\n=== Account #2: Small Protector (Pool 1) ===");
-        _createProtectorPosition(accounts[2], pool1, gtusdcAddr, 200e18);
+        _createProtectorPosition(accounts[2], pool1, susdsAddr, 200e18);
 
         // Account #4: Large Protector - 4 pools, 1000 each
         console.log("\n=== Account #4: Large Protector (Pools 1-4) ===");
-        _createProtectorPosition(accounts[4], pool1, gtusdcAddr, 1000e18);
+        _createProtectorPosition(accounts[4], pool1, susdsAddr, 1000e18);
         _createProtectorPosition(accounts[4], pool2, usdyAddr, 1000e18);
         _createProtectorPosition(accounts[4], pool3, stoneAddr, 1000e18);
         _createProtectorPosition(accounts[4], pool4, ustbAddr, 1000e18);
 
         // Account #5: Mixed User - Protector positions first
         console.log("\n=== Account #5: Mixed User - Protector (Pools 1-2) ===");
-        _createProtectorPosition(accounts[5], pool1, gtusdcAddr, 600e18);
+        _createProtectorPosition(accounts[5], pool1, susdsAddr, 600e18);
         _createProtectorPosition(accounts[5], pool2, usdyAddr, 600e18);
 
-        // Account #7: Whale Protector - Pool 1: 10k gtUSDC (uses full 10k balance)
-        // Sized to cover shielded deposits at realistic oracle prices (sUSDe=$1.22, gtUSDC~$1.00)
+        // Account #7: Whale Protector - Pool 1: 10k SUSDS (uses full 10k balance)
+        // Sized to cover shielded deposits at realistic oracle prices (sUSDe=$1.22, SUSDS=$1.10)
         console.log("\n=== Account #7: Whale Protector (Pool 1) ===");
-        _createProtectorPosition(accounts[7], pool1, gtusdcAddr, 10000e18);
+        _createProtectorPosition(accounts[7], pool1, susdsAddr, 10000e18);
 
         // Account #8: Diversified - Protector position first
         console.log("\n=== Account #8: Diversified - Protector (Pool 3) ===");

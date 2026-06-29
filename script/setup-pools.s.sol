@@ -48,7 +48,6 @@ contract SetupPools is ScaffoldETHDeploy {
         // Get token addresses in deployment order
         // Order from DeployYieldShield: susde, sdai, usdy, steth, stone, jaaa, ustb, usyc, lbtc, rlp, susds, usdc, gtusdc
         address[] memory mockERC20Addrs = _getAllTokenAddresses("MockERC20");
-        address gtusdcAddr = _getTokenAddress("MockGauntletUSDCPrime", 0);
 
         require(mockERC20Addrs.length >= 11, "Not enough MockERC20 tokens found");
 
@@ -62,6 +61,7 @@ contract SetupPools is ScaffoldETHDeploy {
         address ustbAddr = mockERC20Addrs[6]; // USTB
         address usycAddr = mockERC20Addrs[7]; // USYC
         address rlpAddr = mockERC20Addrs[9]; // RLP (skip index 8 = LBTC)
+        address susdsAddr = mockERC20Addrs[10]; // SUSDS
 
         require(susdeAddr != address(0), "SUSDE not found");
         require(sdaiAddr != address(0), "SDAI not found");
@@ -72,7 +72,7 @@ contract SetupPools is ScaffoldETHDeploy {
         require(ustbAddr != address(0), "USTB not found");
         require(usycAddr != address(0), "USYC not found");
         require(rlpAddr != address(0), "RLP not found");
-        require(gtusdcAddr != address(0), "gtUSDC not found");
+        require(susdsAddr != address(0), "SUSDS not found");
 
         console.log("Token addresses loaded");
 
@@ -81,8 +81,8 @@ contract SetupPools is ScaffoldETHDeploy {
             PoolConfig({
                 shieldedTokenName: "Staked USDe",
                 shieldedTokenSymbol: "SUSDE",
-                backingTokenName: "Gauntlet USDC Prime",
-                backingTokenSymbol: "gtUSDC",
+                backingTokenName: "Staked USD Sky Protocol",
+                backingTokenSymbol: "SUSDS",
                 commissionRate: 500, // 5%
                 poolFee: 200, // 2%
                 collateralRatio: 10000 // 100%
@@ -127,7 +127,7 @@ contract SetupPools is ScaffoldETHDeploy {
 
         // Token address arrays matching pool configs
         address[5] memory shieldedTokens = [susdeAddr, sdaiAddr, stethAddr, jaaaAddr, usycAddr];
-        address[5] memory backingTokens = [gtusdcAddr, usdyAddr, stoneAddr, ustbAddr, rlpAddr];
+        address[5] memory backingTokens = [susdsAddr, usdyAddr, stoneAddr, ustbAddr, rlpAddr];
 
         // Create pools
         for (uint256 i = 0; i < poolConfigs.length; i++) {
