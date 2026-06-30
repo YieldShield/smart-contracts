@@ -25,9 +25,8 @@ test("selectPonderDeployment never mixes factory and governor chains", async () 
 });
 
 test("deploymentJsonNameForAddress matches deployment aliases case-insensitively", async () => {
-    const { deploymentJsonNameForAddress } = await import(
-        "../generateTsAbis.js"
-    );
+    const { deploymentJsonNameForAddress } =
+        await import("../generateTsAbis.js");
 
     assert.equal(
         deploymentJsonNameForAddress(

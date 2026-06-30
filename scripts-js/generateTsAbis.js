@@ -509,7 +509,10 @@ function deploymentJsonNameForAddress(deploymentData, address) {
     const normalizedAddress = address.toLowerCase();
     for (const [key, value] of Object.entries(deploymentData)) {
         if (!isAddressKey(key)) continue;
-        if (key.toLowerCase() === normalizedAddress && typeof value === "string") {
+        if (
+            key.toLowerCase() === normalizedAddress &&
+            typeof value === "string"
+        ) {
             return value;
         }
     }

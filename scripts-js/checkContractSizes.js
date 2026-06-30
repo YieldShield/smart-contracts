@@ -170,13 +170,12 @@ if (deployableRows.length === 0) {
     process.exit(1);
 }
 
-const violations = deployableRows.filter(
-    (row) => exceedsEffectiveLimit(row),
-);
+const violations = deployableRows.filter((row) => exceedsEffectiveLimit(row));
 
 const acceptedExceptionRows = deployableRows.filter(
     (row) =>
-        (row.runtimeSize > RUNTIME_LIMIT || row.initcodeSize > INITCODE_LIMIT) &&
+        (row.runtimeSize > RUNTIME_LIMIT ||
+            row.initcodeSize > INITCODE_LIMIT) &&
         isWithinAcceptedSizeException(row),
 );
 
