@@ -689,7 +689,7 @@ async function main() {
     // Write the files
     const fileTemplate = (importPath) => `
     ${generatedContractComment}
-    import { GenericContractsDeclaration } from "${importPath}";
+    import type { GenericContractsDeclaration } from "${importPath}";
 
     const deployedContracts = {${fileContent}} as const;
 
