@@ -3,6 +3,10 @@ src = 'contracts'
 out = 'out'
 libs = ['lib', 'node_modules']
 solc_version = "0.8.35"
+# OpenZeppelin 5.6.1 still exposes identifiers such as `error` and `at`
+# that Solc 0.8.35 warns may become keywords in a future compiler release.
+# Keep this scoped to warning 6335 so other compiler diagnostics remain visible.
+ignored_error_codes = [6335]
 fs_permissions = [
     # Deploy scripts and DeploymentMetadata tests write per-chain JSON here.
     { access = "read-write", path = "./deployments/" },
