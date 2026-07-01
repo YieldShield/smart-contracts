@@ -425,8 +425,8 @@ function updatePonderConfig(
             `📝 Updated Ponder config with factory address: ${factoryAddress}`,
         );
     } else if (factoryAddress) {
-        console.warn(
-            `⚠️  Could not find factory address pattern in ponder.config.ts`,
+        console.log(
+            `📝 Ponder factory address is env-driven; skipping hardcoded config replacement`,
         );
     }
 
@@ -444,8 +444,8 @@ function updatePonderConfig(
             `📝 Updated Ponder config with YSGovernor address: ${governorAddress}`,
         );
     } else if (governorAddress) {
-        console.warn(
-            `⚠️  Could not find YSGovernor address pattern in ponder.config.ts`,
+        console.log(
+            `📝 Ponder YSGovernor address is env-driven; skipping hardcoded config replacement`,
         );
     }
 
