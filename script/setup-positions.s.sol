@@ -167,8 +167,8 @@ contract SetupPositions is ScaffoldETHDeploy {
     {
         IERC20 token = IERC20(tokenAddr);
 
-        // Use account's private key for this transaction
-        vm.startBroadcast(account.privateKey);
+        // Use Anvil's unlocked local account so the node owns nonce assignment.
+        vm.startBroadcast(account.addr);
 
         // Approve token
         token.approve(address(pool), amount);
@@ -190,8 +190,8 @@ contract SetupPositions is ScaffoldETHDeploy {
     {
         IERC20 token = IERC20(tokenAddr);
 
-        // Use account's private key for this transaction
-        vm.startBroadcast(account.privateKey);
+        // Use Anvil's unlocked local account so the node owns nonce assignment.
+        vm.startBroadcast(account.addr);
 
         // Approve token
         token.approve(address(pool), amount);
