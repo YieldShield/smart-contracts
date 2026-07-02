@@ -134,12 +134,7 @@ interface ISplitRiskPool {
     function getAccessControlStatus()
         external
         view
-        returns (
-            address activeAccessControl,
-            bool depositsGated,
-            bool withdrawalsGated,
-            bool governanceInstalled
-        );
+        returns (address activeAccessControl, bool depositsGated, bool withdrawalsGated, bool governanceInstalled);
     function setAccessControl(address newAccessControl) external;
     function pause() external;
     function sweepInactiveProtectorBackingDustFromFactory() external returns (uint256 sweptAmount);

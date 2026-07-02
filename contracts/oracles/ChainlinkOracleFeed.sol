@@ -512,7 +512,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             return (true, 0);
         }
 
-        try feed.latestRoundData() returns (uint80 roundId, int256 answer, uint256, uint256 _updatedAt, uint80 answeredInRound) {
+        try feed.latestRoundData() returns (
+            uint80 roundId, int256 answer, uint256, uint256 _updatedAt, uint80 answeredInRound
+        ) {
             updatedAt = _updatedAt;
             if (answer <= 0 || answeredInRound < roundId) {
                 return (true, updatedAt);

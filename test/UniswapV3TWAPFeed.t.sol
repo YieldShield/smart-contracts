@@ -206,27 +206,20 @@ contract UniswapV3TWAPFeedTest is Test {
     function test_setTokenPool_UsesTokenSpecificLiquidityFloor() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         uint128 tokenMinimum = harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY() + 10;
-        MockUniswapV3Pool pool =
-            new MockUniswapV3Pool(address(token), address(quoteToken), 0, tokenMinimum - 1);
+        MockUniswapV3Pool pool = new MockUniswapV3Pool(address(token), address(quoteToken), 0, tokenMinimum - 1);
 
         harness.setTokenMinimumAverageLiquidity(address(token), tokenMinimum);
         assertEq(harness.effectiveMinimumAverageLiquidity(address(token)), tokenMinimum);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                UniswapV3TWAPFeed.InsufficientTWAPLiquidity.selector,
-                address(pool),
-                tokenMinimum - 1,
-                tokenMinimum
+                UniswapV3TWAPFeed.InsufficientTWAPLiquidity.selector, address(pool), tokenMinimum - 1, tokenMinimum
             )
         );
         harness.setTokenPool(address(token), address(pool));
 
         harness.setTokenMinimumAverageLiquidity(address(token), 0);
-        assertEq(
-            harness.effectiveMinimumAverageLiquidity(address(token)),
-            harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
-        );
+        assertEq(harness.effectiveMinimumAverageLiquidity(address(token)), harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY());
         harness.setTokenPool(address(token), address(pool));
     }
 

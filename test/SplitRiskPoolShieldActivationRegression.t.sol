@@ -454,9 +454,8 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
 
         stdstore.target(address(pool)).sig("protectorEpochRemainingReserve(uint256)").with_key(uint256(0))
             .checked_write(uint256(0));
-        stdstore.target(address(pool)).sig("protectorEpochRemainingShares(uint256)").with_key(uint256(0)).checked_write(
-            uint256(0)
-        );
+        stdstore.target(address(pool)).sig("protectorEpochRemainingShares(uint256)").with_key(uint256(0))
+            .checked_write(uint256(0));
         stdstore.target(address(pool)).sig("historicalCommissionReserve()").checked_write(uint256(0));
         stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(100e18));
 

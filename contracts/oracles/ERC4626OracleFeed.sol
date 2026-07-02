@@ -416,9 +416,8 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
             return false;
         }
 
-        (bool success, bytes memory data) = address(underlyingPriceOracle).staticcall(
-            abi.encodeWithSignature("supportsStrictProtectedPrice(address)", underlying)
-        );
+        (bool success, bytes memory data) = address(underlyingPriceOracle)
+            .staticcall(abi.encodeWithSignature("supportsStrictProtectedPrice(address)", underlying));
         if (!success || data.length < 32) {
             return false;
         }
