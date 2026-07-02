@@ -1576,15 +1576,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 positionEpoch = protectorShareEpochs[tokenId];
         bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
-        bool tracksExpiredEpoch =
-            protectorEpochRemainingShares[positionEpoch] != 0 || protectorEpochRemainingReserve[positionEpoch] != 0;
         claimable = _calculateClaimableCommission(tokenId, positionShares_);
         if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
-        if (isExpiredEpoch && tracksExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
+        if (isExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
             claimable = protectorEpochRemainingReserve[positionEpoch];
         }
         if (claimable == 0) {
-            if (isExpiredEpoch && tracksExpiredEpoch) {
+            if (isExpiredEpoch) {
                 _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
             }
             return 0;
@@ -1593,7 +1591,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         commissionsClaimed[tokenId] += claimable;
         accumulatedCommissions -= claimable;
-        if (isExpiredEpoch && tracksExpiredEpoch) {
+        if (isExpiredEpoch) {
             protectorEpochRemainingReserve[positionEpoch] = claimable >= protectorEpochRemainingReserve[positionEpoch]
                 ? 0
                 : protectorEpochRemainingReserve[positionEpoch] - claimable;
@@ -1614,7 +1612,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (received != claimable) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
         }
-        if (isExpiredEpoch && tracksExpiredEpoch) {
+        if (isExpiredEpoch) {
             _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
         }
 
@@ -1630,15 +1628,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         uint256 positionEpoch = protectorShareEpochs[tokenId];
         bool isExpiredEpoch = positionEpoch < protectorShareEpoch;
-        bool tracksExpiredEpoch =
-            protectorEpochRemainingShares[positionEpoch] != 0 || protectorEpochRemainingReserve[positionEpoch] != 0;
         claimable = _calculateClaimableCommission(tokenId, positionShares_);
         if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
-        if (isExpiredEpoch && tracksExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
+        if (isExpiredEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
             claimable = protectorEpochRemainingReserve[positionEpoch];
         }
         if (claimable == 0) {
-            if (isExpiredEpoch && tracksExpiredEpoch) {
+            if (isExpiredEpoch) {
                 _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
             }
             return 0;
@@ -1648,7 +1644,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         commissionsClaimed[tokenId] += claimable;
         accumulatedCommissions -= claimable;
-        if (isExpiredEpoch && tracksExpiredEpoch) {
+        if (isExpiredEpoch) {
             protectorEpochRemainingReserve[positionEpoch] = claimable >= protectorEpochRemainingReserve[positionEpoch]
                 ? 0
                 : protectorEpochRemainingReserve[positionEpoch] - claimable;
@@ -1660,7 +1656,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         poolState.shieldedTokenBalance -= claimable;
-        if (isExpiredEpoch && tracksExpiredEpoch) {
+        if (isExpiredEpoch) {
             _settleExpiredEpochPosition(tokenId, positionEpoch, positionShares_);
         }
     }
@@ -1754,7 +1750,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 positionShares_ = _getProtectorPositionShares(tokenId);
         if (positionShares_ == 0) return 0;
 
-        return _calculateClaimableCommission(tokenId, positionShares_);
+        uint256 claimable = _calculateClaimableCommission(tokenId, positionShares_);
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        if (positionEpoch < protectorShareEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
+            return protectorEpochRemainingReserve[positionEpoch];
+        }
+        return claimable;
     }
 
     // Core Pool Functions

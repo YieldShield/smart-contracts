@@ -437,6 +437,43 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingPoolBalance, 0, "shield activation should have drained backing");
     }
 
+    function test_expiredEpochClaimDoesNotFallThroughToCurrentReserve() public {
+        vm.prank(protector1);
+        uint256 expiredProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.getClaimableCommission(expiredProtectorTokenId), 100e18, "setup should create expired claim");
+
+        vm.prank(protector2);
+        pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        stdstore.target(address(pool)).sig("protectorEpochRemainingReserve(uint256)").with_key(uint256(0))
+            .checked_write(uint256(0));
+        stdstore.target(address(pool)).sig("protectorEpochRemainingShares(uint256)").with_key(uint256(0)).checked_write(
+            uint256(0)
+        );
+        stdstore.target(address(pool)).sig("historicalCommissionReserve()").checked_write(uint256(0));
+        stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(100e18));
+
+        uint256 currentReserveBefore = pool.currentEpochCommissionReserve();
+        uint256 accumulatedBefore = pool.accumulatedCommissions();
+        uint256 ownerBalanceBefore = shieldedToken.balanceOf(protector1);
+
+        assertEq(pool.getClaimableCommission(expiredProtectorTokenId), 0, "expired claim is capped to its reserve");
+
+        vm.prank(protector1);
+        pool.claimCommission(expiredProtectorTokenId);
+
+        assertEq(shieldedToken.balanceOf(protector1), ownerBalanceBefore, "expired owner should receive nothing");
+        assertEq(pool.currentEpochCommissionReserve(), currentReserveBefore, "current reserve must remain untouched");
+        assertEq(pool.accumulatedCommissions(), accumulatedBefore, "accumulated commission must remain untouched");
+    }
+
     function test_backingDustCanBeExitedWhenProtectorClaimsRoundToZero() public {
         _disableTvlCapAndUseHighPrecisionPrices();
 
