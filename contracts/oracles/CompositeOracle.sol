@@ -31,6 +31,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address backupFeed; // Optional: backup oracle feed (address(0) = single-feed mode)
         bool isBackupActive; // Which feed is currently active (only relevant if backupFeed != 0)
         uint256 challengeStartTime; // Timestamp when challenge started (0 if no challenge pending)
+        uint256 challengeEndTime; // Timestamp when the pending challenge can be finalized
         uint256 lastChallengeTime; // For cooldown enforcement
     }
 
@@ -272,6 +273,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.backupFeed = address(0);
         config.isBackupActive = false;
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
 
@@ -313,6 +315,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.backupFeed = address(0);
         config.isBackupActive = false;
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
         _tokenOracleType[token] = oracleType;
@@ -344,6 +347,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.backupFeed = backupFeed;
         config.isBackupActive = false;
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         config.lastChallengeTime = 0;
         _isTokenSupported[token] = true;
 
@@ -694,6 +698,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         config.challengeStartTime = block.timestamp;
+        config.challengeEndTime = block.timestamp + challengeDurationSec;
         config.lastChallengeTime = block.timestamp;
 
         emit ChallengeInitiated(token, msg.sender, primarySuccess ? primaryPrice : 0, backupPrice, deviation);
@@ -706,7 +711,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (config.challengeStartTime == 0 || config.isBackupActive) {
             revert FinalizeNotPossible(token, "No challenge pending");
         }
-        if (block.timestamp < config.challengeStartTime + challengeDurationSec) {
+        uint256 challengeEndTime =
+            config.challengeEndTime == 0 ? config.challengeStartTime + challengeDurationSec : config.challengeEndTime;
+        if (block.timestamp < challengeEndTime) {
             revert FinalizeNotPossible(token, "Timelock not elapsed");
         }
 
@@ -729,6 +736,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             // already runs from then, so resetting it here would only let any caller
             // extend the lockout against future legitimate challenges.
             config.challengeStartTime = 0;
+            config.challengeEndTime = 0;
 
             emit CooldownApplied(
                 token, msg.sender, config.lastChallengeTime + COOLDOWN_PERIOD, "finalize_auto_cancelled"
@@ -744,6 +752,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         config.isBackupActive = true;
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         config.lastChallengeTime = block.timestamp;
 
         emit CooldownApplied(token, msg.sender, block.timestamp + COOLDOWN_PERIOD, "challenge_finalized");
@@ -778,6 +787,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // cancel would let anyone extend the cooldown lockout each time a brief
         // deviation appears and resolves, suppressing legitimate future challenges.
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
 
         emit CooldownApplied(token, msg.sender, config.lastChallengeTime + COOLDOWN_PERIOD, "challenge_cancelled");
         emit ChallengeCancelled(token, "Deviation resolved");
@@ -860,13 +870,13 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (action == ACTION_EMERGENCY_CANCEL) {
             // Bind to the active challenge so a cancel scheduled for one
             // challenge cannot be reused against a later challenge.
-            return keccak256(abi.encode("CANCEL", config.challengeStartTime));
+            return keccak256(abi.encode("CANCEL", config.challengeStartTime, config.challengeEndTime));
         }
         // ACTION_FORCE_RESET binds to whether backup is currently active —
         // resetting a system that is already on primary is meaningless, and
         // a schedule taken before backup activation must not survive into a
         // future activation.
-        return keccak256(abi.encode("RESET", config.isBackupActive, config.challengeStartTime));
+        return keccak256(abi.encode("RESET", config.isBackupActive, config.challengeStartTime, config.challengeEndTime));
     }
 
     function _requireOverridePrecondition(address token, bytes32 action) internal view {
@@ -954,6 +964,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         config.isBackupActive = false;
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         // Note: lastChallengeTime intentionally NOT reset to preserve cooldown
 
         emit OracleSwitched(token, false);
@@ -972,6 +983,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         config.challengeStartTime = 0;
+        config.challengeEndTime = 0;
         // Note: lastChallengeTime intentionally NOT reset to preserve cooldown
 
         emit ChallengeCancelled(token, "Emergency cancelled by owner");

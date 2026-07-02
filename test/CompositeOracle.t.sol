@@ -962,6 +962,19 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.finalizeChallenge(address(token));
     }
 
+    function test_FinalizeChallenge_UsesDeadlineSnapshottedAtChallengeStart() public {
+        _initiateChallenge();
+
+        compositeOracle.setChallengeDuration(compositeOracle.MAX_CHALLENGE_DURATION());
+
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        compositeOracle.finalizeChallenge(address(token));
+
+        (,,, bool isBackupActive, bool isChallengePending,) = compositeOracle.getTokenDualFeedStatus(address(token));
+        assertTrue(isBackupActive, "challenge should finalize at original deadline");
+        assertFalse(isChallengePending, "challenge should clear after finalization");
+    }
+
     function test_FinalizeChallenge_RevertsWhenNoChallengePending() public {
         compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(backupOracle));
 
