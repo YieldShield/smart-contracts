@@ -143,7 +143,9 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
     function _rearmAndMatureProtectorUnlock(uint256 tokenId) internal {
         vm.prank(protector1);
         pool.startUnlockProcess(tokenId);
-        vm.warp(block.timestamp + 40 days);
+        IProtectorReceiptNFT.ProtectorPosition memory pos =
+            IProtectorReceiptNFT(pool.protectorReceiptNFT()).getPosition(tokenId);
+        vm.warp(uint256(pos.unlockRequestTime) + 1);
     }
 
     /// @notice Test that new depositor cannot claim historical rewards (late-joiner exploit fix)
@@ -647,6 +649,47 @@ contract SplitRiskPoolCommissionTest is Test, TestTimelockHelper {
         assertGt(pool.accumulatedCommissions(), initialCommissions, "Commissions should still accumulate");
         uint256 finalProtocolFee = pool.accumulatedProtocolFee();
         assertGt(finalProtocolFee, initialProtocolFee, "Protocol fee should still increase");
+    }
+
+    function testProtectorUnlock_CannotRearmWhileWindowIsStillValid() public {
+        uint256 backingAmount = 1000e18;
+
+        vm.prank(protector1);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), backingAmount, 0);
+
+        vm.prank(protector1);
+        pool.startUnlockProcess(tokenId);
+
+        (,,,,,, uint256 unlockDuration,,,) = pool.poolConfig();
+        vm.warp(block.timestamp + unlockDuration + 1);
+
+        vm.prank(protector1);
+        vm.expectRevert(ErrorsLib.UnlockProcessAlreadyStarted.selector);
+        pool.startUnlockProcess(tokenId);
+    }
+
+    function testProtectorWithdraw_RevertsAfterUnlockWindowExpiresUntilRearmed() public {
+        uint256 backingAmount = 1000e18;
+
+        vm.prank(protector1);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), backingAmount, 0);
+
+        vm.prank(protector1);
+        pool.startUnlockProcess(tokenId);
+
+        (,,,,,, uint256 unlockDuration,,,) = pool.poolConfig();
+        vm.warp(block.timestamp + unlockDuration + ConstantsLib.PROTECTOR_UNLOCK_WINDOW + 1);
+
+        vm.prank(protector1);
+        vm.expectRevert(ErrorsLib.InsufficientUnlockedTokens.selector);
+        pool.protectorWithdraw(tokenId, backingAmount, address(backingToken), 0);
+
+        vm.prank(protector1);
+        pool.startUnlockProcess(tokenId);
+
+        vm.warp(block.timestamp + unlockDuration + 1);
+        vm.prank(protector1);
+        pool.protectorWithdraw(tokenId, backingAmount, address(backingToken), 0);
     }
 
     /// @notice HIGH-1 FIX: Test that commissions accumulate normally when protectors exist

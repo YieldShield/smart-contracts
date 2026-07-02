@@ -2192,7 +2192,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (positionAmount == 0 && !_isProtectorDustExitAvailable(positionShares_, positionAmount)) {
             revert ErrorsLib.InsufficientTokenBalance();
         }
-        if (pos.unlockRequestTime != 0) revert ErrorsLib.UnlockProcessAlreadyStarted();
+        if (pos.unlockRequestTime != 0 && !_isProtectorUnlockExpired(pos.unlockRequestTime)) {
+            revert ErrorsLib.UnlockProcessAlreadyStarted();
+        }
 
         IProtectorReceiptNFT(protectorReceiptNFT)
             .setUnlockRequestTime(tokenId, uint64(block.timestamp + poolConfig.unlockDuration));
@@ -2205,6 +2207,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         returns (bool)
     {
         return positionAmount == 0 && positionShares_ != 0 && totalProtectorTokens != 0 && totalValueAtDeposit == 0;
+    }
+
+    function _isProtectorUnlockExpired(uint256 unlockRequestTime) internal view returns (bool) {
+        return unlockRequestTime != 0 && block.timestamp > unlockRequestTime + ConstantsLib.PROTECTOR_UNLOCK_WINDOW;
+    }
+
+    function _isProtectorUnlockActive(uint256 unlockRequestTime) internal view returns (bool) {
+        return unlockRequestTime != 0 && unlockRequestTime <= block.timestamp
+            && block.timestamp <= unlockRequestTime + ConstantsLib.PROTECTOR_UNLOCK_WINDOW;
     }
 
     /**
@@ -2321,7 +2332,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             // with a proper guard.
         }
 
-        if (pos.unlockRequestTime == 0 || pos.unlockRequestTime > block.timestamp) {
+        if (!_isProtectorUnlockActive(pos.unlockRequestTime)) {
             revert ErrorsLib.InsufficientUnlockedTokens();
         }
 

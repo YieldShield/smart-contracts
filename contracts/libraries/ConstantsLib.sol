@@ -33,6 +33,8 @@ library ConstantsLib {
     uint256 public constant MIN_UNLOCK_DURATION = 1 days;
     /// @notice Maximum unlock duration for protector withdrawals
     uint256 public constant MAX_UNLOCK_DURATION = 365 days;
+    /// @notice Time window after unlock maturity during which protector withdrawals are valid
+    uint256 public constant PROTECTOR_UNLOCK_WINDOW = 7 days;
     /// @notice Maximum minimum pool time before shielded can withdraw to backing token (NEW-4 FIX)
     uint256 public constant MAX_MINIMUM_POOL_TIME = 90 days;
     /// @notice Cooldown period between reward claims
