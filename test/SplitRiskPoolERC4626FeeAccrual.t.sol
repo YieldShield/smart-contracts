@@ -13,6 +13,7 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
+import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
@@ -140,6 +141,31 @@ contract SplitRiskPoolERC4626FeeAccrualTest is Test, TestTimelockHelper {
         assertGt(pool.accumulatedCommissions(), 0, "protector commission accrues");
         assertGt(pool.accumulatedPoolFee(), 0, "pool fee accrues");
         assertGt(pool.accumulatedProtocolFee(), 0, "protocol fee accrues");
+    }
+
+    function test_DepositSeedsFeeBaselineFromLiveERC4626Nav() public {
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 200e18, 0);
+
+        _donateUnderlyingBps(400);
+        uint256 feePrice = compositeOracle.getPriceForFeeAccrual(address(shieldedVault));
+        assertEq(compositeOracle.getPrice(address(shieldedVault)), 1e8, "protected price remains clamped");
+        assertGt(feePrice, 1e8, "fee price sees pre-deposit NAV growth");
+
+        vm.prank(shielded);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedVault), 100e18, 0);
+
+        IShieldReceiptNFT.ShieldPosition memory position = shieldNFT.getPosition(shieldTokenId);
+        uint256 expectedFeeBaseline = (100e18 * feePrice) / 1e18;
+        assertEq(position.valueAtDeposit, 100e8, "collateral value uses protected deposit price");
+        assertEq(pool.feeValueBaselineUsd(shieldTokenId), expectedFeeBaseline, "fee baseline uses live NAV");
+
+        vm.prank(shielded);
+        pool.shieldedWithdraw(shieldTokenId, address(shieldedVault), 0);
+
+        assertEq(pool.accumulatedCommissions(), 0, "pre-existing NAV appreciation should not be commission");
+        assertEq(pool.accumulatedPoolFee(), 0, "pre-existing NAV appreciation should not be pool fee");
+        assertEq(pool.accumulatedProtocolFee(), 0, "pre-existing NAV appreciation should not be protocol fee");
     }
 
     function test_SameAssetWithdraw_RevertsWhenFeeAccrualUnderlyingProtectedPathReverts() public {

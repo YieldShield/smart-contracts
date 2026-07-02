@@ -569,6 +569,14 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return (false, 0);
     }
 
+    function _getShieldedFeeBaselineValue(uint256 amount) internal view returns (uint256 baselineValueUsd) {
+        (bool priceAvailable, uint256 feePrice) = _tryGetShieldedFeeAccrualPrice();
+        if (!priceAvailable) {
+            revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
+        }
+        return Math.mulDiv(amount, feePrice, shieldedTokenScale);
+    }
+
     /// @dev Returns shielded-token USD value using native shielded token units.
     function _getShieldedValue(uint256 amount) internal view returns (uint256) {
         return Math.mulDiv(amount, _getShieldedPrice(), shieldedTokenScale);
@@ -1908,7 +1916,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // contract recipients; any view-only inspection from that callback
         // must see a consistent position.
         tokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
-        feeValueBaselineUsd[tokenId] = valueAtDeposit;
+        feeValueBaselineUsd[tokenId] = _getShieldedFeeBaselineValue(received);
 
         uint256 mintedTokenId =
             IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
