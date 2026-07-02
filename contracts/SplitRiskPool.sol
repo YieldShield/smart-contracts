@@ -138,6 +138,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///         deliberate downgrade.
     event StrictPricingProbeFailed(address indexed token, address indexed factory);
     event ShieldedTokenTransferIntegrityBroken(address indexed token, uint256 nominalAmount, uint256 receivedAmount);
+    event ShieldedTokenTransferIntegrityRestored(address indexed token, uint256 probeAmount);
 
     /* Modifiers */
     modifier onlyShieldNFTOwner(uint256 tokenId) {
@@ -1254,6 +1255,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
+        if (shieldedTokenTransferIntegrityBroken) {
+            _advanceFeeBaselineWithoutAccruingFees(tokenId);
+            return (0, 0, 0);
+        }
+
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
         // Probe the shielded fee price up-front. Same-asset exits burn the receipt
@@ -1273,6 +1279,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         internal
         returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
     {
+        if (shieldedTokenTransferIntegrityBroken) {
+            _advanceFeeBaselineWithoutAccruingFees(tokenId);
+            return (0, 0, 0);
+        }
+
         if (_hasOraclePendingChallenge(SHIELDED_TOKEN) || _hasOracleChallengeablePrice(SHIELDED_TOKEN)) {
             return (0, 0, 0);
         }
@@ -1281,6 +1292,27 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (!priceAvailable) return (0, 0, 0);
 
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
+    }
+
+    function _advanceFeeBaselineWithoutAccruingFees(uint256 tokenId) internal {
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedFeeAccrualPrice();
+        if (!priceAvailable) {
+            return;
+        }
+
+        IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(shieldReceiptNFT).getPosition(tokenId);
+        if (pos.amount == 0) {
+            return;
+        }
+
+        uint256 currentValue = Math.mulDiv(pos.amount, currentPrice, shieldedTokenScale);
+        uint256 baselineValueUsd = feeValueBaselineUsd[tokenId];
+        if (baselineValueUsd == 0 && pos.valueAtDeposit != 0) {
+            baselineValueUsd = pos.valueAtDeposit;
+        }
+        if (currentValue > baselineValueUsd) {
+            feeValueBaselineUsd[tokenId] = currentValue;
+        }
     }
 
     // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
@@ -1826,6 +1858,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         returns (uint256 tokenId)
     {
         if (asset != SHIELDED_TOKEN) revert ErrorsLib.UnsupportedAsset();
+        if (shieldedTokenTransferIntegrityBroken) {
+            revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
+        }
         _requireActiveFactoryPoolForDeposit();
         _requirePoolAccountingBalancesCovered();
         if (accessControl != address(0) && !IPoolAccessControl(accessControl).canDepositShielded(msg.sender)) {
@@ -1841,9 +1876,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Transfer asset from depositor (balance-delta for fee-on-transfer tokens)
         uint256 received = _transferAndGetReceived(asset, depositAmount);
-        if (received < depositAmount && !shieldedTokenTransferIntegrityBroken) {
-            shieldedTokenTransferIntegrityBroken = true;
-            emit ShieldedTokenTransferIntegrityBroken(SHIELDED_TOKEN, depositAmount, received);
+        if (received != depositAmount) {
+            revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
         }
 
         // If minReceivedAmount > 0, verify received amount meets minimum expectation
@@ -2839,6 +2873,30 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @dev Only callable by governance
     function unpause() public override(ProtocolAccessControlUpgradeable) onlyGovernance {
         ProtocolAccessControlUpgradeable.unpause();
+    }
+
+    /// @notice Clears a shielded-token transfer-integrity suspension after governance validates a clean round trip.
+    /// @dev Governance is the timelock. If the pool still accounts for shielded-token liabilities,
+    ///      `probeAmount` must be nonzero and must round-trip exactly through a third-party probe.
+    function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external onlyGovernance {
+        if (!shieldedTokenTransferIntegrityBroken) {
+            return;
+        }
+
+        uint256 accountedShieldedBalance = poolState.shieldedTokenBalance;
+        if (accountedShieldedBalance != 0) {
+            if (probeAmount == 0) {
+                revert ErrorsLib.TransferIntegrityProbeRequired(SHIELDED_TOKEN);
+            }
+            _requireAccountingBalanceCovered(SHIELDED_TOKEN, accountedShieldedBalance);
+            if (probeAmount > IERC20(SHIELDED_TOKEN).balanceOf(address(this))) {
+                revert ErrorsLib.InsufficientTokenBalance();
+            }
+            _requireUntaxedShieldedRoundTrip(probeAmount);
+        }
+
+        shieldedTokenTransferIntegrityBroken = false;
+        emit ShieldedTokenTransferIntegrityRestored(SHIELDED_TOKEN, probeAmount);
     }
 
     /// @notice Returns whether the pool is currently paused

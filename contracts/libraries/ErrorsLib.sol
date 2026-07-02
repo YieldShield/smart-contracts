@@ -117,6 +117,8 @@ library ErrorsLib {
     error ResidualProtectorBackingPending(uint256 amount);
     /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token
     error IncompatibleShieldedTokenForCrossAssetWithdrawal(address token);
+    /// @notice Thrown when governance must prove shielded transfer integrity before clearing a suspension
+    error TransferIntegrityProbeRequired(address token);
     /// @notice Thrown when an outbound transfer debits more or less than the amount removed from accounting
     error UnexpectedOutboundTransferAmount(address token, uint256 expectedDebited, uint256 actualDebited);
     /// @notice Thrown when a UUPS upgrade is attempted on a frozen implementation

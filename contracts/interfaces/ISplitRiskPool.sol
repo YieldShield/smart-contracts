@@ -98,6 +98,7 @@ interface ISplitRiskPool {
     function claimCommission(uint256 tokenId) external;
     function forfeitCommission(uint256 tokenId) external;
     function settleExpiredProtectorPosition(uint256 tokenId) external;
+    function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external;
 
     // View Functions
     function getUserNFTCounts(address user) external view returns (uint256 shieldNFTCount, uint256 protectorNFTCount);

@@ -90,6 +90,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
 
     address public protector = address(0x1);
     address public shieldedUser = address(0x2);
+    address public governanceTimelock;
 
     function setUp() public {
         shieldedToken = new MockERC20("Shielded Token", "SHT");
@@ -120,7 +121,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSHT", "sSHT");
         protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
-        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        governanceTimelock = address(_deployTestTimelock(address(this)));
 
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
@@ -327,7 +328,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSHT", "sSHT");
         protectorNFT = new ProtectorReceiptNFT("pSPB", "pSPB");
-        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        address localGovernanceTimelock = address(_deployTestTimelock(address(this)));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
             shieldedTokenInfo,
@@ -336,7 +337,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             500,
             address(this),
             15000,
-            governanceTimelock,
+            localGovernanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
@@ -393,7 +394,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSPS", "sSPS");
         protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
-        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        address localGovernanceTimelock = address(_deployTestTimelock(address(this)));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
             shieldedTokenInfo,
@@ -402,7 +403,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             500,
             address(this),
             15000,
-            governanceTimelock,
+            localGovernanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
@@ -537,10 +538,14 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
     }
 
     function test_crossAssetWithdraw_RevertsAfterShieldedTransferFeeObserved() public {
-        shieldedToken.setTransferFee(500);
+        uint256 withdrawnTokenId = _depositShielded(100e18);
         uint256 tokenId = _depositShielded(100e18);
 
-        assertTrue(pool.shieldedTokenTransferIntegrityBroken(), "taxed deposit should flag shielded token");
+        shieldedToken.setTransferFee(500);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(withdrawnTokenId, address(shieldedToken), 0);
+
+        assertTrue(pool.shieldedTokenTransferIntegrityBroken(), "taxed same-asset exit should flag shielded token");
 
         vm.warp(block.timestamp + 7 days + 1);
         vm.prank(shieldedUser);
@@ -550,6 +555,93 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             )
         );
         pool.shieldedWithdraw(tokenId, address(backingToken), 0);
+    }
+
+    function test_depositShielded_RevertsWhenShieldedTokenTaxesDeposit() public {
+        shieldedToken.setTransferFee(500);
+
+        vm.startPrank(shieldedUser);
+        shieldedToken.approve(address(pool), 100e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.stopPrank();
+
+        assertFalse(pool.shieldedTokenTransferIntegrityBroken(), "reverted deposit must not leave sticky state");
+    }
+
+    function test_governanceCanResetShieldedTransferIntegrityAfterProbe() public {
+        uint256 withdrawnTokenId = _depositShielded(100e18);
+        _depositShielded(100e18);
+
+        shieldedToken.setTransferFee(500);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(withdrawnTokenId, address(shieldedToken), 0);
+        assertTrue(pool.shieldedTokenTransferIntegrityBroken(), "precondition: flag should be set");
+
+        shieldedToken.setTransferFee(0);
+        vm.startPrank(shieldedUser);
+        shieldedToken.approve(address(pool), 100e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal.selector, address(shieldedToken)
+            )
+        );
+        pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.stopPrank();
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.TransferIntegrityProbeRequired.selector, address(shieldedToken))
+        );
+        pool.resetShieldedTokenTransferIntegrity(0);
+
+        vm.prank(governanceTimelock);
+        pool.resetShieldedTokenTransferIntegrity(1e18);
+        assertFalse(pool.shieldedTokenTransferIntegrityBroken(), "successful probe should clear flag");
+
+        vm.startPrank(shieldedUser);
+        shieldedToken.approve(address(pool), 100e18);
+        pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.stopPrank();
+    }
+
+    function test_claimRewards_WaivesNewFeesWhileShieldedTransfersSuspended() public {
+        uint256 withdrawnTokenId = _depositShielded(100e18);
+        uint256 survivingTokenId = _depositShielded(100e18);
+
+        shieldedToken.setTransferFee(500);
+        vm.prank(shieldedUser);
+        pool.shieldedWithdraw(withdrawnTokenId, address(shieldedToken), 0);
+        assertTrue(pool.shieldedTokenTransferIntegrityBroken(), "precondition: flag should be set");
+
+        shieldedToken.setTransferFee(0);
+        oracle.setPrice(address(shieldedToken), 2e8);
+        uint256 positionAmountBefore = shieldNFT.getPosition(survivingTokenId).amount;
+
+        vm.prank(shieldedUser);
+        vm.expectEmit(true, false, false, true);
+        emit EventsLib.RewardsClaimed(shieldedUser, 0, address(shieldedToken));
+        pool.claimRewards(survivingTokenId);
+
+        assertEq(shieldNFT.getPosition(survivingTokenId).amount, positionAmountBefore, "fees should be waived");
+        assertEq(pool.accumulatedCommissions(), 0, "no protector commission should accrue");
+        assertEq(pool.accumulatedPoolFee(), 0, "no pool fee should accrue");
+        assertEq(pool.accumulatedProtocolFee(), 0, "no protocol fee should accrue");
+
+        vm.prank(governanceTimelock);
+        pool.resetShieldedTokenTransferIntegrity(1e18);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(shieldedUser);
+        pool.claimRewards(survivingTokenId);
+        assertEq(shieldNFT.getPosition(survivingTokenId).amount, positionAmountBefore, "waived yield stays waived");
+        assertEq(pool.accumulatedCommissions(), 0, "no catch-up commission should accrue");
+        assertEq(pool.accumulatedPoolFee(), 0, "no catch-up pool fee should accrue");
+        assertEq(pool.accumulatedProtocolFee(), 0, "no catch-up protocol fee should accrue");
     }
 
     function test_crossAssetWithdraw_RevertsIfShieldedTokenBecomesTaxedAfterDeposit() public {
@@ -613,7 +705,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         SplitRiskPool implementation = new SplitRiskPool();
         shieldNFT = new ShieldReceiptNFT("sSES", "sSES");
         protectorNFT = new ProtectorReceiptNFT("pBACK", "pBACK");
-        address governanceTimelock = address(_deployTestTimelock(address(this)));
+        address localGovernanceTimelock = address(_deployTestTimelock(address(this)));
         bytes memory initData = abi.encodeWithSelector(
             SplitRiskPool.initialize.selector,
             shieldedTokenInfo,
@@ -622,7 +714,7 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
             500,
             address(this),
             15000,
-            governanceTimelock,
+            localGovernanceTimelock,
             address(oracle),
             address(0xdead),
             address(shieldNFT),
