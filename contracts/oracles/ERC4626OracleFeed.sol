@@ -407,6 +407,24 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         return vaultConfigs[vault].underlying != address(0);
     }
 
+    /// @notice Whether this vault feed satisfies the strict protected-price policy.
+    /// @dev ERC4626 strict support is only advertised when the registered underlying oracle
+    ///      also advertises strict support for the vault's underlying asset.
+    function supportsStrictProtectedPrice(address vault) external view returns (bool) {
+        address underlying = vaultConfigs[vault].underlying;
+        if (underlying == address(0)) {
+            return false;
+        }
+
+        (bool success, bytes memory data) = address(underlyingPriceOracle).staticcall(
+            abi.encodeWithSignature("supportsStrictProtectedPrice(address)", underlying)
+        );
+        if (!success || data.length < 32) {
+            return false;
+        }
+        return abi.decode(data, (bool));
+    }
+
     function _getValidatedPrice(address vault, bool useProtectedUnderlying, bool clampUpwardToReference)
         internal
         view
