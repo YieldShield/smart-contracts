@@ -119,6 +119,8 @@ library ErrorsLib {
     error IncompatibleShieldedTokenForCrossAssetWithdrawal(address token);
     /// @notice Thrown when an outbound transfer debits more or less than the amount removed from accounting
     error UnexpectedOutboundTransferAmount(address token, uint256 expectedDebited, uint256 actualDebited);
+    /// @notice Thrown when a UUPS upgrade is attempted on a frozen implementation
+    error UpgradeDisabled();
 
     // ============ Unsupported/Not Allowed Errors ============
     /// @notice Thrown when asset is not supported by the pool

@@ -1510,67 +1510,23 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setDefaultProtocolFeeRecipient(address(factory));
     }
 
-    function testGovernanceCanUpgradeFactoryAndPreserveState() public {
-        address createdPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
-        ISplitRiskPoolFactory.PoolInfo memory poolInfoBefore = factory.getPoolInfo(createdPool);
-        address poolImplementationBefore = factory.splitRiskPoolImplementation();
-        uint256 minimumCreationBondUsdBefore = factory.minimumCreationBondUsd();
-        uint256 futureConfigValue = 1234;
-
+    function testFactoryUpgradeIsDisabled() public {
         SplitRiskPoolFactoryV2Mock newImplementation = new SplitRiskPoolFactoryV2Mock();
+
         vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.UpgradeDisabled.selector);
         factory.upgradeToAndCall(
-            address(newImplementation), abi.encodeCall(SplitRiskPoolFactoryV2Mock.initializeV2, (futureConfigValue))
+            address(newImplementation), abi.encodeCall(SplitRiskPoolFactoryV2Mock.initializeV2, (1234))
         );
-
-        SplitRiskPoolFactoryV2Mock upgradedFactory = SplitRiskPoolFactoryV2Mock(payable(address(factory)));
-        ISplitRiskPoolFactory.PoolInfo memory poolInfoAfter = upgradedFactory.getPoolInfo(createdPool);
-
-        assertEq(upgradedFactory.version(), 2, "Factory should upgrade to new implementation");
-        assertEq(upgradedFactory.owner(), address(this), "Owner should persist across upgrade");
-        assertEq(upgradedFactory.governanceTimelock(), governanceTimelock, "Governance timelock should persist");
-        assertEq(upgradedFactory.compositeOracle(), address(compositeOracle), "Composite oracle should persist");
-        assertEq(upgradedFactory.defaultProtocolFeeRecipient(), address(this), "Protocol fee recipient should persist");
-        assertEq(
-            upgradedFactory.splitRiskPoolImplementation(),
-            poolImplementationBefore,
-            "Pool implementation should persist"
-        );
-        assertEq(upgradedFactory.poolCount(), 1, "Pool registry should persist");
-        assertEq(poolInfoAfter.shieldedToken, poolInfoBefore.shieldedToken, "Pool info should persist");
-        assertEq(poolInfoAfter.backingToken, poolInfoBefore.backingToken, "Pool info should persist");
-        assertEq(poolInfoAfter.commissionRate, poolInfoBefore.commissionRate, "Pool info should persist");
-        assertTrue(upgradedFactory.isWhitelisted(address(tokenA)), "Whitelist state should persist");
-        assertTrue(upgradedFactory.isWhitelisted(address(tokenB)), "Whitelist state should persist");
-        assertEq(
-            upgradedFactory.minimumCreationBondUsd(),
-            minimumCreationBondUsdBefore,
-            "Existing config should persist across upgrade"
-        );
-        assertEq(upgradedFactory.futureConfigValue(), futureConfigValue, "V2 config should be initialized");
-        assertTrue(upgradedFactory.v2Initialized(), "V2 reinitializer should run");
     }
 
-    function testUpgradeWithoutReinitializerLeavesNewStateUnset() public {
+    function testPoolUpgradeIsDisabled() public {
         address createdPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
-        uint256 minimumCreationBondUsdBefore = factory.minimumCreationBondUsd();
+        SplitRiskPool newImplementation = new SplitRiskPool();
 
-        SplitRiskPoolFactoryV2Mock newImplementation = new SplitRiskPoolFactoryV2Mock();
         vm.prank(governanceTimelock);
-        factory.upgradeToAndCall(address(newImplementation), bytes(""));
-
-        SplitRiskPoolFactoryV2Mock upgradedFactory = SplitRiskPoolFactoryV2Mock(payable(address(factory)));
-        ISplitRiskPoolFactory.PoolInfo memory poolInfoAfter = upgradedFactory.getPoolInfo(createdPool);
-
-        assertEq(upgradedFactory.version(), 2, "Factory should upgrade to new implementation");
-        assertEq(
-            upgradedFactory.minimumCreationBondUsd(),
-            minimumCreationBondUsdBefore,
-            "Existing initializer config should persist"
-        );
-        assertEq(poolInfoAfter.shieldedToken, address(tokenA), "Existing pool state should persist");
-        assertEq(upgradedFactory.futureConfigValue(), 0, "New V2 config stays unset without reinitializer");
-        assertFalse(upgradedFactory.v2Initialized(), "V2 reinitializer should not have run");
+        vm.expectRevert(ErrorsLib.UpgradeDisabled.selector);
+        SplitRiskPool(payable(createdPool)).upgradeToAndCall(address(newImplementation), bytes(""));
     }
 
     // ============ MED-5 FIX: Pool Count Limit Tests ============

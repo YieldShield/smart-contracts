@@ -1845,7 +1845,9 @@ contract SplitRiskPoolFactory is
         revert ErrorsLib.EtherTransferNotAllowed();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
+    function _authorizeUpgrade(address) internal pure override {
+        revert ErrorsLib.UpgradeDisabled();
+    }
 
     /// @notice Governance-configurable active pool cap. Zero falls back to MAX_POOLS for legacy upgrades.
     uint256 public maxActivePools;

@@ -79,11 +79,14 @@ bootstrap Safe controls 100% of voting power and trivially meets quorum on
 its own.
 
 Consequence: until YS tokens are broadly distributed, the bootstrap Safe can
-unilaterally pass any proposal — upgrade pools, change oracle policy, alter
-NFT transfer locks, install a new (potentially malicious-but-validly-shaped)
-governance timelock, or transfer factory/NFT ownership. There is no on-chain
-gate preventing this; the only protections are:
+unilaterally pass any proposal to change oracle policy, alter NFT transfer
+locks, install a new (potentially malicious-but-validly-shaped) governance
+timelock, or transfer factory/NFT ownership. It cannot repoint live pool or
+factory logic through the UUPS upgrade path because those entrypoints are
+disabled on-chain. The remaining protections are:
 
+- pool and factory UUPS upgrade entrypoints are disabled on-chain; future logic
+  changes require a fresh deployment rather than repointing live user funds.
 - a `MIN_PUBLIC_GOVERNANCE_DELAY = 2 days` on timelock changes (gives the
   community a withdraw-window if a malicious proposal slips through),
 - `_validateGovernanceTimelock`'s enumeration check (H-8) requiring a fresh
@@ -116,4 +119,3 @@ prices) and post it ahead of their own transaction. Consumers MUST therefore
 use the protected `getPrice`/`getValue` path (the default after the H-2/L-3
 rename); the `*Unsafe` variants intentionally do NOT include EMA-deviation
 or spot/EMA cross-checks.
-

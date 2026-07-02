@@ -2846,7 +2846,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return super.paused();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyGovernance { }
+    function _authorizeUpgrade(address) internal pure override {
+        revert ErrorsLib.UpgradeDisabled();
+    }
 
     function _poolFactoryController() internal view returns (address factory) {
         factory = POOL_FACTORY;
