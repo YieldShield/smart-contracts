@@ -67,6 +67,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     /// @notice Minimum harmonic-average pool liquidity required across the TWAP window
     uint128 public minimumAverageLiquidity;
 
+    /// @notice Optional per-token harmonic-average liquidity floor; zero uses the global floor
+    mapping(address => uint128) public tokenMinimumAverageLiquidity;
+
     /// @notice Quote token for USD conversion (e.g., USDC)
     /// @dev I-5 FIX: Made immutable for gas optimization (set only in constructor)
     address public immutable quoteToken;
@@ -110,6 +113,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
 
     /// @notice Emitted when minimum average liquidity is updated
     event MinimumAverageLiquidityUpdated(uint128 oldMinimum, uint128 newMinimum);
+
+    /// @notice Emitted when a token-specific liquidity floor is updated
+    event TokenMinimumAverageLiquidityUpdated(address indexed token, uint128 oldMinimum, uint128 newMinimum);
 
     /// @notice Minimum allowed TWAP period (5 minutes)
     uint32 public constant MIN_TWAP_PERIOD = 300;
@@ -190,7 +196,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         }
 
         (, uint160[] memory secondsPerLiquidityCumulativeX128s) = _safeObserveTwapWindow(v3Pool, pool);
-        _validateAverageLiquidity(pool, secondsPerLiquidityCumulativeX128s);
+        _validateAverageLiquidity(token, pool, secondsPerLiquidityCumulativeX128s);
 
         tokenPools[token] = pool;
         isToken0[token] = _isToken0;
@@ -263,6 +269,21 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         uint128 oldMinimum = minimumAverageLiquidity;
         minimumAverageLiquidity = newMinimum;
         emit MinimumAverageLiquidityUpdated(oldMinimum, newMinimum);
+    }
+
+    /// @notice Set or clear a token-specific harmonic-average liquidity floor
+    /// @dev Set to zero to clear the override and use `minimumAverageLiquidity`.
+    function setTokenMinimumAverageLiquidity(address token, uint128 newMinimum) external onlyOwner {
+        if (token == address(0)) revert TokenNotSupported(token);
+        uint128 oldMinimum = tokenMinimumAverageLiquidity[token];
+        tokenMinimumAverageLiquidity[token] = newMinimum;
+        emit TokenMinimumAverageLiquidityUpdated(token, oldMinimum, newMinimum);
+    }
+
+    /// @notice Resolve the effective liquidity floor for a token.
+    function effectiveMinimumAverageLiquidity(address token) public view returns (uint128) {
+        uint128 tokenMinimum = tokenMinimumAverageLiquidity[token];
+        return tokenMinimum == 0 ? minimumAverageLiquidity : tokenMinimum;
     }
 
     /// @notice Set the quote token oracle
@@ -390,7 +411,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         bool _isToken0 = isToken0[token];
 
         // Get liquidity-validated TWAP tick
-        int24 twapTick = _getTWAPTick(pool);
+        int24 twapTick = _getTWAPTick(token, pool);
 
         // Convert tick to price
         // price = 1.0001^tick
@@ -453,7 +474,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
                 return (true, 0);
             }
             uint128 averageLiquidity = _getAverageLiquidity(secondsPerLiquidityCumulativeX128s);
-            uint128 minimumLiquidity = minimumAverageLiquidity;
+            uint128 minimumLiquidity = effectiveMinimumAverageLiquidity(token);
             if (minimumLiquidity != 0 && averageLiquidity < minimumLiquidity) {
                 return (true, 0);
             }
@@ -494,10 +515,10 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     /// @notice Get the TWAP tick from a pool
     /// @param pool The Uniswap V3 pool address
     /// @return tick The TWAP tick
-    function _getTWAPTick(address pool) internal view returns (int24) {
+    function _getTWAPTick(address token, address pool) internal view returns (int24) {
         (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) =
             _safeObserveTwapWindow(IUniswapV3Pool(pool), pool);
-        _validateAverageLiquidity(pool, secondsPerLiquidityCumulativeX128s);
+        _validateAverageLiquidity(token, pool, secondsPerLiquidityCumulativeX128s);
 
         int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
         int24 twapTick = int24(tickCumulativesDelta / int56(int32(twapPeriod)));
@@ -587,11 +608,11 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         }
     }
 
-    function _validateAverageLiquidity(address pool, uint160[] memory secondsPerLiquidityCumulativeX128s)
+    function _validateAverageLiquidity(address token, address pool, uint160[] memory secondsPerLiquidityCumulativeX128s)
         internal
         view
     {
-        uint128 minimumLiquidity = minimumAverageLiquidity;
+        uint128 minimumLiquidity = effectiveMinimumAverageLiquidity(token);
         if (minimumLiquidity == 0) {
             return;
         }
