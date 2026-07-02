@@ -343,18 +343,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /**
-     * @notice Get the current utilization ratio of the pool (token-based estimation)
-     * @dev Calculates utilization using TOKEN-BASED accounting (no oracle needed).
-     *      This is an estimation that may differ from the USD-based version.
-     *      Returns the ratio of required collateral to total protector tokens.
+     * @notice Get the current utilization ratio of the pool
+     * @dev Returns the USD-based ratio so tokens with different decimals or prices
+     *      are compared in the same unit. Equivalent to getUtilizationRatioUsd().
      * @return utilizationRatio Utilization ratio in basis points (0-10000 = 0%-100%)
      */
     function getUtilizationRatio() public view returns (uint256) {
-        // slither-disable-next-line incorrect-equality — division-by-zero guard, not exploitable
-        if (totalProtectorTokens == 0) return 0;
-        // M-4 FIX: Multiply before divide to avoid precision loss
-        // (totalShieldedTokens * COLLATERAL_RATIO) gives utilization in basis points directly
-        return (totalShieldedTokens * COLLATERAL_RATIO) / totalProtectorTokens;
+        return getUtilizationRatioUsd();
     }
 
     /// @dev Returns the protector shares for a token.

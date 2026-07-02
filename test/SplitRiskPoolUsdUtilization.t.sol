@@ -251,8 +251,8 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         pool.protectorWithdraw(protectorTokenId, 50e18 + 1, address(backingToken), 0);
     }
 
-    /// @notice Test that USD utilization can diverge while withdrawals stay capped by stored collateral exposure
-    function test_tokenBasedVsUsdBased_WithdrawalCapUsesStoredCollateralExposure() public {
+    /// @notice Test that the legacy utilization API reports the USD ratio
+    function test_getUtilizationRatio_UsesUsdRatioForPublicApi() public {
         // Protector deposits 100 tokens
         vm.prank(protector);
         uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), DEPOSIT_AMOUNT, 0);
@@ -261,17 +261,13 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         vm.prank(shielded);
         pool.depositShieldedAsset(address(shieldedToken), 50e18, 0);
 
-        // Token-based utilization is 50%
-        uint256 tokenUtilization = pool.getUtilizationRatio();
-        assertEq(tokenUtilization, 5000, "Token-based utilization should be 50%");
+        // Public utilization starts at 50% when prices match.
+        uint256 publicUtilization = pool.getUtilizationRatio();
+        assertEq(publicUtilization, 5000, "Public utilization should start at 50%");
 
         // Change prices so shielded is worth more, backing worth less
         oracle.setPrice(address(shieldedToken), 1.2e8); // $1.20
         oracle.setPrice(address(backingToken), 0.8e8); // $0.80
-
-        // Token-based utilization is still 50% (doesn't change with prices)
-        tokenUtilization = pool.getUtilizationRatio();
-        assertEq(tokenUtilization, 5000, "Token-based utilization should still be 50%");
 
         // USD-based utilization uses ORIGINAL deposit value ($50), not current ($60)
         // Original shielded value: $50 (fixed at deposit time)
@@ -279,6 +275,7 @@ contract SplitRiskPoolUsdUtilizationTest is Test, TestTimelockHelper {
         // USD utilization: $50 / $80 = 62.5%
         uint256 usdUtilization = pool.getUtilizationRatioUsd();
         assertEq(usdUtilization, 6250, "USD utilization should be 62.5%");
+        assertEq(pool.getUtilizationRatio(), usdUtilization, "Public utilization should use USD ratio");
 
         // Start unlock process
         vm.prank(protector);
