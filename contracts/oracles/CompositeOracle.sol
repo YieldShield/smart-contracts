@@ -802,18 +802,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
 
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
+        bool backupSupportsCircuitBreaker = _supportsCircuitBreaker(config.backupFeed, token);
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         bool primaryProtectedAvailable = primarySuccess && _supportsCircuitBreaker(config.primaryFeed, token);
         if (!primaryProtectedAvailable) {
             revert RevertNotPossible(token, "Primary oracle unavailable");
         }
-        if (!backupSuccess) {
-            revert RevertNotPossible(token, "Backup oracle unavailable");
-        }
 
-        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
-        if (currentDeviation > deviationThresholdBps) {
-            revert RevertNotPossible(token, "Deviation still exceeds threshold");
+        uint256 currentDeviation = type(uint256).max;
+        if (backupSupportsCircuitBreaker && backupSuccess) {
+            currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+            if (currentDeviation > deviationThresholdBps) {
+                revert RevertNotPossible(token, "Deviation still exceeds threshold");
+            }
         }
 
         config.isBackupActive = false;
