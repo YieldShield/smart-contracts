@@ -2053,6 +2053,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             totalProtectorTokens -= payoutAmount;
             poolState.totalBackingTokenBalance -= payoutAmount;
             _expireProtectorShareEpochIfDrained(false);
+            emit EventsLib.ShieldActivated(msg.sender, payoutAmount, forfeitedShieldedAmount, payoutAmount);
         }
 
         // Update shielded totals (TOKEN-BASED)
@@ -2422,7 +2423,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
         SlippageLib.enforceMinReceived(actualReceived, minAmountOut);
 
-        emit EventsLib.ShieldActivated(msg.sender, amount, 0, amount);
+        emit EventsLib.ProtectorAssetWithdrawn(msg.sender, preferredAsset, actualReceived, sharesToBurn);
     }
 
     // View Functions

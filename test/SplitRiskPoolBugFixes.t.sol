@@ -215,15 +215,27 @@ contract SplitRiskPoolBugFixesTest is Test, TestTimelockHelper {
         assertTrue(finalPos.amount > 0, "Position should still have balance");
     }
 
-    function test_protectorWithdraw_EmitsShieldActivated() public {
+    function test_protectorWithdraw_EmitsProtectorAssetWithdrawn() public {
         uint256 tokenId = 0;
         uint256 withdrawAmount = 10e18;
 
         _matureProtectorUnlock(tokenId);
         vm.startPrank(protector);
-        vm.expectEmit(true, false, false, true);
-        emit EventsLib.ShieldActivated(protector, withdrawAmount, 0, withdrawAmount);
+        vm.expectEmit(true, true, false, true);
+        emit EventsLib.ProtectorAssetWithdrawn(protector, address(backingToken), withdrawAmount, withdrawAmount);
         pool.protectorWithdraw(tokenId, withdrawAmount, address(backingToken), 0);
+        vm.stopPrank();
+    }
+
+    function test_shieldedWithdraw_CrossAssetEmitsShieldActivated() public {
+        vm.startPrank(shielded1);
+        shieldedToken.approve(address(pool), 100e18);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+
+        vm.expectEmit(true, false, false, true);
+        emit EventsLib.ShieldActivated(shielded1, 100e18, 100e18, 100e18);
+        pool.shieldedWithdraw(tokenId, address(backingToken), 0);
         vm.stopPrank();
     }
 
