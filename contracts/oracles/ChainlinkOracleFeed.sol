@@ -204,12 +204,12 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      emitted so the operator can decide whether to accept the feed.
     function _cacheFeedBounds(address token, address feed) internal {
         address underlying = _resolveUnderlyingAggregator(feed);
-        tokenFeedBoundsAggregator[token] = underlying;
 
         try IChainlinkAggregatorBounds(underlying).minAnswer() returns (int192 minA) {
             try IChainlinkAggregatorBounds(underlying).maxAnswer() returns (int192 maxA) {
                 tokenFeedMinAnswer[token] = minA;
                 tokenFeedMaxAnswer[token] = maxA;
+                tokenFeedBoundsAggregator[token] = underlying;
                 emit FeedBoundsCached(token, feed, minA, maxA);
                 return;
             } catch {
@@ -222,6 +222,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         // Bounds not retrievable: clear cache and signal explicitly.
         tokenFeedMinAnswer[token] = 0;
         tokenFeedMaxAnswer[token] = 0;
+        delete tokenFeedBoundsAggregator[token];
         emit FeedBoundsUnavailable(token, feed);
     }
 
@@ -233,14 +234,15 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
-    /// @dev Chainlink proxies can rotate the underlying aggregator over time; without
-    ///      a refresh path the H-1 bounds cache silently goes stale and the Venus-style
-    ///      saturation check applies obsolete thresholds. Emits `FeedBoundsRefreshed`
-    ///      first so subscribers can distinguish operator-initiated refreshes from
-    ///      registration; the follow-up `FeedBoundsCached`/`FeedBoundsUnavailable`
-    ///      event from `_cacheFeedBounds` still carries the new bound values.
+    /// @dev Chainlink proxies can rotate the underlying aggregator over time. This
+    ///      function is permissionless because it only consumes on-chain feed
+    ///      metadata and keeps price reads live after routine aggregator rotation.
+    ///      Emits `FeedBoundsRefreshed` first so subscribers can distinguish explicit
+    ///      cache refreshes from registration; the follow-up `FeedBoundsCached`/
+    ///      `FeedBoundsUnavailable` event from `_cacheFeedBounds` still carries the
+    ///      new bound values.
     /// @param token The token address whose feed bounds should be refreshed.
-    function refreshFeedBounds(address token) external onlyOwner {
+    function refreshFeedBounds(address token) external {
         if (!isTokenSupported[token]) revert TokenNotSupported(token);
         address feed = address(tokenFeeds[token]);
         emit FeedBoundsRefreshed(token, feed);

@@ -206,6 +206,7 @@ contract ChainlinkVenusBoundsTest is Test {
 
         assertEq(feed.tokenFeedMinAnswer(token), 0);
         assertEq(feed.tokenFeedMaxAnswer(token), 0);
+        assertEq(feed.tokenFeedBoundsAggregator(token), address(0));
         assertFalse(feed.supportsStrictProtectedPrice(token));
         assertEq(feed.getPrice(token), 2_000e8, "price should still work without optional bounds");
 
@@ -268,18 +269,44 @@ contract ChainlinkVenusBoundsTest is Test {
         assertEq(feed.getPrice(token), 2_000e8, "price should work after bounds refresh");
     }
 
+    function test_getPrice_DoesNotBrickWhenRotatedAggregatorHasNoBoundsAfterRefresh() public {
+        MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
+        feed.setTokenFeed(token, address(proxy));
+        address oldAggregator = proxy.aggregator();
+
+        MockAggregatorWithoutBounds rotated = new MockAggregatorWithoutBounds();
+        proxy.setAggregator(address(rotated));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ChainlinkOracleFeed.FeedBoundsStale.selector, token, address(proxy), oldAggregator, address(rotated)
+            )
+        );
+        feed.getPrice(token);
+
+        feed.refreshFeedBounds(token);
+
+        assertEq(feed.tokenFeedMinAnswer(token), 0);
+        assertEq(feed.tokenFeedMaxAnswer(token), 0);
+        assertEq(feed.tokenFeedBoundsAggregator(token), address(0));
+        assertFalse(feed.supportsStrictProtectedPrice(token));
+        assertEq(feed.getPrice(token), 2_000e8, "non-strict price path should stay live without bounds");
+    }
+
     function test_refreshFeedBounds_RevertsForUnsupportedToken() public {
         vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.TokenNotSupported.selector, token));
         feed.refreshFeedBounds(token);
     }
 
-    function test_refreshFeedBounds_OnlyOwner() public {
+    function test_refreshFeedBounds_IsPermissionless() public {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
 
         vm.prank(address(0xBEEF));
-        vm.expectRevert();
         feed.refreshFeedBounds(token);
+
+        assertEq(feed.tokenFeedMinAnswer(token), MIN_BOUND);
+        assertEq(feed.tokenFeedMaxAnswer(token), MAX_BOUND);
     }
 
     function test_compositeStrictRequirementRejectsChainlinkFeedWithoutBounds() public {
