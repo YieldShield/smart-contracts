@@ -427,6 +427,10 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     /// @return isStale True when the TWAP window is unavailable or below the liquidity floor
     /// @return publishTime Current block timestamp when fresh, zero when stale
     function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
+        if (_isSequencerUnavailableForStaleness()) {
+            return (true, 0);
+        }
+
         if (!isTokenSupported[token]) {
             return (true, 0);
         }

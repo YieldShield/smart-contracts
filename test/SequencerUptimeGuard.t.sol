@@ -164,6 +164,16 @@ contract SequencerUptimeGuardTest is Test {
         oracle.getPriceUnsafe(TOKEN);
     }
 
+    function test_PythOracleIsPriceStaleFailsClosedOnL2() public {
+        vm.chainId(ARBITRUM_ONE);
+        PythOracle oracle = new PythOracle(DUMMY_PYTH, 3600);
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(TOKEN);
+
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+    }
+
     function test_ERC4626GatedOnL2() public {
         vm.chainId(ARBITRUM_ONE);
         PythOracle underlying = new PythOracle(DUMMY_PYTH, 3600);

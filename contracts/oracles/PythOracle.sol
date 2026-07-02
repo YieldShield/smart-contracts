@@ -501,6 +501,10 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
     /// @return isStale True if the price is stale
     /// @return publishTime The publish time of the current price
     function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
+        if (_isSequencerUnavailableForStaleness()) {
+            return (true, 0);
+        }
+
         bytes32 feedId = _getFeedId(token);
         bytes32 quoteFeedId = tokenToQuotePriceFeedId[token];
 

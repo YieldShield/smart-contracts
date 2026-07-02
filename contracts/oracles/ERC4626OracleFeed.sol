@@ -445,6 +445,10 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @return isStale True if the underlying price is stale
     /// @return publishTime The timestamp of the underlying price (0 if not available)
     function isPriceStale(address vault) external view returns (bool isStale, uint64 publishTime) {
+        if (_isSequencerUnavailableForStaleness()) {
+            return (true, 0);
+        }
+
         VaultConfig memory config = _getVaultConfig(vault);
         _requireLiveUnderlying(vault, config.underlying);
 

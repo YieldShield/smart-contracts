@@ -148,6 +148,21 @@ abstract contract SequencerUptimeGuard is Ownable {
         if (timeSinceUp <= GRACE_PERIOD_TIME) revert GracePeriodNotOver(timeSinceUp, GRACE_PERIOD_TIME);
     }
 
+    function _isSequencerUnavailableForStaleness() internal view returns (bool) {
+        if (address(sequencerUptimeFeed) == address(0)) {
+            return _requiresSequencerUptimeFeed();
+        }
+
+        try sequencerUptimeFeed.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
+            if (startedAt == 0) return true;
+            if (answer != 0) return true;
+            if (startedAt > block.timestamp) return true;
+            return block.timestamp - startedAt <= GRACE_PERIOD_TIME;
+        } catch {
+            return true;
+        }
+    }
+
     function _requiresSequencerUptimeFeed() internal view returns (bool) {
         return sequencerUptimeFeedRequired;
     }

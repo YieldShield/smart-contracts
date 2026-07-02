@@ -103,6 +103,15 @@ contract ChainlinkL2SequencerTest is Test {
         assertEq(updatedAt, 0);
     }
 
+    function test_IsPriceStale_ReturnsTrueForInvalidPriceRound() public {
+        mockPriceFeed.setPrice(0);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, block.timestamp);
+    }
+
     function test_GetSequencerStatus_FailsClosedWithoutFeedOnKnownL2() public {
         vm.chainId(10);
         ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();

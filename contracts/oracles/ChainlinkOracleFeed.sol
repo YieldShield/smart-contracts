@@ -507,8 +507,24 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         }
 
         AggregatorV3Interface feed = tokenFeeds[token];
-        (,,, uint256 _updatedAt,) = feed.latestRoundData();
-        updatedAt = _updatedAt;
+        address cachedAggregator = tokenFeedBoundsAggregator[token];
+        if (cachedAggregator != address(0) && _resolveUnderlyingAggregator(address(feed)) != cachedAggregator) {
+            return (true, 0);
+        }
+
+        try feed.latestRoundData() returns (uint80 roundId, int256 answer, uint256, uint256 _updatedAt, uint80 answeredInRound) {
+            updatedAt = _updatedAt;
+            if (answer <= 0 || answeredInRound < roundId) {
+                return (true, updatedAt);
+            }
+            int192 minA = tokenFeedMinAnswer[token];
+            int192 maxA = tokenFeedMaxAnswer[token];
+            if ((minA != 0 || maxA != 0) && (answer <= int256(minA) || answer >= int256(maxA))) {
+                return (true, updatedAt);
+            }
+        } catch {
+            return (true, 0);
+        }
         if (updatedAt > block.timestamp) {
             return (true, updatedAt);
         }
