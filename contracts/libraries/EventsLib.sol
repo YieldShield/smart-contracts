@@ -54,6 +54,9 @@ library EventsLib {
     );
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event AccessControlUpdated(address indexed previousAccessControl, address indexed newAccessControl);
+    event AccessControlStatusUpdated(
+        address indexed accessControl, bool depositsGated, bool withdrawalsGated, bool governanceInstalled
+    );
 
     // NFT-related events
     event ShieldNFTPoolSet(address indexed pool);

@@ -338,6 +338,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             _validateAccessControl(initialAccessControl);
             accessControl = initialAccessControl;
             emit EventsLib.AccessControlUpdated(address(0), initialAccessControl);
+            emit EventsLib.AccessControlStatusUpdated(initialAccessControl, true, false, false);
         }
     }
 
@@ -2965,13 +2966,30 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             _validateAccessControl(newAccessControl);
         }
 
+        bool depositsGated = newAccessControl != address(0);
+        bool withdrawalsGated =
+            callerIsGovernance && depositsGated && _accessControlAuthorityIsGovernance(newAccessControl);
+
         emit EventsLib.AccessControlUpdated(accessControl, newAccessControl);
         accessControl = newAccessControl;
-        accessControlCanGateWithdrawals = callerIsGovernance && newAccessControl != address(0)
-            && _accessControlAuthorityIsGovernance(newAccessControl);
+        accessControlCanGateWithdrawals = withdrawalsGated;
         if (callerIsGovernance && newAccessControl != address(0)) {
             governanceAccessControlInstalled = true;
         }
+        emit EventsLib.AccessControlStatusUpdated(
+            newAccessControl, depositsGated, withdrawalsGated, governanceAccessControlInstalled
+        );
+    }
+
+    function getAccessControlStatus()
+        external
+        view
+        returns (address activeAccessControl, bool depositsGated, bool withdrawalsGated, bool governanceInstalled)
+    {
+        activeAccessControl = accessControl;
+        depositsGated = activeAccessControl != address(0);
+        withdrawalsGated = _withdrawalAccessControlActive();
+        governanceInstalled = governanceAccessControlInstalled;
     }
 
     function _validateAccessControl(address newAccessControl) internal view {

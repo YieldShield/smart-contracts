@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import { Test } from "forge-std/Test.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
+import { EventsLib } from "../contracts/libraries/EventsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -252,11 +253,19 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
     function testSetAccessControl_CreatorCanConfigureBeforeLaunch() public {
         AccessControlExample accessControl = new AccessControlExample(governance);
 
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit EventsLib.AccessControlStatusUpdated(address(accessControl), true, false, false);
         vm.prank(poolCreator);
         pool.setAccessControl(address(accessControl));
 
         assertEq(pool.accessControl(), address(accessControl), "creator should configure ACL before launch");
         assertFalse(pool.accessControlCanGateWithdrawals(), "creator-installed ACL should not gate withdrawals");
+        (address activeAccessControl, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) =
+            pool.getAccessControlStatus();
+        assertEq(activeAccessControl, address(accessControl), "status should expose active ACL");
+        assertTrue(depositsGated, "creator ACL gates deposits");
+        assertFalse(withdrawalsGated, "creator ACL does not gate withdrawals");
+        assertFalse(governanceInstalled, "creator ACL is not governance-installed");
     }
 
     function testSetAccessControl_CreatorCannotChangeAfterLaunch() public {
@@ -276,11 +285,17 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
 
         AccessControlExample accessControl = new AccessControlExample(governance);
 
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit EventsLib.AccessControlStatusUpdated(address(accessControl), true, true, true);
         vm.prank(governance);
         pool.setAccessControl(address(accessControl));
 
         assertEq(pool.accessControl(), address(accessControl), "governance should retain live ACL authority");
         assertTrue(pool.accessControlCanGateWithdrawals(), "governance-installed ACL may gate withdrawals");
+        (, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) = pool.getAccessControlStatus();
+        assertTrue(depositsGated, "governance ACL gates deposits");
+        assertTrue(withdrawalsGated, "timelock-administered ACL gates withdrawals");
+        assertTrue(governanceInstalled, "status should expose governance-installed ACL");
     }
 
     function testSetAccessControl_GovernanceAclWithoutTimelockAuthorityCannotGateWithdrawals() public {
@@ -297,6 +312,10 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         assertEq(pool.accessControl(), address(accessControl), "governance should install ACL");
         assertFalse(pool.accessControlCanGateWithdrawals(), "externally administered ACL should be deposit-only");
         assertTrue(pool.governanceAccessControlInstalled(), "governance ACL install should remain sticky");
+        (, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) = pool.getAccessControlStatus();
+        assertTrue(depositsGated, "externally administered ACL still gates deposits");
+        assertFalse(withdrawalsGated, "externally administered ACL must not gate withdrawals");
+        assertTrue(governanceInstalled, "governance install marker should be visible");
 
         vm.prank(poolCreator);
         vm.expectRevert(ErrorsLib.InvalidPoolCreator.selector);
@@ -335,6 +354,10 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
 
         vm.prank(governance);
         accessControl.setOwner(unauthorized);
+        (, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) = pool.getAccessControlStatus();
+        assertTrue(depositsGated, "ACL still gates deposits after authority transfer");
+        assertFalse(withdrawalsGated, "ACL stops gating withdrawals when timelock loses authority");
+        assertTrue(governanceInstalled, "governance install marker remains sticky");
 
         vm.prank(unauthorized);
         accessControl.setWhitelisted(shielded, false);
