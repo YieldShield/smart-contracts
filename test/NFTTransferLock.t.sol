@@ -229,6 +229,32 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         assertEq(shieldNFT.ownerOf(tokenId), recipient);
     }
 
+    function test_ShieldNFT_PreexistingRecipientOperatorApprovalCannotMoveReceivedToken() public {
+        address operator = address(0xBEEF);
+        address finalRecipient = address(0xCAFE);
+
+        vm.prank(recipient);
+        shieldNFT.setApprovalForAll(operator, true);
+
+        uint256 tokenId = _depositShielded(1000e18);
+        vm.warp(block.timestamp + SHIELD_LOCK_PERIOD);
+
+        vm.prank(shielded);
+        shieldNFT.transferFrom(shielded, recipient, tokenId);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        shieldNFT.transferFrom(recipient, finalRecipient, tokenId);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(recipient);
+        shieldNFT.setApprovalForAll(operator, true);
+
+        vm.prank(operator);
+        shieldNFT.transferFrom(recipient, finalRecipient, tokenId);
+        assertEq(shieldNFT.ownerOf(tokenId), finalRecipient);
+    }
+
     // ============ Protector NFT Transfer Lock Tests ============
 
     function test_ProtectorNFT_TransferBlockedDuringLock() public {
@@ -339,6 +365,32 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         vm.prank(recipient);
         protectorNFT.transferFrom(protector, recipient, tokenId);
         assertEq(protectorNFT.ownerOf(tokenId), recipient);
+    }
+
+    function test_ProtectorNFT_PreexistingRecipientOperatorApprovalCannotMoveReceivedToken() public {
+        address operator = address(0xBEEF);
+        address finalRecipient = address(0xCAFE);
+
+        vm.prank(recipient);
+        protectorNFT.setApprovalForAll(operator, true);
+
+        uint256 tokenId = _depositProtector(1000e18);
+        vm.warp(block.timestamp + PROTECTOR_LOCK_PERIOD);
+
+        vm.prank(protector);
+        protectorNFT.transferFrom(protector, recipient, tokenId);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        protectorNFT.transferFrom(recipient, finalRecipient, tokenId);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(recipient);
+        protectorNFT.setApprovalForAll(operator, true);
+
+        vm.prank(operator);
+        protectorNFT.transferFrom(recipient, finalRecipient, tokenId);
+        assertEq(protectorNFT.ownerOf(tokenId), finalRecipient);
     }
 
     // ============ Edge Case: Multiple NFTs - Basic Independence Test ============

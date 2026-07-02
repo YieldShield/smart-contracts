@@ -32,6 +32,17 @@ interface IShieldReceiptNFT is IERC721 {
 
     function getPosition(uint256 tokenId) external view returns (ShieldPosition memory);
 
+    function positions(uint256 tokenId)
+        external
+        view
+        returns (
+            uint256 amount,
+            uint64 depositTime,
+            uint256 valueAtDeposit,
+            uint256 collateralAmount,
+            uint64 lastFeeClaimTime
+        );
+
     function updatePosition(
         uint256 tokenId,
         uint256 newAmount,
@@ -45,4 +56,8 @@ interface IShieldReceiptNFT is IERC721 {
     function transferLockPeriod() external view returns (uint256);
 
     function nextTokenId() external view returns (uint256);
+
+    function setPool(address _pool) external;
+
+    function pool() external view returns (address);
 }

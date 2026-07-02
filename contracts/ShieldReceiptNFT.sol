@@ -21,6 +21,10 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
     /// @dev Operator approvals are valid for a locked token only if granted after that token unlocked.
     mapping(address => mapping(address => uint64)) private _operatorApprovalTimestamp;
 
+    /// @dev Last mint/transfer timestamp for each token. Operator approvals granted
+    ///      before the current owner received the token cannot move it.
+    mapping(uint256 => uint64) private _tokenMovementTimestamp;
+
     /// @dev Next token ID to mint
     uint256 public nextTokenId;
 
@@ -161,7 +165,13 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
             }
         }
 
-        return super._update(to, tokenId, auth);
+        address previousOwner = super._update(to, tokenId, auth);
+        if (to == address(0)) {
+            delete _tokenMovementTimestamp[tokenId];
+        } else if (from != to) {
+            _tokenMovementTimestamp[tokenId] = uint64(block.timestamp);
+        }
+        return previousOwner;
     }
 
     function setApprovalForAll(address operator, bool approved) public virtual override(ERC721, IERC721) {
@@ -195,7 +205,7 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         if (approvalTimestamp == 0) {
             return false;
         }
-        return approvalTimestamp >= _unlockTime(tokenId);
+        return approvalTimestamp >= _unlockTime(tokenId) && approvalTimestamp > _tokenMovementTimestamp[tokenId];
     }
 
     /// @dev Block per-token approvals during the lock window. Without this gate,
