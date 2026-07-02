@@ -479,7 +479,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingPoolBalance, 0, "tracked backing balance should be cleared");
     }
 
-    function test_backingDustBlocksFutureDepositsUntilOldProtectorsClaim() public {
+    function test_backingDustIsSweptWhenFreshProtectorDeposits() public {
         _disableTvlCapAndUseHighPrecisionPrices();
 
         vm.prank(protector1);
@@ -497,24 +497,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(pool.totalProtectorTokens(), 1, "activation should leave one wei backing dust");
         assertGt(pool.totalProtectorShares(), 0, "dust remains claimable until a fresh deposit resets the epoch");
 
-        vm.prank(protector1);
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ResidualProtectorBackingPending.selector, 1));
-        pool.depositBackingAsset(address(backingToken), 100e18, 0);
-
-        vm.prank(protector1);
-        pool.startUnlockProcess(staleProtectorTokenId1);
-        vm.prank(protector2);
-        pool.startUnlockProcess(staleProtectorTokenId2);
-
-        vm.warp(block.timestamp + 29 days);
-
-        vm.prank(protector1);
-        pool.protectorWithdraw(staleProtectorTokenId1, 0, address(backingToken), 0);
-        vm.prank(protector2);
-        pool.protectorWithdraw(staleProtectorTokenId2, 1, address(backingToken), 0);
-
-        assertEq(pool.totalProtectorTokens(), 0, "old protectors must clear residual backing");
-
+        uint256 protocolBalanceBefore = backingToken.balanceOf(address(0xdead));
         vm.prank(protector1);
         uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
 
@@ -525,6 +508,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         );
         assertEq(pool.totalProtectorTokens(), 100e18, "pool should track only the fresh deposit");
         assertEq(pool.totalProtectorShares(), 100e18, "fresh deposit should reset active share supply");
+        assertEq(backingToken.balanceOf(address(0xdead)) - protocolBalanceBefore, 1, "residual dust should be swept");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(backingPoolBalance, 100e18, "tracked backing balance should only include fresh deposit");
     }
