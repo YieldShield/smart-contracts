@@ -1120,7 +1120,7 @@ contract SplitRiskPoolFactory is
         targetPool.sweepUnaccountedSurplusFromFactory();
         _requireProtectorOnlyPool(pool);
         _removeActivePool(pool);
-        _forfeitCreationBond(pool);
+        _returnCreationBond(pool, info.creator);
         emit EventsLib.PoolDeactivated(pool);
     }
 

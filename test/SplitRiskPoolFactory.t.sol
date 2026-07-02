@@ -1941,6 +1941,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.deactivateProtectorOnlyPool(poolAddress);
 
         uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        uint256 creatorBalanceBefore = tokenB.balanceOf(address(this));
         vm.warp(executableAt);
         vm.prank(governanceTimelock);
         factory.deactivateProtectorOnlyPool(poolAddress);
@@ -1951,10 +1952,11 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector backing should remain in the pool");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(backingPoolBalance, protectorAmount, "Tracked backing balance should remain withdrawable");
+        assertEq(tokenB.balanceOf(user2), recipientBalanceBefore, "Protocol recipient should not receive honest bond");
         assertEq(
-            tokenB.balanceOf(user2) - recipientBalanceBefore,
+            tokenB.balanceOf(address(this)) - creatorBalanceBefore,
             expectedBondAmount,
-            "Protocol recipient should receive only the forfeited bond"
+            "Creator should recover honest protector-only bond"
         );
 
         vm.startPrank(user1);
@@ -2055,6 +2057,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.warp(info.createdAt + factory.PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY());
 
         uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+        uint256 creatorBalanceBefore = tokenB.balanceOf(address(this));
         tokenB.mint(poolAddress, 1);
         vm.prank(governanceTimelock);
         factory.deactivateProtectorOnlyPool(poolAddress);
@@ -2064,10 +2067,11 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(pool.totalProtectorTokens(), protectorAmount, "Protector accounting should remain unchanged");
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(backingPoolBalance, protectorAmount, "Tracked backing balance should remain withdrawable");
+        assertEq(tokenB.balanceOf(user2) - recipientBalanceBefore, 1, "Protocol recipient should receive surplus");
         assertEq(
-            tokenB.balanceOf(user2) - recipientBalanceBefore,
-            expectedBondAmount + 1,
-            "Protocol recipient should receive forfeited bond and untracked surplus"
+            tokenB.balanceOf(address(this)) - creatorBalanceBefore,
+            expectedBondAmount,
+            "Creator should recover honest protector-only bond"
         );
         assertEq(tokenB.balanceOf(poolAddress), protectorAmount, "Only protector backing should remain in the pool");
     }
