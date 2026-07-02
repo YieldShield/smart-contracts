@@ -82,7 +82,7 @@ function isValidKeystoreName(keystoreName) {
 function parseCliArgs(args) {
     const config = {};
 
-    for (let i = 0; i < args.length; ) {
+    for (let i = 0; i < args.length;) {
         const rawKey = args[i];
         if (!rawKey?.startsWith("--")) {
             i++;
