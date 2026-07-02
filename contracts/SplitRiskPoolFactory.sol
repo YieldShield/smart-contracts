@@ -284,9 +284,7 @@ contract SplitRiskPoolFactory is
                 );
             }
 
-            if (poolPendingGovernance == currentGovernance) {
-                pool.acceptGovernanceTimelockFromFactory(currentGovernance);
-            }
+            pool.acceptGovernanceTimelockFromFactory(currentGovernance);
             unchecked {
                 ++i;
             }
