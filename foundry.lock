@@ -1,20 +1,20 @@
 {
   "lib/forge-std": {
     "tag": {
-      "name": "v1.16.1",
-      "rev": "620536fa5277db4e3fd46772d5cbc1ea0696fb43"
+      "name": "v1.16.2",
+      "rev": "bf647bd6046f2f7da30d0c2bf435e5c76a780c1b"
     }
   },
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.6.1",
-      "rev": "20fc52ec267698dae9591dedb0f6a30ebd29af47"
+      "rev": "725832865930b75e7cdfe9ee8ca6fc6916d80dea"
     }
   },
   "lib/openzeppelin-contracts-upgradeable": {
     "tag": {
       "name": "v5.6.1",
-      "rev": "97d7dd93894098f389d4de3a13ecf17ee438a992"
+      "rev": "92a4de91362c695efcf80a219b51f0b6abec8315"
     }
   },
   "lib/pyth-sdk-solidity": {
