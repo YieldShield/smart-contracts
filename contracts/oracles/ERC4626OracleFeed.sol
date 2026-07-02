@@ -240,9 +240,6 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         _requireMinimumVaultValue(vault, config, true);
 
         uint256 scheduledReference = _conservativeAssetsPerShare(vault, config.shareUnit);
-        _requireAssetsPerShareWithinReference(
-            vault, scheduledReference, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
-        );
 
         uint256 executableAt = block.timestamp + SHARE_PRICE_REFERENCE_REFRESH_DELAY;
         uint256 expiresAt = executableAt + SHARE_PRICE_REFERENCE_REFRESH_EXPIRY;

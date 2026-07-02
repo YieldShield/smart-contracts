@@ -700,7 +700,7 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.refreshVaultSharePriceReference(address(vault));
     }
 
-    function test_ScheduleVaultSharePriceReferenceRefresh_RevertsWhenCurrentRateExceedsReviewedBand() public {
+    function test_ScheduleVaultSharePriceReferenceRefresh_AllowsOutOfBandRecovery() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() + 1))
                 / 10_000;
@@ -716,7 +716,23 @@ contract ERC4626OracleFeedTest is Test {
                 erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
             )
         );
+        erc4626Feed.getPrice(address(vault));
+
+        uint256 executableAt = block.timestamp + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_DELAY();
+        uint256 expiresAt = executableAt + erc4626Feed.SHARE_PRICE_REFERENCE_REFRESH_EXPIRY();
+        vm.expectEmit(true, false, false, true);
+        emit VaultSharePriceReferenceRefreshScheduled(address(vault), 1e18, assetsPerShare, executableAt, expiresAt);
         erc4626Feed.scheduleVaultSharePriceReferenceRefresh(address(vault));
+
+        vm.warp(executableAt);
+        erc4626Feed.refreshVaultSharePriceReference(address(vault));
+
+        assertApproxEqAbs(
+            erc4626Feed.getPrice(address(vault)),
+            (assetsPerShare * UNDERLYING_PRICE) / 1e18,
+            1,
+            "scheduled refresh should recover the protected path"
+        );
     }
 
     function test_CancelScheduledVaultSharePriceReferenceRefresh_Succeeds() public {
