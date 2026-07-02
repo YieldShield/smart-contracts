@@ -106,6 +106,9 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @notice Custom error when a registered vault no longer reports its configured underlying asset
     error VaultUnderlyingAssetMismatch(address vault, address expectedUnderlying, address actualUnderlying);
 
+    /// @notice Custom error when registration would overwrite an existing vault config
+    error VaultAlreadyRegistered(address vault);
+
     /// @notice Custom error for invalid oracle address
     error InvalidOracleAddress(address oracle);
 
@@ -192,6 +195,7 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     function registerVault(address vault, address underlying) external onlyOwner {
         if (vault == address(0)) revert InvalidVaultAddress(vault);
         if (underlying == address(0)) revert InvalidUnderlyingAddress(underlying);
+        if (vaultToUnderlying[vault] != address(0)) revert VaultAlreadyRegistered(vault);
 
         // Verify vault is ERC4626-compliant by checking it has asset() function
         try IERC4626(vault).asset() returns (address vaultAsset) {
