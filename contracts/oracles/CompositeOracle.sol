@@ -1338,7 +1338,14 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @dev Exposed as an explicit capability marker so callers do not infer support from
     ///      arbitrary fallback revert data.
     function supportsCircuitBreaker(address token) external view returns (bool) {
-        return _isTokenSupported[token];
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) {
+            return false;
+        }
+
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+        return _supportsCircuitBreaker(activeFeed, token);
     }
 
     // ============ Internal Helper Functions ============

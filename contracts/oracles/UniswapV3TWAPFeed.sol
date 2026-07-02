@@ -43,7 +43,7 @@ interface IUniswapV3Pool {
 ///      explicit safe/unsafe split and should reject TWAP-only feeds.
 /// - getPrice() returns: TWAP price with 8 decimals (e.g., $1.00 = 1e8)
 /// - Uniswap V3 tick prices are converted to sqrtPriceX96 format and normalized
-/// - Quote token oracle MUST also return 8 decimal prices for proper USD conversion
+/// - Quote token oracle prices are normalized from their reported decimals before USD conversion
 contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     using DecimalNormalizationLib for uint256;
     /// @notice TWAP observation period in seconds (default: 30 minutes)

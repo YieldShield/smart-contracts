@@ -539,6 +539,17 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.getPriceForFeeAccrual(address(vault));
     }
 
+    function test_GetPriceWithStaleness_IsStaticcallSafe() public view {
+        bytes memory callData = abi.encodeCall(ERC4626OracleFeed.getPriceWithStaleness, (address(vault)));
+
+        (bool success, bytes memory returndata) = address(erc4626Feed).staticcall(callData);
+
+        assertTrue(success, "getPriceWithStaleness should be callable from view contexts");
+        (uint256 price, bool isStale) = abi.decode(returndata, (uint256, bool));
+        assertEq(price, UNDERLYING_PRICE, "staticcall should return price");
+        assertFalse(isStale, "fresh underlying should not be stale");
+    }
+
     function test_GetPrice_ClampsShareRateAtUpperDeviationBoundary() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS())

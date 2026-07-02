@@ -456,7 +456,7 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @param vault The vault address
     /// @return price The price in USD with 8 decimals
     /// @return isStale True if the underlying price is stale
-    function getPriceWithStaleness(address vault) external returns (uint256 price, bool isStale) {
+    function getPriceWithStaleness(address vault) external view returns (uint256 price, bool isStale) {
         // SEC-01 (Codex P2): this helper returns a USD price too, so it must fail
         // closed on the same L2 sequencer gate as _getValidatedPrice — otherwise
         // an integrator using it could receive a price during a sequencer outage.
@@ -466,9 +466,6 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
 
         // Check staleness
         (isStale,) = _checkUnderlyingStaleness(config.underlying);
-
-        // Emit event for monitoring
-        emit StalePriceDetected(vault, config.underlying, isStale);
 
         // If stale, still calculate price but return stale flag
         // This allows callers to make informed decisions

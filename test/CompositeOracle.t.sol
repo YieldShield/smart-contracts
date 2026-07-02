@@ -60,6 +60,17 @@ contract CompositeOracleTest is Test {
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
     }
 
+    function testSupportsCircuitBreakerReflectsActiveFeedCapability() public {
+        MutableCircuitBreakerSelectorFeed feed = new MutableCircuitBreakerSelectorFeed();
+        feed.setPrice(address(tokenA), 1e8);
+
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(feed));
+        assertTrue(compositeOracle.supportsCircuitBreaker(address(tokenA)), "registered feed initially supports CB");
+
+        feed.setUnsafeSelectorEnabled(false);
+        assertFalse(compositeOracle.supportsCircuitBreaker(address(tokenA)), "marker should reflect live feed support");
+    }
+
     function testRemoveTokenOracleFeed() public {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
