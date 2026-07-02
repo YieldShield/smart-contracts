@@ -86,7 +86,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      Maintained by:
     ///      - depositShieldedAsset: += valueAtDeposit
     ///      - shieldedWithdraw: -= pos.valueAtDeposit (full original value)
-    ///      - partialWithdrawShielded: -= pos.valueAtDeposit, then += (pos.valueAtDeposit * remaining / pos.amount)
+    ///      - partialWithdrawShielded: -= pos.valueAtDeposit, then += ceil(pos.valueAtDeposit * remaining / amountAfterFees)
     ///      - claimRewards: Does NOT change (original deposit value remains the same)
     uint256 public totalValueAtDeposit;
 
@@ -522,12 +522,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      is temporarily unavailable.
     ///
     ///      B7: explicitly fail closed if the shielded leg has a pending or currently
-    ///      challengeable dual-feed dispute. This removes the implicit invariant that
-    ///      every caller already calls `_requireNoOraclePendingChallenge(SHIELDED_TOKEN)`
-    ///      beforehand. Current callers (`_validateDeposit` via
-    ///      `_getTotalPoolValueUsd(allowShieldedSpotFallback=true)`) already make that
-    ///      check, so this guard is idempotent for them and prevents future call sites
-    ///      from relying on a footgun precondition.
+    ///      challengeable dual-feed dispute. No current state-changing caller enables
+    ///      this fallback; it is kept only for future non-critical valuation paths that
+    ///      intentionally opt into unsafe spot pricing.
     function _getShieldedSpotPrice() internal view returns (uint256 price) {
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
         price = IPriceOracle(poolConfig.priceOracle).getPriceUnsafe(SHIELDED_TOKEN);
@@ -1668,7 +1665,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      *      Emits NoCommissionToClaim event if no commission is available.
      * @dev Intentionally NOT gated by `whenNotPaused`. B4 (PR #21) made
      *      commission-bucket overflow revert with `RewardAccumulationIncomplete`,
-     *      and `_tryCalculateAndAccumulateFees` does not catch that revert. Once
+     *      and fee-accruing exit paths intentionally do not catch that revert. Once
      *      `accumulatedCommissions` saturates `MAX_SAFE_ACCUMULATION`, every
      *      withdrawal path that accrues fees reverts until the bucket is
      *      drained. `claimCommission` is the only drain path; keeping it
@@ -2291,8 +2288,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error InvalidTokenId If caller is not the NFT owner
      * @custom:error UnsupportedAsset If preferredAsset is not BACKING_TOKEN
      * @custom:error NoTokensToWithdraw If amount is zero
-     * @custom:error InsufficientUnlockedTokens If unlock period has not passed, amount exceeds available,
-     *               or withdrawal would cause USD-based undercollateralization
+     * @custom:error InsufficientUnlockedTokens If unlock period has not passed or amount exceeds available backing
      * @custom:error InsufficientTokenBalance If pool has insufficient balance
      * @custom:error AccessControlDenied If access control is set and caller is not authorized
      */
