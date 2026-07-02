@@ -1385,8 +1385,15 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         uint256 priceA,
         uint256 priceB
     ) internal view returns (uint256) {
-        uint256 amountAValueUsd = Math.mulDiv(amountA, priceA, _getTokenScale(tokenA));
-        return Math.mulDiv(amountAValueUsd, _getTokenScale(tokenB), priceB);
+        uint256 tokenScaleA = _getTokenScale(tokenA);
+        uint256 tokenScaleB = _getTokenScale(tokenB);
+
+        if (priceA <= type(uint256).max / tokenScaleB && priceB <= type(uint256).max / tokenScaleA) {
+            return Math.mulDiv(amountA, priceA * tokenScaleB, priceB * tokenScaleA);
+        }
+
+        uint256 amountAValueUsd = Math.mulDiv(amountA, priceA, tokenScaleA);
+        return Math.mulDiv(amountAValueUsd, tokenScaleB, priceB);
     }
 
     function _getTokenScale(address token) internal view returns (uint256 tokenScale) {

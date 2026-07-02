@@ -132,6 +132,17 @@ contract CompositeOracleTest is Test {
         assertEq(equivalentAmount, 10e6);
     }
 
+    function testGetEquivalentAmount_PreservesSubUsdPrecisionAcrossDecimals() public {
+        mockOracle.setPrice(address(token6), 1);
+        mockOracle.setPrice(address(tokenA), 1e8);
+        compositeOracle.setTokenOracleFeed(address(token6), address(mockOracle));
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        uint256 equivalentAmount = compositeOracle.getEquivalentAmount(address(token6), 1, address(tokenA));
+
+        assertEq(equivalentAmount, 10_000, "direct conversion should preserve sub-USD dust");
+    }
+
     function testGetValueWithFallback_SixDecimalToken() public {
         compositeOracle.setTokenOracleFeed(address(token6), address(mockOracle));
 

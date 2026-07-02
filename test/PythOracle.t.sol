@@ -175,6 +175,16 @@ contract PythOracleTest is Test {
         assertEq(amountB, 100e8, "Circuit-breaker path should preserve destination token decimals");
     }
 
+    function testGetEquivalentAmount_PreservesSubUsdPrecisionAcrossDecimals() public {
+        vm.warp(block.timestamp + 10);
+        _updatePriceFeed(FEED_ID_3, 1, 0, -8, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID_1, 1e8, 1e6, -8, uint64(block.timestamp));
+
+        uint256 amountB = oracle.getEquivalentAmount(address(token6), 1, address(token1));
+
+        assertEq(amountB, 10_000, "direct conversion should preserve sub-USD dust");
+    }
+
     function testSupportsStrictProtectedPriceTracksSupportedTokens() public view {
         assertTrue(
             oracle.supportsStrictProtectedPrice(address(token1)), "configured Pyth feed should support strict path"
