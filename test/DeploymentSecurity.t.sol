@@ -9,6 +9,7 @@ import { YSTimelockController } from "../contracts/governance/YSTimelockControll
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { PythConfig } from "../contracts/oracles/PythConfig.sol";
+import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
@@ -21,6 +22,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bytes32 internal expectedFactoryImplementationCodehash;
     bytes32 internal expectedPoolImplementationCodehash;
     bytes32 internal expectedPythOracleCodehash;
+    bytes32 internal expectedChainlinkOracleCodehash;
 
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
@@ -102,6 +104,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 poolImplementationAddr: poolImplementationAddr,
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -128,6 +131,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 poolImplementationAddr: poolImplementationAddr,
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -156,6 +160,65 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 poolImplementationAddr: poolImplementationAddr,
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
+        );
+    }
+
+    function finalizeProductionChainlinkProtocolBootstrapHarness(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address chainlinkOracleFeedAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr,
+        address bootstrapAdmin
+    ) external {
+        _pinProductionChainlinkProtocolCodehashesForHarness(
+            factoryImplementationAddr, poolImplementationAddr, chainlinkOracleFeedAddr
+        );
+        _finalizeProductionProtocolBootstrap(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
+            bootstrapAdmin
+        );
+    }
+
+    function validateProductionChainlinkProtocolFinalizedHarness(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address chainlinkOracleFeedAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr
+    ) external {
+        _pinProductionChainlinkProtocolCodehashesForHarness(
+            factoryImplementationAddr, poolImplementationAddr, chainlinkOracleFeedAddr
+        );
+        _validateProductionProtocolFinalized(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -173,6 +236,16 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         expectedPythOracleCodehash = pythOracleCodehashAddr.codehash;
     }
 
+    function _pinProductionChainlinkProtocolCodehashesForHarness(
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address chainlinkOracleCodehashAddr
+    ) internal {
+        expectedFactoryImplementationCodehash = factoryImplementationAddr.codehash;
+        expectedPoolImplementationCodehash = poolImplementationAddr.codehash;
+        expectedChainlinkOracleCodehash = chainlinkOracleCodehashAddr.codehash;
+    }
+
     function _readRequiredProductionCodehash(bytes32 name, string memory envName)
         internal
         view
@@ -187,6 +260,9 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         }
         if (name == bytes32("PythOracle") && expectedPythOracleCodehash != bytes32(0)) {
             return expectedPythOracleCodehash;
+        }
+        if (name == bytes32("ChainlinkOracleFeed") && expectedChainlinkOracleCodehash != bytes32(0)) {
+            return expectedChainlinkOracleCodehash;
         }
 
         return super._readRequiredProductionCodehash(name, envName);
@@ -1106,6 +1182,54 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(timelock),
             address(governor)
         );
+    }
+
+    function test_ProductionProtocol_FinalizerSupportsChainlinkNativeBootstrap() public {
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        compositeOracle.transferOwnership(address(harness));
+        chainlinkOracleFeed.transferOwnership(address(harness));
+        erc4626OracleFeed.transferOwnership(address(harness));
+
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(chainlinkOracleFeed),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor),
+            address(harness)
+        );
+        harness.validateProductionChainlinkProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(chainlinkOracleFeed),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+
+        assertEq(factory.owner(), address(timelock));
+        assertFalse(factory.bootstrapModeEnabled());
+        assertEq(compositeOracle.owner(), address(factory));
+        assertEq(chainlinkOracleFeed.owner(), address(timelock));
+        assertEq(erc4626OracleFeed.owner(), address(factory));
+        assertEq(factory.compositeOracle(), address(compositeOracle));
+        assertEq(factory.defaultProtocolFeeRecipient(), address(timelock));
+        assertEq(factory.pythOracle(), address(0));
+        assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
+        assertEq(address(erc4626OracleFeed.underlyingPriceOracle()), address(chainlinkOracleFeed));
     }
 
     function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {

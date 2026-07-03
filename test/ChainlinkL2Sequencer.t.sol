@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Test, console } from "forge-std/Test.sol";
-import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
-import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
-import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {ChainlinkOracleFeed} from "../contracts/oracles/ChainlinkOracleFeed.sol";
+import {CompositeOracle} from "../contracts/oracles/CompositeOracle.sol";
+import {MockSequencerUptimeFeed} from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 
 /// @title MockChainlinkPriceFeed
 /// @notice Mock Chainlink price feed for unit testing
@@ -181,6 +181,15 @@ contract ChainlinkL2SequencerTest is Test {
         vm.chainId(42161);
         ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
         assertTrue(l2Feed.sequencerUptimeFeedRequired());
+    }
+
+    function test_Constructor_DefaultsSequencerRequiredOnRobinhoodTestnet() public {
+        vm.chainId(46630);
+        ChainlinkOracleFeed l2Feed = _deployFeedForCurrentChain();
+        assertTrue(l2Feed.sequencerUptimeFeedRequired());
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.SequencerUptimeFeedRequired.selector, 46630));
+        l2Feed.getPrice(testToken);
     }
 
     function test_Constructor_DoesNotRequireSequencerOnUnlistedChainByDefault() public {

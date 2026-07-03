@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
-import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
-import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IOracleFeed} from "../interfaces/IOracleFeed.sol";
+import {DecimalNormalizationLib} from "../libraries/DecimalNormalizationLib.sol";
+import {OracleValidationLib} from "../libraries/OracleValidationLib.sol";
 
 /// @title AggregatorV3Interface
 /// @notice Minimal interface for Chainlink price feeds
@@ -230,7 +230,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         underlying = feed;
         try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
             underlying = agg;
-        } catch { }
+        } catch {}
     }
 
     /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
@@ -632,6 +632,6 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     function _isKnownL2RequiringSequencer(uint256 chainId) internal pure returns (bool) {
         return chainId == 10 || chainId == 11155420 || chainId == 8453 || chainId == 84532 || chainId == 42161
-            || chainId == 421614;
+            || chainId == 421614 || chainId == 4663 || chainId == 46630;
     }
 }

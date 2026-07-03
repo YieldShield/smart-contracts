@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Test } from "forge-std/Test.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { SequencerUptimeGuard } from "../contracts/oracles/SequencerUptimeGuard.sol";
-import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
-import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
-import { PythOracle } from "../contracts/oracles/PythOracle.sol";
-import { PythEMAOracleFeed } from "../contracts/oracles/PythEMAOracleFeed.sol";
-import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
-import { UniswapV3TWAPFeed } from "../contracts/oracles/UniswapV3TWAPFeed.sol";
+import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {SequencerUptimeGuard} from "../contracts/oracles/SequencerUptimeGuard.sol";
+import {MockSequencerUptimeFeed} from "../contracts/mocks/MockSequencerUptimeFeed.sol";
+import {MockERC20} from "../contracts/mocks/MockERC20.sol";
+import {PythOracle} from "../contracts/oracles/PythOracle.sol";
+import {PythEMAOracleFeed} from "../contracts/oracles/PythEMAOracleFeed.sol";
+import {ERC4626OracleFeed} from "../contracts/oracles/ERC4626OracleFeed.sol";
+import {UniswapV3TWAPFeed} from "../contracts/oracles/UniswapV3TWAPFeed.sol";
 
 /// @dev Minimal concrete harness exposing the abstract guard's internals.
 contract GuardHarness is SequencerUptimeGuard {
-    constructor() SequencerUptimeGuard() { }
+    constructor() SequencerUptimeGuard() {}
 
     function check() external view {
         _checkSequencerUptime();
@@ -37,7 +37,7 @@ contract SequencerUptimeGuardTest is Test {
     // -------------------------------------------------------------------------
 
     function test_DefaultRequiredOnKnownL2s() public {
-        uint256[6] memory l2s = [uint256(10), 11155420, 8453, 84532, 42161, 421614];
+        uint256[8] memory l2s = [uint256(10), 11155420, 8453, 84532, 42161, 421614, 4663, 46630];
         for (uint256 i = 0; i < l2s.length; i++) {
             vm.chainId(l2s[i]);
             GuardHarness h = new GuardHarness();

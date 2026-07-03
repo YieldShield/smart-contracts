@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title ISequencerUptimeFeed
 /// @notice Minimal Chainlink interface used to read an L2 sequencer uptime feed.
@@ -21,7 +21,7 @@ interface ISequencerUptimeFeed {
 ///      price. The deploying account becomes owner (via Ownable). These feeds are
 ///      deployed directly (non-upgradeable), so adding storage here is safe.
 ///
-///      On a known L2 (Arbitrum/Optimism/Base + their testnets) the requirement
+///      On a known L2 (Arbitrum/Optimism/Base/Robinhood + their testnets) the requirement
 ///      defaults on: a deployment must configure a sequencer uptime feed, or
 ///      explicitly opt out via `setSequencerUptimeFeedRequired(false)`, otherwise
 ///      every price read reverts. This is the same fail-closed posture as
@@ -169,6 +169,6 @@ abstract contract SequencerUptimeGuard is Ownable {
 
     function _isKnownL2RequiringSequencer(uint256 chainId) internal pure returns (bool) {
         return chainId == 10 || chainId == 11155420 || chainId == 8453 || chainId == 84532 || chainId == 42161
-            || chainId == 421614;
+            || chainId == 421614 || chainId == 4663 || chainId == 46630;
     }
 }

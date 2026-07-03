@@ -7,6 +7,7 @@ import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
 import { PythConfig } from "../contracts/oracles/PythConfig.sol";
+import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { YSToken } from "../contracts/YSToken.sol";
@@ -23,6 +24,10 @@ interface IProductionOwnable {
 
 interface IProductionCompositeOracle is IProductionOwnable {
     function authorizedCallerCount() external view returns (uint256);
+}
+
+interface IProductionERC4626OracleFeed is IProductionOwnable {
+    function underlyingPriceOracle() external view returns (address);
 }
 
 /**
@@ -44,13 +49,17 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address poolImplementationAddr;
         address compositeOracleAddr;
         address pythOracleAddr;
+        address chainlinkOracleFeedAddr;
         address erc4626OracleFeedAddr;
         address timelockAddr;
         address governorAddr;
     }
 
+    uint256 internal constant ROBINHOOD_MAINNET_CHAIN_ID = 4663;
+    uint256 internal constant ROBINHOOD_TESTNET_CHAIN_ID = 46630;
     uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
+    uint256 internal constant DEFAULT_CHAINLINK_MAX_PRICE_AGE = 86_400;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;
     bytes4 private constant GET_THRESHOLD_SELECTOR = bytes4(keccak256("getThreshold()"));
@@ -75,18 +84,25 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_POOL_IMPLEMENTATION = "PoolImplementation";
     bytes32 private constant NAME_COMPOSITE_ORACLE = "CompositeOracle";
     bytes32 private constant NAME_PYTH_ORACLE = "PythOracle";
+    bytes32 private constant NAME_CHAINLINK_ORACLE_FEED = "ChainlinkOracleFeed";
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
     bytes32 private constant NAME_GOVERNOR = "YSGovernor";
     string private constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
     string private constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
+    string private constant ENV_CHAINLINK_ORACLE_CODEHASH = "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH";
+    string private constant ENV_CHAINLINK_MAX_PRICE_AGE = "YS_PRODUCTION_CHAINLINK_MAX_PRICE_AGE";
+    string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
     string private constant ENV_BOOTSTRAP_HOLDER_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_GUARD";
     string private constant ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER = "YS_PRODUCTION_BOOTSTRAP_HOLDER_FALLBACK_HANDLER";
     string private constant ENV_BOOTSTRAP_HOLDER_MODULE_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_MODULE_GUARD";
     bytes32 private constant FIELD_COMPOSITE_ORACLE = "factory.compositeOracle";
     bytes32 private constant FIELD_PYTH_ORACLE = "factory.pythOracle";
     bytes32 private constant FIELD_ERC4626_ORACLE_FEED = "factory.erc4626OracleFeed";
+    bytes32 private constant FIELD_ERC4626_UNDERLYING_PRICE_ORACLE = "erc4626.underlyingOracle";
     bytes32 private constant FIELD_PROTOCOL_FEE_RECIPIENT = "factory.feeRecipient";
     bytes32 private constant FIELD_FACTORY_GOVERNANCE_TIMELOCK = "factory.governanceTimelock";
     bytes32 private constant FIELD_FACTORY_IMPLEMENTATION = "factory.proxyImplementation";
@@ -126,16 +142,27 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     );
     error ProductionProtocolTimelockRoleCountMismatch(bytes32 role, uint256 actualCount, uint256 expectedCount);
     error ProductionProtocolTimelockRoleMismatch(bytes32 role, address actualMember, address expectedMember);
+    error ProductionRobinhoodSequencerFeedRequired(uint256 chainId, string envName);
+    error ProductionRobinhoodUnsupportedChain(uint256 chainId);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
         _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
         _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+        if (_usesChainlinkNativeOracle()) {
+            _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
+        } else {
+            _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+        }
 
         (address ysTokenAddr, address timelockAddr, address governorAddr, address bootstrapHolder) = deployGovernance();
-        (address factoryAddr, address compositeOracleAddr, address pythOracleAddr, address erc4626OracleFeedAddr) =
-            deployProtocol(timelockAddr, governorAddr);
+        (
+            address factoryAddr,
+            address compositeOracleAddr,
+            address pythOracleAddr,
+            address chainlinkOracleFeedAddr,
+            address erc4626OracleFeedAddr
+        ) = deployProtocol(timelockAddr, governorAddr);
 
         logDeploymentSummary(
             ysTokenAddr,
@@ -145,6 +172,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             factoryAddr,
             compositeOracleAddr,
             pythOracleAddr,
+            chainlinkOracleFeedAddr,
             erc4626OracleFeedAddr
         );
     }
@@ -170,6 +198,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 poolImplementationAddr: poolImplementationAddr,
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -178,6 +207,43 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         );
 
         deployments.push(Deployment("PythOracle", pythOracleAddr));
+        deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
+        deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
+        deployments.push(Deployment("SplitRiskPoolFactoryImplementation", factoryImplementationAddr));
+        deployments.push(Deployment("SplitRiskPoolImplementation", poolImplementationAddr));
+        deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
+    }
+
+    function finalizeProductionChainlinkProtocolBootstrap(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address chainlinkOracleFeedAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr
+    ) external ScaffoldEthDeployerRunner {
+        if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
+        _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
+        _finalizeProductionProtocolBootstrap(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
+            deployer
+        );
+
+        deployments.push(Deployment("ChainlinkOracleFeed", chainlinkOracleFeedAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
         deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
         deployments.push(Deployment("SplitRiskPoolFactoryImplementation", factoryImplementationAddr));
@@ -202,6 +268,32 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 poolImplementationAddr: poolImplementationAddr,
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
+        );
+    }
+
+    function validateProductionChainlinkProtocolFinalized(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address chainlinkOracleFeedAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr
+    ) external view {
+        _validateProductionProtocolFinalized(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -279,10 +371,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             address factoryAddr,
             address compositeOracleAddr,
             address pythOracleAddr,
+            address chainlinkOracleFeedAddr,
             address erc4626OracleFeedAddr
         )
     {
         console.log("\n=== Deploying Production Protocol ===");
+
+        if (_usesChainlinkNativeOracle()) {
+            return deployChainlinkProtocol(timelockAddr, governorAddr);
+        }
 
         address pythAddress = PythConfig.getPythAddress(block.chainid);
         uint256 maxPriceAge = PythConfig.getDefaultMaxPriceAge(block.chainid);
@@ -347,6 +444,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 poolImplementationAddr: address(poolImplementation),
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
+                chainlinkOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -362,6 +460,76 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
     }
 
+    function deployChainlinkProtocol(address timelockAddr, address governorAddr)
+        internal
+        returns (
+            address factoryAddr,
+            address compositeOracleAddr,
+            address pythOracleAddr,
+            address chainlinkOracleFeedAddr,
+            address erc4626OracleFeedAddr
+        )
+    {
+        if (!_isRobinhoodChain()) revert ProductionRobinhoodUnsupportedChain(block.chainid);
+
+        uint256 maxPriceAge = vm.envOr(ENV_CHAINLINK_MAX_PRICE_AGE, DEFAULT_CHAINLINK_MAX_PRICE_AGE);
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(maxPriceAge);
+        chainlinkOracleFeedAddr = address(chainlinkOracleFeed);
+        console.log("ChainlinkOracleFeed deployed at:", chainlinkOracleFeedAddr);
+        console.log("Chainlink max price age:", maxPriceAge, "seconds");
+
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(chainlinkOracleFeedAddr);
+        erc4626OracleFeedAddr = address(erc4626OracleFeed);
+        console.log("ERC4626OracleFeed deployed at:", erc4626OracleFeedAddr);
+
+        _configureRobinhoodSequencerFeeds(chainlinkOracleFeed, erc4626OracleFeed);
+
+        CompositeOracle compositeOracle = new CompositeOracle();
+        compositeOracleAddr = address(compositeOracle);
+        console.log("CompositeOracle deployed at:", compositeOracleAddr);
+
+        SplitRiskPoolFactory factoryImplementation = new SplitRiskPoolFactory();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        bytes memory initData = abi.encodeWithSelector(
+            SplitRiskPoolFactory.initialize.selector, deployer, timelockAddr, address(poolImplementation)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(factoryImplementation), initData);
+        factoryAddr = address(proxy);
+        console.log("SplitRiskPoolFactory proxy deployed at:", factoryAddr);
+        console.log("Factory implementation:", address(factoryImplementation));
+        console.log("Pool implementation:", address(poolImplementation));
+
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(factoryAddr));
+        uint256 actualMinimumCreationBondUsd = factory.minimumCreationBondUsd();
+        console.log("Factory minimum creation bond USD:", actualMinimumCreationBondUsd);
+        require(
+            actualMinimumCreationBondUsd == factory.DEFAULT_MINIMUM_CREATION_BOND_USD(),
+            "Factory minimum creation bond not set correctly"
+        );
+        _finalizeProductionProtocolBootstrap(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: address(factoryImplementation),
+                poolImplementationAddr: address(poolImplementation),
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            }),
+            deployer
+        );
+
+        deployments.push(Deployment("ChainlinkOracleFeed", chainlinkOracleFeedAddr));
+        deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
+        deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
+        deployments.push(Deployment("SplitRiskPoolFactoryImplementation", address(factoryImplementation)));
+        deployments.push(Deployment("SplitRiskPoolImplementation", address(poolImplementation)));
+        deployments.push(Deployment("SplitRiskPoolFactory", factoryAddr));
+        pythOracleAddr = address(0);
+    }
+
     function logDeploymentSummary(
         address ysTokenAddr,
         address timelockAddr,
@@ -370,6 +538,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address factoryAddr,
         address compositeOracleAddr,
         address pythOracleAddr,
+        address chainlinkOracleFeedAddr,
         address erc4626OracleFeedAddr
     ) internal view {
         console.log("\n=== Production Deployment Summary ===");
@@ -379,7 +548,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("Bootstrap Holder:", bootstrapHolder);
         console.log("SplitRiskPoolFactory:", factoryAddr);
         console.log("CompositeOracle:", compositeOracleAddr);
-        console.log("PythOracle:", pythOracleAddr);
+        if (chainlinkOracleFeedAddr != address(0)) {
+            console.log("ChainlinkOracleFeed:", chainlinkOracleFeedAddr);
+        } else {
+            console.log("PythOracle:", pythOracleAddr);
+        }
         console.log("ERC4626OracleFeed:", erc4626OracleFeedAddr);
 
         TimelockController timelock = TimelockController(payable(timelockAddr));
@@ -392,6 +565,39 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _isLocalNetwork() internal view returns (bool) {
         return block.chainid == 31337 || block.chainid == 1337;
+    }
+
+    function _isRobinhoodChain() internal view returns (bool) {
+        return block.chainid == ROBINHOOD_MAINNET_CHAIN_ID || block.chainid == ROBINHOOD_TESTNET_CHAIN_ID;
+    }
+
+    function _usesChainlinkNativeOracle() internal view returns (bool) {
+        return _isRobinhoodChain();
+    }
+
+    function _configureRobinhoodSequencerFeeds(
+        ChainlinkOracleFeed chainlinkOracleFeed,
+        ERC4626OracleFeed erc4626OracleFeed
+    ) internal {
+        string memory envName = block.chainid == ROBINHOOD_TESTNET_CHAIN_ID
+            ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED
+            : ENV_ROBINHOOD_SEQUENCER_FEED;
+        address sequencerFeed = vm.envOr(envName, address(0));
+        if (sequencerFeed != address(0)) {
+            chainlinkOracleFeed.setSequencerUptimeFeed(sequencerFeed);
+            erc4626OracleFeed.setSequencerUptimeFeed(sequencerFeed);
+            console.log("Sequencer uptime feed set:", sequencerFeed);
+            return;
+        }
+
+        bool allowMissingSequencerFeed = vm.envOr(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED, false);
+        if (!allowMissingSequencerFeed) {
+            revert ProductionRobinhoodSequencerFeedRequired(block.chainid, envName);
+        }
+
+        chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
+        erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
+        console.log("Sequencer uptime requirement explicitly disabled for Robinhood deployment");
     }
 
     function _finalizeProductionProtocolBootstrap(ProtocolDeployment memory d, address bootstrapAdmin) internal {
@@ -407,7 +613,13 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionContractCodehash(
             NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        if (_isChainlinkProtocolDeployment(d)) {
+            _requireMandatoryProductionCodehash(
+                NAME_CHAINLINK_ORACLE_FEED, d.chainlinkOracleFeedAddr, ENV_CHAINLINK_ORACLE_CODEHASH
+            );
+        } else {
+            _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        }
         _requireProductionContractCodehash(
             NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
@@ -443,7 +655,13 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
 
         _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, d.factoryAddr, bootstrapAdmin);
-        _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, d.pythOracleAddr, d.factoryAddr, bootstrapAdmin);
+        if (_isChainlinkProtocolDeployment(d)) {
+            _transferOwnershipIfNeeded(
+                NAME_CHAINLINK_ORACLE_FEED, d.chainlinkOracleFeedAddr, d.timelockAddr, bootstrapAdmin
+            );
+        } else {
+            _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, d.pythOracleAddr, d.factoryAddr, bootstrapAdmin);
+        }
         _transferOwnershipToFactoryIfNeeded(
             NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, d.factoryAddr, bootstrapAdmin
         );
@@ -458,10 +676,12 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         }
         _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), d.timelockAddr);
 
-        if (factory.pythOracle() == address(0)) {
+        if (!_isChainlinkProtocolDeployment(d) && factory.pythOracle() == address(0)) {
             factory.setManagedPythOracle(d.pythOracleAddr);
         }
-        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
+        _requireProductionAddress(
+            FIELD_PYTH_ORACLE, factory.pythOracle(), _isChainlinkProtocolDeployment(d) ? address(0) : d.pythOracleAddr
+        );
 
         if (factory.erc4626OracleFeed() == address(0)) {
             factory.setManagedERC4626OracleFeed(d.erc4626OracleFeedAddr);
@@ -495,7 +715,13 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionContractCodehash(
             NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, type(CompositeOracle).runtimeCode
         );
-        _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        if (_isChainlinkProtocolDeployment(d)) {
+            _requireMandatoryProductionCodehash(
+                NAME_CHAINLINK_ORACLE_FEED, d.chainlinkOracleFeedAddr, ENV_CHAINLINK_ORACLE_CODEHASH
+            );
+        } else {
+            _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
+        }
         _requireProductionContractCodehash(
             NAME_ERC4626_ORACLE_FEED, d.erc4626OracleFeedAddr, type(ERC4626OracleFeed).runtimeCode
         );
@@ -528,13 +754,25 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 d.compositeOracleAddr, compositeOracleAuthorizedCallerCount
             );
         }
-        _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(d.pythOracleAddr).owner(), d.factoryAddr);
+        if (_isChainlinkProtocolDeployment(d)) {
+            _requireProductionOwner(
+                NAME_CHAINLINK_ORACLE_FEED, IProductionOwnable(d.chainlinkOracleFeedAddr).owner(), d.timelockAddr
+            );
+            _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), address(0));
+            _requireProductionAddress(
+                FIELD_ERC4626_UNDERLYING_PRICE_ORACLE,
+                IProductionERC4626OracleFeed(d.erc4626OracleFeedAddr).underlyingPriceOracle(),
+                d.chainlinkOracleFeedAddr
+            );
+        } else {
+            _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(d.pythOracleAddr).owner(), d.factoryAddr);
+            _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
+        }
         _requireProductionOwner(
             NAME_ERC4626_ORACLE_FEED, IProductionOwnable(d.erc4626OracleFeedAddr).owner(), d.factoryAddr
         );
         _requireProductionAddress(FIELD_COMPOSITE_ORACLE, factory.compositeOracle(), d.compositeOracleAddr);
         _requireProductionAddress(FIELD_PROTOCOL_FEE_RECIPIENT, factory.defaultProtocolFeeRecipient(), d.timelockAddr);
-        _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
         _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, factory.erc4626OracleFeed(), d.erc4626OracleFeedAddr);
     }
 
@@ -544,14 +782,27 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address factoryAddr,
         address bootstrapAdmin
     ) internal {
+        _transferOwnershipIfNeeded(name, contractAddress, factoryAddr, bootstrapAdmin);
+    }
+
+    function _transferOwnershipIfNeeded(
+        bytes32 name,
+        address contractAddress,
+        address expectedOwner,
+        address bootstrapAdmin
+    ) internal {
         address currentOwner = IProductionOwnable(contractAddress).owner();
-        if (currentOwner == factoryAddr) {
+        if (currentOwner == expectedOwner) {
             return;
         }
         if (currentOwner != bootstrapAdmin) {
-            revert ProductionProtocolOwnerMismatch(name, currentOwner, factoryAddr);
+            revert ProductionProtocolOwnerMismatch(name, currentOwner, expectedOwner);
         }
-        IProductionOwnable(contractAddress).transferOwnership(factoryAddr);
+        IProductionOwnable(contractAddress).transferOwnership(expectedOwner);
+    }
+
+    function _isChainlinkProtocolDeployment(ProtocolDeployment memory d) internal pure returns (bool) {
+        return d.chainlinkOracleFeedAddr != address(0);
     }
 
     function _requireProductionContract(bytes32 name, address contractAddress) internal view {
