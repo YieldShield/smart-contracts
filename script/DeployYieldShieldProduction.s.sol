@@ -10,12 +10,16 @@ import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggregator.sol";
+import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
+import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC1822Proxiable } from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IProductionOwnable {
     function owner() external view returns (address);
@@ -28,6 +32,10 @@ interface IProductionCompositeOracle is IProductionOwnable {
 
 interface IProductionERC4626OracleFeed is IProductionOwnable {
     function underlyingPriceOracle() external view returns (address);
+}
+
+interface IProductionMintableERC20 {
+    function mint(address to, uint256 amount) external;
 }
 
 /**
@@ -53,6 +61,29 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address erc4626OracleFeedAddr;
         address timelockAddr;
         address governorAddr;
+    }
+
+    struct RobinhoodDemoAssets {
+        address usdg;
+        address weth;
+        address sgov;
+        address spy;
+        address qqq;
+    }
+
+    struct RobinhoodDemoFeeds {
+        address usdg;
+        address weth;
+        address sgov;
+        address spy;
+        address qqq;
+    }
+
+    struct RobinhoodDemoPools {
+        address sgovUsdg;
+        address spyUsdg;
+        address qqqUsdg;
+        address usdgWeth;
     }
 
     uint256 internal constant ROBINHOOD_MAINNET_CHAIN_ID = 4663;
@@ -96,6 +127,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS = "YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS";
+    string private constant ENV_ROBINHOOD_TESTNET_TEST_WALLET = "YS_ROBINHOOD_TESTNET_TEST_WALLET";
     string private constant ENV_BOOTSTRAP_HOLDER_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_GUARD";
     string private constant ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER = "YS_PRODUCTION_BOOTSTRAP_HOLDER_FALLBACK_HANDLER";
     string private constant ENV_BOOTSTRAP_HOLDER_MODULE_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_MODULE_GUARD";
@@ -142,6 +175,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     );
     error ProductionProtocolTimelockRoleCountMismatch(bytes32 role, uint256 actualCount, uint256 expectedCount);
     error ProductionProtocolTimelockRoleMismatch(bytes32 role, address actualMember, address expectedMember);
+    error ProductionRobinhoodTestnetDemoAssetsMissing(address factory);
+    error ProductionRobinhoodTestnetDemoAssetsUnsupported(uint256 chainId);
     error ProductionRobinhoodSequencerFeedRequired(uint256 chainId, string envName);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
 
@@ -154,6 +189,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         } else {
             _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
         }
+        _requireRobinhoodTestnetDemoAssetsAllowed();
 
         (address ysTokenAddr, address timelockAddr, address governorAddr, address bootstrapHolder) = deployGovernance();
         (
@@ -506,20 +542,19 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             actualMinimumCreationBondUsd == factory.DEFAULT_MINIMUM_CREATION_BOND_USD(),
             "Factory minimum creation bond not set correctly"
         );
-        _finalizeProductionProtocolBootstrap(
-            ProtocolDeployment({
-                factoryAddr: factoryAddr,
-                factoryImplementationAddr: address(factoryImplementation),
-                poolImplementationAddr: address(poolImplementation),
-                compositeOracleAddr: compositeOracleAddr,
-                pythOracleAddr: address(0),
-                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
-                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
-                timelockAddr: timelockAddr,
-                governorAddr: governorAddr
-            }),
-            deployer
-        );
+        ProtocolDeployment memory protocolDeployment = ProtocolDeployment({
+            factoryAddr: factoryAddr,
+            factoryImplementationAddr: address(factoryImplementation),
+            poolImplementationAddr: address(poolImplementation),
+            compositeOracleAddr: compositeOracleAddr,
+            pythOracleAddr: address(0),
+            chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+            erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+            timelockAddr: timelockAddr,
+            governorAddr: governorAddr
+        });
+        _seedRobinhoodTestnetDemoAssets(protocolDeployment);
+        _finalizeProductionProtocolBootstrap(protocolDeployment, deployer);
 
         deployments.push(Deployment("ChainlinkOracleFeed", chainlinkOracleFeedAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
@@ -557,10 +592,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
         TimelockController timelock = TimelockController(payable(timelockAddr));
         console.log("Timelock Delay:", timelock.getMinDelay() / 3600, "hours");
-        console.log("\nNo pools or whitelisted assets were created in this production bootstrap.");
+        if (_robinhoodTestnetDemoAssetsRequested()) {
+            console.log("\nRobinhood testnet demo assets, feeds, pools, and seed liquidity were created.");
+        } else {
+            console.log("\nNo pools or whitelisted assets were created in this production bootstrap.");
+        }
         console.log("Bootstrap holder must self-delegate YS before the first governance proposal.");
         console.log("No external timelock admin is retained after deployment.");
-        console.log("Configure launch assets and oracle feeds through governance after review.");
+        if (!_robinhoodTestnetDemoAssetsRequested()) {
+            console.log("Configure launch assets and oracle feeds through governance after review.");
+        }
     }
 
     function _isLocalNetwork() internal view returns (bool) {
@@ -590,7 +631,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             return;
         }
 
-        bool allowMissingSequencerFeed = vm.envOr(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED, false);
+        bool allowMissingSequencerFeed = _envFlag(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED);
         if (!allowMissingSequencerFeed) {
             revert ProductionRobinhoodSequencerFeedRequired(block.chainid, envName);
         }
@@ -598,6 +639,200 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
         erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
         console.log("Sequencer uptime requirement explicitly disabled for Robinhood deployment");
+    }
+
+    function _robinhoodTestnetDemoAssetsRequested() internal view returns (bool) {
+        return _envFlag(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS);
+    }
+
+    function _envFlag(string memory envName) internal view returns (bool) {
+        string memory rawValue = vm.envOr(envName, string("false"));
+        bytes32 valueHash = keccak256(bytes(rawValue));
+        return valueHash == keccak256(bytes("true")) || valueHash == keccak256(bytes("TRUE"))
+            || valueHash == keccak256(bytes("True")) || valueHash == keccak256(bytes("1"))
+            || valueHash == keccak256(bytes("yes")) || valueHash == keccak256(bytes("YES"))
+            || valueHash == keccak256(bytes("Yes"));
+    }
+
+    function _requireRobinhoodTestnetDemoAssetsAllowed() internal view {
+        if (_robinhoodTestnetDemoAssetsRequested() && block.chainid != ROBINHOOD_TESTNET_CHAIN_ID) {
+            revert ProductionRobinhoodTestnetDemoAssetsUnsupported(block.chainid);
+        }
+    }
+
+    function _seedRobinhoodTestnetDemoAssets(ProtocolDeployment memory d) internal {
+        if (!_robinhoodTestnetDemoAssetsRequested()) {
+            return;
+        }
+        _requireRobinhoodTestnetDemoAssetsAllowed();
+
+        console.log("\n=== Seeding Robinhood Testnet Demo Assets ===");
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(d.factoryAddr));
+        ChainlinkOracleFeed chainlinkOracleFeed = ChainlinkOracleFeed(d.chainlinkOracleFeedAddr);
+        CompositeOracle compositeOracle = CompositeOracle(d.compositeOracleAddr);
+        ERC4626OracleFeed erc4626OracleFeed = ERC4626OracleFeed(d.erc4626OracleFeedAddr);
+
+        if (compositeOracle.owner() != d.factoryAddr) {
+            compositeOracle.transferOwnership(d.factoryAddr);
+        }
+        if (erc4626OracleFeed.owner() != d.factoryAddr) {
+            erc4626OracleFeed.transferOwnership(d.factoryAddr);
+        }
+        factory.setCompositeOracle(d.compositeOracleAddr);
+        factory.setDefaultProtocolFeeRecipient(d.timelockAddr);
+        factory.setManagedERC4626OracleFeed(d.erc4626OracleFeedAddr);
+        factory.setCompositeOracleAuthorizedCaller(d.factoryAddr, true);
+
+        RobinhoodDemoAssets memory assets = _deployRobinhoodDemoAssets();
+        RobinhoodDemoFeeds memory feeds = _deployRobinhoodDemoFeeds();
+        _configureRobinhoodDemoFeeds(chainlinkOracleFeed, assets, feeds);
+        _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr);
+        _mintRobinhoodDemoBalances(assets);
+        RobinhoodDemoPools memory pools = _createRobinhoodDemoPools(factory, assets);
+        _seedRobinhoodDemoLiquidity(assets, pools);
+
+        console.log("Robinhood testnet demo assets seeded");
+    }
+
+    function _deployRobinhoodDemoAssets() internal returns (RobinhoodDemoAssets memory assets) {
+        assets.usdg = address(new MockERC20Decimals("Robinhood Test USDG", "USDG", 6));
+        assets.weth = address(new MockERC20Decimals("Robinhood Test WETH", "WETH", 18));
+        assets.sgov = address(new MockRobinhoodStockToken("Robinhood Test SGOV", "SGOV"));
+        assets.spy = address(new MockRobinhoodStockToken("Robinhood Test SPY", "SPY"));
+        assets.qqq = address(new MockRobinhoodStockToken("Robinhood Test QQQ", "QQQ"));
+
+        deployments.push(Deployment("RobinhoodTestUSDG", assets.usdg));
+        deployments.push(Deployment("RobinhoodTestWETH", assets.weth));
+        deployments.push(Deployment("RobinhoodTestSGOV", assets.sgov));
+        deployments.push(Deployment("RobinhoodTestSPY", assets.spy));
+        deployments.push(Deployment("RobinhoodTestQQQ", assets.qqq));
+
+        console.log("USDG:", assets.usdg);
+        console.log("WETH:", assets.weth);
+        console.log("SGOV:", assets.sgov);
+        console.log("SPY:", assets.spy);
+        console.log("QQQ:", assets.qqq);
+    }
+
+    function _deployRobinhoodDemoFeeds() internal returns (RobinhoodDemoFeeds memory feeds) {
+        feeds.usdg = address(new MockChainlinkAggregator("USDG / USD", 8, 1e8));
+        feeds.weth = address(new MockChainlinkAggregator("WETH / USD", 8, 1735e8));
+        feeds.sgov = address(new MockChainlinkAggregator("SGOV / USD", 8, 10_043_500_000));
+        feeds.spy = address(new MockChainlinkAggregator("SPY / USD", 8, 74_477_000_000));
+        feeds.qqq = address(new MockChainlinkAggregator("QQQ / USD", 8, 71_466_135_000));
+
+        deployments.push(Deployment("RobinhoodUSDGMockChainlinkFeed", feeds.usdg));
+        deployments.push(Deployment("RobinhoodWETHMockChainlinkFeed", feeds.weth));
+        deployments.push(Deployment("RobinhoodSGOVMockChainlinkFeed", feeds.sgov));
+        deployments.push(Deployment("RobinhoodSPYMockChainlinkFeed", feeds.spy));
+        deployments.push(Deployment("RobinhoodQQQMockChainlinkFeed", feeds.qqq));
+    }
+
+    function _configureRobinhoodDemoFeeds(
+        ChainlinkOracleFeed chainlinkOracleFeed,
+        RobinhoodDemoAssets memory assets,
+        RobinhoodDemoFeeds memory feeds
+    ) internal {
+        chainlinkOracleFeed.setTokenFeed(assets.usdg, feeds.usdg);
+        chainlinkOracleFeed.setTokenFeed(assets.weth, feeds.weth);
+        chainlinkOracleFeed.setTokenFeed(assets.sgov, feeds.sgov);
+        chainlinkOracleFeed.setTokenFeed(assets.spy, feeds.spy);
+        chainlinkOracleFeed.setTokenFeed(assets.qqq, feeds.qqq);
+    }
+
+    function _addRobinhoodDemoTokens(
+        SplitRiskPoolFactory factory,
+        RobinhoodDemoAssets memory assets,
+        address chainlinkOracleFeed
+    ) internal {
+        _addRobinhoodDemoToken(factory, assets.usdg, "Robinhood Test USDG", "USDG", chainlinkOracleFeed, 10_000);
+        _addRobinhoodDemoToken(factory, assets.weth, "Robinhood Test WETH", "WETH", chainlinkOracleFeed, 20_000);
+        _addRobinhoodDemoToken(factory, assets.sgov, "Robinhood Test SGOV", "SGOV", chainlinkOracleFeed, 12_500);
+        _addRobinhoodDemoToken(factory, assets.spy, "Robinhood Test SPY", "SPY", chainlinkOracleFeed, 20_000);
+        _addRobinhoodDemoToken(factory, assets.qqq, "Robinhood Test QQQ", "QQQ", chainlinkOracleFeed, 22_500);
+    }
+
+    function _addRobinhoodDemoToken(
+        SplitRiskPoolFactory factory,
+        address token,
+        string memory name,
+        string memory symbol,
+        address chainlinkOracleFeed,
+        uint256 minCollateralRatioBp
+    ) internal {
+        factory.addTokenInitial(token, name, symbol, chainlinkOracleFeed, address(0), minCollateralRatioBp, true);
+    }
+
+    function _mintRobinhoodDemoBalances(RobinhoodDemoAssets memory assets) internal {
+        address testWallet = vm.envOr(ENV_ROBINHOOD_TESTNET_TEST_WALLET, address(0));
+        _mintRobinhoodDemoAsset(assets.usdg, deployer, 2_000_000e6);
+        _mintRobinhoodDemoAsset(assets.weth, deployer, 2_000e18);
+        _mintRobinhoodDemoAsset(assets.sgov, deployer, 10_000e18);
+        _mintRobinhoodDemoAsset(assets.spy, deployer, 10_000e18);
+        _mintRobinhoodDemoAsset(assets.qqq, deployer, 10_000e18);
+
+        if (testWallet != address(0)) {
+            _mintRobinhoodDemoAsset(assets.usdg, testWallet, 100_000e6);
+            _mintRobinhoodDemoAsset(assets.weth, testWallet, 100e18);
+            _mintRobinhoodDemoAsset(assets.sgov, testWallet, 1_000e18);
+            _mintRobinhoodDemoAsset(assets.spy, testWallet, 1_000e18);
+            _mintRobinhoodDemoAsset(assets.qqq, testWallet, 1_000e18);
+            console.log("Robinhood test wallet funded:", testWallet);
+        }
+    }
+
+    function _mintRobinhoodDemoAsset(address token, address to, uint256 amount) internal {
+        IProductionMintableERC20(token).mint(to, amount);
+    }
+
+    function _createRobinhoodDemoPools(SplitRiskPoolFactory factory, RobinhoodDemoAssets memory assets)
+        internal
+        returns (RobinhoodDemoPools memory pools)
+    {
+        pools.sgovUsdg = _createRobinhoodDemoPool(factory, assets.sgov, "SGOV", assets.usdg, "USDG", 12_500, 600e6);
+        pools.spyUsdg = _createRobinhoodDemoPool(factory, assets.spy, "SPY", assets.usdg, "USDG", 20_000, 600e6);
+        pools.qqqUsdg = _createRobinhoodDemoPool(factory, assets.qqq, "QQQ", assets.usdg, "USDG", 22_500, 600e6);
+        pools.usdgWeth = _createRobinhoodDemoPool(factory, assets.usdg, "USDG", assets.weth, "WETH", 20_000, 1e18);
+
+        deployments.push(Deployment("RobinhoodSGOVUSDGPool", pools.sgovUsdg));
+        deployments.push(Deployment("RobinhoodSPYUSDGPool", pools.spyUsdg));
+        deployments.push(Deployment("RobinhoodQQQUSDGPool", pools.qqqUsdg));
+        deployments.push(Deployment("RobinhoodUSDGWETHPool", pools.usdgWeth));
+    }
+
+    function _createRobinhoodDemoPool(
+        SplitRiskPoolFactory factory,
+        address shieldedToken,
+        string memory shieldedSymbol,
+        address backingToken,
+        string memory backingSymbol,
+        uint256 collateralRatioBp,
+        uint256 creationBondAmount
+    ) internal returns (address pool) {
+        IERC20(backingToken).approve(address(factory), creationBondAmount);
+        pool = factory.createPool(
+            shieldedToken, shieldedSymbol, backingToken, backingSymbol, 500, 200, collateralRatioBp, creationBondAmount
+        );
+    }
+
+    function _seedRobinhoodDemoLiquidity(RobinhoodDemoAssets memory assets, RobinhoodDemoPools memory pools) internal {
+        _seedRobinhoodDemoPosition(pools.sgovUsdg, assets.usdg, 50_000e6, assets.sgov, 10e18);
+        _seedRobinhoodDemoPosition(pools.spyUsdg, assets.usdg, 100_000e6, assets.spy, 10e18);
+        _seedRobinhoodDemoPosition(pools.qqqUsdg, assets.usdg, 100_000e6, assets.qqq, 10e18);
+        _seedRobinhoodDemoPosition(pools.usdgWeth, assets.weth, 100e18, assets.usdg, 10_000e6);
+    }
+
+    function _seedRobinhoodDemoPosition(
+        address pool,
+        address backingToken,
+        uint256 backingAmount,
+        address shieldedToken,
+        uint256 shieldedAmount
+    ) internal {
+        IERC20(backingToken).approve(pool, backingAmount);
+        SplitRiskPool(payable(pool)).depositBackingAsset(backingToken, backingAmount, 0);
+        IERC20(shieldedToken).approve(pool, shieldedAmount);
+        SplitRiskPool(payable(pool)).depositShieldedAsset(shieldedToken, shieldedAmount, 0);
     }
 
     function _finalizeProductionProtocolBootstrap(ProtocolDeployment memory d, address bootstrapAdmin) internal {
@@ -742,7 +977,12 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         if (factory.bootstrapModeEnabled()) {
             revert ProductionProtocolBootstrapModeOpen(d.factoryAddr);
         }
-        if (factory.poolCount() != 0 || factory.getWhitelistedTokens().length != 0) {
+        bool demoAssetsRequested = block.chainid == ROBINHOOD_TESTNET_CHAIN_ID && _robinhoodTestnetDemoAssetsRequested();
+        if (demoAssetsRequested) {
+            if (factory.poolCount() == 0 || factory.getWhitelistedTokens().length == 0) {
+                revert ProductionRobinhoodTestnetDemoAssetsMissing(d.factoryAddr);
+            }
+        } else if (factory.poolCount() != 0 || factory.getWhitelistedTokens().length != 0) {
             revert ProductionProtocolLaunchAssetsPresent(d.factoryAddr);
         }
 

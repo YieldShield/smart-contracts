@@ -24,6 +24,10 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bytes32 internal expectedPythOracleCodehash;
     bytes32 internal expectedChainlinkOracleCodehash;
 
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
             holder,
@@ -195,6 +199,32 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 governorAddr: governorAddr
             }),
             bootstrapAdmin
+        );
+    }
+
+    function seedRobinhoodTestnetDemoAssetsHarness(
+        address factoryAddr,
+        address factoryImplementationAddr,
+        address poolImplementationAddr,
+        address compositeOracleAddr,
+        address chainlinkOracleFeedAddr,
+        address erc4626OracleFeedAddr,
+        address timelockAddr,
+        address governorAddr
+    ) external {
+        deployer = address(this);
+        _seedRobinhoodTestnetDemoAssets(
+            ProtocolDeployment({
+                factoryAddr: factoryAddr,
+                factoryImplementationAddr: factoryImplementationAddr,
+                poolImplementationAddr: poolImplementationAddr,
+                compositeOracleAddr: compositeOracleAddr,
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
+                timelockAddr: timelockAddr,
+                governorAddr: governorAddr
+            })
         );
     }
 
@@ -460,6 +490,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     address internal deployer = address(this);
     address internal bootstrapHolder = address(0xB0057);
     address internal dummyPyth = address(0x1234);
+
+    function setUp() public {
+        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
+    }
 
     function _proxyImplementation(address proxy) internal view returns (address implementation) {
         implementation = address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT))));
@@ -1230,6 +1264,73 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.pythOracle(), address(0));
         assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
         assertEq(address(erc4626OracleFeed.underlyingPriceOracle()), address(chainlinkOracleFeed));
+    }
+
+    function test_ProductionProtocol_RobinhoodTestnetSeedCreatesPoolsAndFinalizes() public {
+        vm.chainId(46_630);
+        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "true");
+
+        (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
+        CompositeOracle compositeOracle = new CompositeOracle();
+        SplitRiskPool poolImplementation = new SplitRiskPool();
+        SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+
+        chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
+        erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
+        compositeOracle.transferOwnership(address(harness));
+        chainlinkOracleFeed.transferOwnership(address(harness));
+        erc4626OracleFeed.transferOwnership(address(harness));
+
+        harness.seedRobinhoodTestnetDemoAssetsHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(chainlinkOracleFeed),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+
+        assertEq(factory.poolCount(), 4);
+        assertEq(factory.getWhitelistedTokens().length, 5);
+        assertFalse(factory.bootstrapModeEnabled());
+        assertEq(compositeOracle.authorizedCallerCount(), 0);
+
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(chainlinkOracleFeed),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor),
+            address(harness)
+        );
+        harness.validateProductionChainlinkProtocolFinalizedHarness(
+            address(factory),
+            _proxyImplementation(address(factory)),
+            address(poolImplementation),
+            address(compositeOracle),
+            address(chainlinkOracleFeed),
+            address(erc4626OracleFeed),
+            address(timelock),
+            address(governor)
+        );
+
+        assertEq(factory.owner(), address(timelock));
+        assertEq(compositeOracle.owner(), address(factory));
+        assertEq(chainlinkOracleFeed.owner(), address(timelock));
+        assertEq(erc4626OracleFeed.owner(), address(factory));
+        assertEq(factory.poolCount(), 4);
+        assertEq(factory.getWhitelistedTokens().length, 5);
+
+        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
     }
 
     function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {
