@@ -788,30 +788,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /**
-     * @dev Internal helper to get USD-based utilization ratio without external call.
-     *      Uses original deposit values (valueAtDeposit) for collateralization checks.
-     *      Returns success flag and ratio to allow fallback on oracle failure.
-     * @return success True if USD calculation succeeded
-     * @return ratio Utilization ratio in basis points (0-10000+)
-     */
-    function _tryGetUtilizationRatioUsd() internal view returns (bool success, uint256 ratio) {
-        // slither-disable-next-line incorrect-equality — empty-state guards, no protectors/deposits = 0% utilization
-        if (totalProtectorTokens == 0 || totalValueAtDeposit == 0) {
-            return (true, 0);
-        }
-
-        // totalValueAtDeposit is already in USD (8 decimals), no oracle conversion needed
-        (bool valuationSuccess, uint256 uwUsd) = _tryGetProtectedBackingValue(totalProtectorTokens);
-        if (!valuationSuccess) return (false, 0);
-
-        // slither-disable-next-line incorrect-equality — division-by-zero guard for utilization ratio
-        if (uwUsd == 0) return (true, type(uint256).max);
-        // M-4 FIX: Multiply before divide to avoid precision loss
-        // (totalValueAtDeposit * COLLATERAL_RATIO) gives utilization in basis points directly
-        return (true, (totalValueAtDeposit * COLLATERAL_RATIO) / uwUsd);
-    }
-
-    /**
      * @notice Get the amount of tokens locked for a protector position
      * @dev Derived from getAvailableForWithdrawal for consistency with max withdrawable calculation.
      *      Locked = position amount - available for withdrawal.
