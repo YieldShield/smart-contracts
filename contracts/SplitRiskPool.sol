@@ -462,6 +462,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _getExpiredProtectorBackingClaim(tokenId, _getProtectorPositionShares(tokenId));
     }
 
+    /// @notice Returns backing that belongs to an expired protector epoch and must be claimed separately.
+    function getExpiredProtectorBackingClaim(uint256 tokenId) public view returns (uint256) {
+        return _getExpiredProtectorBackingClaim(tokenId, _getProtectorPositionShares(tokenId));
+    }
+
     /**
      * @dev Internal helper to get USD collateral values for original deposit values.
      *      Single source of truth for USD-based collateral calculations.
@@ -831,9 +836,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function getAvailableForWithdrawal(uint256 tokenId) public view returns (uint256) {
         uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId);
 
-        // slither-disable-next-line incorrect-equality — empty-position guard, 0 shares = nothing to withdraw
+        // slither-disable-next-line incorrect-equality — empty active shares means nothing for protectorWithdraw
         if (positionShares_ == 0) {
-            return _getExpiredProtectorBackingClaim(tokenId, _getProtectorPositionShares(tokenId));
+            return 0;
         }
 
         uint256 positionAmount = _getProtectorPositionAmountFromShares(positionShares_);

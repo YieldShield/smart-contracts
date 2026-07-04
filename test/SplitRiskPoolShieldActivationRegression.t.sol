@@ -658,6 +658,22 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingToken.balanceOf(protector2) - minorityBalanceBefore, 1, "minority holder receives one wei");
     }
 
+    function test_expiredBackingClaimIsNotReportedAsWithdrawable() public {
+        (uint256 majorityProtectorTokenId,,) = _createExpiredBackingReserve();
+
+        assertEq(pool.getProtectorPositionAmount(majorityProtectorTokenId), 1, "expired claim remains in position view");
+        assertEq(pool.getExpiredProtectorBackingClaim(majorityProtectorTokenId), 1, "dedicated claim view exposes dust");
+        assertEq(
+            pool.getAvailableForWithdrawal(majorityProtectorTokenId), 0, "protectorWithdraw cannot pay expired claim"
+        );
+
+        vm.prank(protector1);
+        uint256 received = pool.claimExpiredProtectorBacking(majorityProtectorTokenId, 1);
+
+        assertEq(received, 1, "claim path remains available");
+        assertEq(pool.getExpiredProtectorBackingClaim(majorityProtectorTokenId), 0, "claim view clears after claim");
+    }
+
     function test_permissionlessExpiredBackingSettlementPaysOwnerAndClearsReserve() public {
         (uint256 majorityProtectorTokenId, uint256 minorityProtectorTokenId,) = _createExpiredBackingReserve();
 
