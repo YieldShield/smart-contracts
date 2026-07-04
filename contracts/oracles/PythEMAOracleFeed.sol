@@ -249,26 +249,29 @@ contract PythEMAOracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @param priceData The Pyth price data structure
     /// @return price The price in 8 decimals
     function _convertPrice(address token, PythStructs.Price memory priceData) internal pure returns (uint256) {
-        int256 price = priceData.price;
         int32 expo = priceData.expo;
-        if (price <= 0) revert InvalidPrice(token, price);
+        uint256 unsignedPrice = _positivePythPrice(token, priceData.price);
 
         // Calculate the adjustment needed: 10^(expo + 8)
         int32 adjustment = expo + 8;
 
         uint256 result;
         if (adjustment == 0) {
-            result = uint256(price);
+            result = unsignedPrice;
         } else if (adjustment > 0) {
             uint256 scale = _pythPriceScaleOrRevert(token, uint256(uint32(adjustment)));
-            uint256 unsignedPrice = uint256(price);
             if (unsignedPrice > type(uint256).max / scale) revert InvalidPrice(token, 0);
             result = unsignedPrice * scale;
         } else {
-            result = uint256(price) / _pythPriceScaleOrRevert(token, uint256(uint32(-adjustment)));
+            result = unsignedPrice / _pythPriceScaleOrRevert(token, uint256(uint32(-adjustment)));
         }
         if (result == 0) revert InvalidPrice(token, 0);
         return result;
+    }
+
+    function _positivePythPrice(address token, int64 price) internal pure returns (uint256) {
+        if (price <= 0) revert InvalidPrice(token, int256(price));
+        return uint256(uint64(price));
     }
 
     function _pythPriceScaleOrRevert(address token, uint256 exponent) internal pure returns (uint256) {
@@ -277,10 +280,7 @@ contract PythEMAOracleFeed is IOracleFeed, SequencerUptimeGuard {
     }
 
     function _validateConfidence(address token, PythStructs.Price memory priceData) internal view {
-        if (priceData.price <= 0) {
-            return;
-        }
-        uint256 price = uint256(uint64(priceData.price));
+        uint256 price = _positivePythPrice(token, priceData.price);
         uint256 confidence = uint256(priceData.conf);
         if (confidence * 10_000 > price * maxConfidenceBps) {
             revert PriceConfidenceTooWide(token, confidence, price, maxConfidenceBps);
