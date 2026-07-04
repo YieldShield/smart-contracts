@@ -599,9 +599,13 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         );
         pool.resetShieldedTokenTransferIntegrity(0);
 
+        address probeBefore = address(pool.shieldedTransferIntegrityProbe());
+        assertGt(probeBefore.code.length, 0, "pool should expose singleton transfer probe");
+
         vm.prank(governanceTimelock);
         pool.resetShieldedTokenTransferIntegrity(1e18);
         assertFalse(pool.shieldedTokenTransferIntegrityBroken(), "successful probe should clear flag");
+        assertEq(address(pool.shieldedTransferIntegrityProbe()), probeBefore, "reset should reuse singleton probe");
 
         vm.startPrank(shieldedUser);
         shieldedToken.approve(address(pool), 100e18);

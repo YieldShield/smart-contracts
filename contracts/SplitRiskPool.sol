@@ -292,6 +292,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // M-14: default the fee recipient to the pool creator at init.
         poolFeeRecipient = _poolCreator;
+        shieldedTransferIntegrityProbe = new TransferIntegrityProbe(address(this));
 
         // H-5: snapshot the factory's strict-protected-backing-price policy at
         // initialize so a future factory regression cannot silently downgrade
@@ -1041,7 +1042,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
-        TransferIntegrityProbe probe = new TransferIntegrityProbe(address(this));
+        TransferIntegrityProbe probe = shieldedTransferIntegrityProbe;
+        if (address(probe) == address(0)) {
+            probe = new TransferIntegrityProbe(address(this));
+            shieldedTransferIntegrityProbe = probe;
+        }
         uint256 beforeBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
         uint256 probeBalanceBefore = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
         SafeERC20.safeTransfer(IERC20(SHIELDED_TOKEN), address(probe), nominalAmount);
@@ -3332,6 +3337,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public pendingProtectorRewardDust;
     /// @notice True once the shielded token has charged transfer tax against this pool.
     bool public shieldedTokenTransferIntegrityBroken;
+    /// @notice Singleton helper used to verify exact shielded-token round trips.
+    TransferIntegrityProbe public shieldedTransferIntegrityProbe;
     /// @notice share generation => backing dust still claimable by expired protector shares
     mapping(uint256 => uint256) public protectorEpochBackingRemainingReserve;
     /// @notice share generation => expired protector shares that have not yet settled backing dust
@@ -3340,5 +3347,5 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => bool) public protectorEpochBackingPositionSettled;
     /// @notice Pending timelock staged by the factory, if any.
     address private _factoryStagedGovernanceTimelock;
-    uint256[23] private __gap;
+    uint256[22] private __gap;
 }

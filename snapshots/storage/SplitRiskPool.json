@@ -359,6 +359,13 @@
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "shieldedTransferIntegrityProbe",
+      "offset": 1,
+      "slot": "101",
+      "type": "t_contract(TransferIntegrityProbe)9605"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
       "label": "protectorEpochBackingRemainingReserve",
       "offset": 0,
       "slot": "102",
@@ -390,7 +397,7 @@
       "label": "__gap",
       "offset": 0,
       "slot": "106",
-      "type": "t_array(t_uint256)23_storage"
+      "type": "t_array(t_uint256)22_storage"
     }
   ],
   "types": {
@@ -399,10 +406,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)23_storage": {
+    "t_array(t_uint256)22_storage": {
       "encoding": "inplace",
-      "label": "uint256[23]",
-      "numberOfBytes": "736",
+      "label": "uint256[22]",
+      "numberOfBytes": "704",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {
@@ -420,6 +427,11 @@
       "encoding": "inplace",
       "label": "bytes32",
       "numberOfBytes": "32"
+    },
+    "t_contract(TransferIntegrityProbe)9605": {
+      "encoding": "inplace",
+      "label": "contract TransferIntegrityProbe",
+      "numberOfBytes": "20"
     },
     "t_mapping(t_uint256,t_bool)": {
       "encoding": "mapping",
