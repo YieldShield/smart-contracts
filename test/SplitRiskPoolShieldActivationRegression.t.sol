@@ -515,7 +515,7 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingPoolBalance, 0, "tracked backing balance should be cleared");
     }
 
-    function test_backingDustIsSweptWhenFreshProtectorDeposits() public {
+    function test_freshProtectorDepositDoesNotSweepResidualBackingToProtocol() public {
         _disableTvlCapAndUseHighPrecisionPrices();
 
         vm.prank(protector1);
@@ -531,22 +531,81 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         vm.stopPrank();
 
         assertEq(pool.totalProtectorTokens(), 1, "activation should leave one wei backing dust");
-        assertGt(pool.totalProtectorShares(), 0, "dust remains claimable until a fresh deposit resets the epoch");
+        assertGt(pool.totalProtectorShares(), 0, "dust remains claimable until a fresh deposit snapshots the epoch");
 
         uint256 protocolBalanceBefore = backingToken.balanceOf(address(0xdead));
         vm.prank(protector1);
         uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
 
         assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId1), 0, "old position 1 should stay wiped");
-        assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId2), 0, "old position 2 should stay wiped");
+        assertEq(
+            pool.getProtectorPositionAmount(staleProtectorTokenId2), 0, "old position 2 waits for final dust claim"
+        );
         assertEq(
             pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "new depositor should get only fresh backing"
         );
         assertEq(pool.totalProtectorTokens(), 100e18, "pool should track only the fresh deposit");
         assertEq(pool.totalProtectorShares(), 100e18, "fresh deposit should reset active share supply");
-        assertEq(backingToken.balanceOf(address(0xdead)) - protocolBalanceBefore, 1, "residual dust should be swept");
+        assertEq(
+            backingToken.balanceOf(address(0xdead)), protocolBalanceBefore, "protocol must not receive residual dust"
+        );
         (, uint256 backingPoolBalance) = pool.getPoolBalances();
-        assertEq(backingPoolBalance, 100e18, "tracked backing balance should only include fresh deposit");
+        assertEq(backingPoolBalance, 100e18 + 1, "tracked backing balance should include claimable expired dust");
+
+        vm.prank(protector1);
+        uint256 firstClaim = pool.claimExpiredProtectorBacking(staleProtectorTokenId1, 0);
+        assertEq(firstClaim, 0, "first equal holder's claim rounds to zero");
+        assertEq(pool.getProtectorPositionAmount(staleProtectorTokenId2), 1, "final old holder should inherit dust");
+
+        uint256 oldHolderBalanceBefore = backingToken.balanceOf(protector2);
+        vm.prank(protector2);
+        uint256 finalClaim = pool.claimExpiredProtectorBacking(staleProtectorTokenId2, 1);
+        assertEq(finalClaim, 1, "final old holder should receive residual dust");
+        assertEq(backingToken.balanceOf(protector2) - oldHolderBalanceBefore, 1, "expired holder receives dust");
+
+        (, backingPoolBalance) = pool.getPoolBalances();
+        assertEq(backingPoolBalance, 100e18, "expired dust claim should leave only active backing");
+    }
+
+    function test_freshProtectorDepositPreservesRecoverableResidualBackingForExpiredProtectors() public {
+        _disableTvlCapAndUseHighPrecisionPrices();
+
+        vm.prank(protector1);
+        uint256 majorityProtectorTokenId = pool.depositBackingAsset(address(backingToken), 150e18, 0);
+
+        vm.prank(protector2);
+        uint256 minorityProtectorTokenId = pool.depositBackingAsset(address(backingToken), 50e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 200e18 - 2, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        assertEq(pool.totalProtectorTokens(), 2, "activation should leave two wei backing dust");
+        assertEq(pool.getProtectorPositionAmount(majorityProtectorTokenId), 1, "majority holder has recoverable dust");
+
+        uint256 protocolBalanceBefore = backingToken.balanceOf(address(0xdead));
+        vm.prank(protector1);
+        uint256 newProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        assertEq(backingToken.balanceOf(address(0xdead)), protocolBalanceBefore, "protocol must not receive dust");
+        assertEq(
+            pool.getProtectorPositionAmount(newProtectorTokenId), 100e18, "fresh depositor should not receive old dust"
+        );
+        assertEq(pool.totalProtectorTokens(), 100e18, "active backing excludes expired dust");
+
+        uint256 majorityBalanceBefore = backingToken.balanceOf(protector1);
+        vm.prank(protector1);
+        uint256 majorityClaim = pool.claimExpiredProtectorBacking(majorityProtectorTokenId, 1);
+        assertEq(majorityClaim, 1, "majority holder should recover its residual claim");
+        assertEq(backingToken.balanceOf(protector1) - majorityBalanceBefore, 1, "majority holder receives one wei");
+
+        uint256 minorityBalanceBefore = backingToken.balanceOf(protector2);
+        vm.prank(protector2);
+        uint256 minorityClaim = pool.claimExpiredProtectorBacking(minorityProtectorTokenId, 1);
+        assertEq(minorityClaim, 1, "minority holder should receive final residual dust");
+        assertEq(backingToken.balanceOf(protector2) - minorityBalanceBefore, 1, "minority holder receives one wei");
     }
 
     function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {

@@ -386,6 +386,46 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _assetsFromProtectorShares(shares, totalProtectorTokens, totalProtectorShares);
     }
 
+    function _getExpiredProtectorBackingClaim(uint256 tokenId, uint256 positionShares_)
+        internal
+        view
+        returns (uint256)
+    {
+        if (positionShares_ == 0 || protectorEpochBackingPositionSettled[tokenId]) {
+            return 0;
+        }
+
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        if (positionEpoch >= protectorShareEpoch) {
+            return 0;
+        }
+
+        uint256 remainingBacking = protectorEpochBackingRemainingReserve[positionEpoch];
+        uint256 remainingShares = protectorEpochBackingRemainingShares[positionEpoch];
+        if (remainingBacking == 0 || remainingShares == 0) {
+            return 0;
+        }
+
+        if (positionShares_ >= remainingShares) {
+            return remainingBacking;
+        }
+        return Math.mulDiv(positionShares_, remainingBacking, remainingShares);
+    }
+
+    function _hasExpiredProtectorBackingClaimState(uint256 tokenId, uint256 positionShares_)
+        internal
+        view
+        returns (bool)
+    {
+        if (positionShares_ == 0 || protectorEpochBackingPositionSettled[tokenId]) {
+            return false;
+        }
+
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        return positionEpoch < protectorShareEpoch && protectorEpochBackingRemainingReserve[positionEpoch] != 0
+            && protectorEpochBackingRemainingShares[positionEpoch] != 0;
+    }
+
     /// @dev Converts native backing-token units into 18-decimal protector share units.
     ///      Asset balances stay in native units; only shares are normalized so
     ///      high-decimal backing tokens cannot make material shielded rewards
@@ -415,7 +455,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @notice Returns the current backing-token claim for a protector position.
     function getProtectorPositionAmount(uint256 tokenId) public view returns (uint256) {
         uint256 shares = _getActiveProtectorPositionShares(tokenId);
-        return _getProtectorPositionAmountFromShares(shares);
+        if (shares != 0) {
+            return _getProtectorPositionAmountFromShares(shares);
+        }
+        return _getExpiredProtectorBackingClaim(tokenId, _getProtectorPositionShares(tokenId));
     }
 
     /**
@@ -788,7 +831,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 positionShares_ = _getActiveProtectorPositionShares(tokenId);
 
         // slither-disable-next-line incorrect-equality — empty-position guard, 0 shares = nothing to withdraw
-        if (positionShares_ == 0) return 0;
+        if (positionShares_ == 0) {
+            return _getExpiredProtectorBackingClaim(tokenId, _getProtectorPositionShares(tokenId));
+        }
 
         uint256 positionAmount = _getProtectorPositionAmountFromShares(positionShares_);
         if (positionAmount == 0) {
@@ -1534,33 +1579,33 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /// @dev Ends the current share epoch when shield activation wipes all backing assets.
-    ///      If only below-minimum unprotected dust remains, the dust is swept so stale
-    ///      live shares cannot permanently block fresh protector deposits.
+    ///      If only below-minimum unprotected backing remains, it is moved into an
+    ///      expired-epoch reserve so stale shares cannot block fresh protector deposits
+    ///      and the old holders can still pull their residual claim.
     function _expireProtectorShareEpochIfDrained(bool includeUnprotectedDust) internal {
         uint256 currentProtectorTokens = totalProtectorTokens;
-        bool sweepUnprotectedDust = includeUnprotectedDust && totalValueAtDeposit == 0 && currentProtectorTokens != 0
+        bool reserveUnprotectedDust = includeUnprotectedDust && totalValueAtDeposit == 0 && currentProtectorTokens != 0
             && currentProtectorTokens < poolConfig.backingMinDepositAmount;
 
-        if (totalProtectorShares != 0 && (currentProtectorTokens == 0 || sweepUnprotectedDust)) {
+        if (totalProtectorShares != 0 && (currentProtectorTokens == 0 || reserveUnprotectedDust)) {
             uint256 expiredEpoch = protectorShareEpoch;
+            uint256 expiredShares = totalProtectorShares;
             protectorEpochFinalRewardPerShare[expiredEpoch] = rewardPerShareAccumulated;
-            protectorEpochRemainingShares[expiredEpoch] = totalProtectorShares;
+            protectorEpochRemainingShares[expiredEpoch] = expiredShares;
             if (currentEpochCommissionReserve != 0) {
                 protectorEpochRemainingReserve[expiredEpoch] += currentEpochCommissionReserve;
                 historicalCommissionReserve += currentEpochCommissionReserve;
                 currentEpochCommissionReserve = 0;
             }
+            if (reserveUnprotectedDust) {
+                protectorEpochBackingRemainingReserve[expiredEpoch] += currentProtectorTokens;
+                protectorEpochBackingRemainingShares[expiredEpoch] = expiredShares;
+                totalProtectorTokens = 0;
+                emit EventsLib.ProtectorResidualBackingReserved(expiredEpoch, BACKING_TOKEN, currentProtectorTokens);
+            }
             pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
-        }
-
-        if (sweepUnprotectedDust) {
-            totalProtectorTokens = 0;
-            poolState.totalBackingTokenBalance -= currentProtectorTokens;
-            uint256 received =
-                _transferOutAndGetReceived(BACKING_TOKEN, poolConfig.protocolFeeRecipient, currentProtectorTokens);
-            emit EventsLib.ProtectorResidualBackingSwept(poolConfig.protocolFeeRecipient, BACKING_TOKEN, received);
         }
     }
 
@@ -1734,6 +1779,66 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (_claimCommissionTo(positionOwner, tokenId, positionShares_) == 0) {
             emit EventsLib.NoCommissionToClaim(positionOwner, tokenId);
         }
+    }
+
+    /**
+     * @notice Claims residual backing reserved for a protector position from an expired share epoch.
+     * @dev Used when a shield activation leaves below-minimum backing dust that would otherwise
+     *      block fresh protector deposits. The residual is separated from active protector backing
+     *      but remains withdrawable by the expired NFT owners.
+     * @param tokenId The protector NFT token ID
+     * @param minAmountOut Minimum backing tokens the recipient must actually receive
+     * @return received Actual backing tokens received by the owner
+     */
+    function claimExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut)
+        external
+        nonReentrant
+        onlyProtectorNFTOwner(tokenId)
+        returns (uint256 received)
+    {
+        _requirePoolAccountingBalancesCovered();
+        _requireProtectorWithdrawalAllowed(msg.sender, "claimExpiredProtectorBacking");
+
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
+        if (!_hasExpiredProtectorBackingClaimState(tokenId, positionShares_)) {
+            revert ErrorsLib.InvalidTokenId();
+        }
+
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+
+        // Settle any expired-epoch commissions before burning the receipt.
+        _claimCommissionTo(msg.sender, tokenId, positionShares_);
+        if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
+            revert ErrorsLib.InvalidTokenId();
+        }
+
+        uint256 remainingBacking = protectorEpochBackingRemainingReserve[positionEpoch];
+        uint256 remainingShares = protectorEpochBackingRemainingShares[positionEpoch];
+        uint256 claimAmount;
+        if (positionShares_ >= remainingShares) {
+            claimAmount = remainingBacking;
+            protectorEpochBackingRemainingReserve[positionEpoch] = 0;
+            protectorEpochBackingRemainingShares[positionEpoch] = 0;
+        } else {
+            claimAmount = Math.mulDiv(positionShares_, remainingBacking, remainingShares);
+            protectorEpochBackingRemainingReserve[positionEpoch] = remainingBacking - claimAmount;
+            protectorEpochBackingRemainingShares[positionEpoch] = remainingShares - positionShares_;
+        }
+
+        protectorEpochBackingPositionSettled[tokenId] = true;
+        IProtectorReceiptNFT(protectorReceiptNFT).burn(tokenId);
+        delete rewardDebt[tokenId];
+        delete protectorShares[tokenId];
+        delete protectorShareEpochs[tokenId];
+        delete commissionsClaimed[tokenId];
+
+        if (claimAmount != 0) {
+            poolState.totalBackingTokenBalance -= claimAmount;
+            received = _transferOutAndGetReceived(BACKING_TOKEN, msg.sender, claimAmount);
+        }
+        SlippageLib.enforceMinReceived(received, minAmountOut);
+
+        emit EventsLib.ProtectorAssetWithdrawn(msg.sender, BACKING_TOKEN, received, positionShares_);
     }
 
     /**
@@ -3163,5 +3268,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     uint256 public pendingProtectorRewardDust;
     /// @notice True once the shielded token has charged transfer tax against this pool.
     bool public shieldedTokenTransferIntegrityBroken;
-    uint256[27] private __gap;
+    /// @notice share generation => backing dust still claimable by expired protector shares
+    mapping(uint256 => uint256) public protectorEpochBackingRemainingReserve;
+    /// @notice share generation => expired protector shares that have not yet settled backing dust
+    mapping(uint256 => uint256) public protectorEpochBackingRemainingShares;
+    /// @notice tokenId => whether its expired-epoch backing dust has been settled
+    mapping(uint256 => bool) public protectorEpochBackingPositionSettled;
+    uint256[24] private __gap;
 }

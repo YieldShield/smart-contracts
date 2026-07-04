@@ -359,10 +359,31 @@
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
-      "label": "__gap",
+      "label": "protectorEpochBackingRemainingReserve",
       "offset": 0,
       "slot": "102",
-      "type": "t_array(t_uint256)27_storage"
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "protectorEpochBackingRemainingShares",
+      "offset": 0,
+      "slot": "103",
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "protectorEpochBackingPositionSettled",
+      "offset": 0,
+      "slot": "104",
+      "type": "t_mapping(t_uint256,t_bool)"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "105",
+      "type": "t_array(t_uint256)24_storage"
     }
   ],
   "types": {
@@ -371,10 +392,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)27_storage": {
+    "t_array(t_uint256)24_storage": {
       "encoding": "inplace",
-      "label": "uint256[27]",
-      "numberOfBytes": "864",
+      "label": "uint256[24]",
+      "numberOfBytes": "768",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {
