@@ -411,6 +411,10 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
     /// @dev ERC4626 strict support is only advertised when the registered underlying oracle
     ///      also advertises strict support for the vault's underlying asset.
     function supportsStrictProtectedPrice(address vault) external view returns (bool) {
+        if (_requiresSequencerUptimeFeed() && address(sequencerUptimeFeed) == address(0)) {
+            return false;
+        }
+
         address underlying = vaultConfigs[vault].underlying;
         if (underlying == address(0)) {
             return false;

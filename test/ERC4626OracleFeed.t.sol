@@ -9,6 +9,7 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC4626WithDecimalsOffset } from "../contracts/mocks/MockERC4626WithDecimalsOffset.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
+import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -194,6 +195,25 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(feeVault.convertToAssets(1e18), 1e18, "precondition: accounting share price is one asset");
         assertEq(feeVault.previewRedeem(1e18), 0.99e18, "precondition: redeem preview includes fee");
         assertEq(erc4626Feed.getPrice(address(feeVault)), 99_000_000, "oracle should price redeemable assets");
+    }
+
+    function test_SupportsStrictProtectedPriceRequiresSequencerFeedOnKnownL2() public {
+        vm.chainId(42161);
+        ERC4626OracleFeed l2Feed = new ERC4626OracleFeed(address(underlyingOracle));
+        l2Feed.registerVault(address(vault), address(underlyingAsset));
+
+        assertFalse(
+            l2Feed.supportsStrictProtectedPrice(address(vault)),
+            "known L2 feed without sequencer feed must not advertise strict support"
+        );
+
+        MockSequencerUptimeFeed sequencerFeed = new MockSequencerUptimeFeed();
+        l2Feed.setSequencerUptimeFeed(address(sequencerFeed));
+
+        assertTrue(
+            l2Feed.supportsStrictProtectedPrice(address(vault)),
+            "strict support returns after required sequencer feed is configured"
+        );
     }
 
     function test_RegisterVault_RevertsOnInvalidVault() public {
