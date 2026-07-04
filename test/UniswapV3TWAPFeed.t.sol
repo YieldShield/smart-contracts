@@ -412,6 +412,35 @@ contract UniswapV3TWAPFeedTest is Test {
         harness.setQuoteTokenOracle(address(newQuoteOracle));
     }
 
+    function test_setQuoteTokenOracle_AllowsRecoveryWhenOldOracleIsStale() public {
+        StaleAwareQuoteOracle staleOldOracle = new StaleAwareQuoteOracle();
+        staleOldOracle.setPrice(1e8);
+        harness.setQuoteTokenOracle(address(staleOldOracle));
+
+        staleOldOracle.setStale(true);
+        staleOldOracle.setPublishTime(uint64(block.timestamp - 1 hours));
+
+        MockOracle newQuoteOracle = new MockOracle();
+        newQuoteOracle.setPrice(address(quoteToken), 2e8);
+
+        harness.setQuoteTokenOracle(address(newQuoteOracle));
+
+        assertEq(address(harness.quoteTokenOracle()), address(newQuoteOracle));
+    }
+
+    function test_setQuoteTokenOracle_RevertsWhenNewOracleIsStale() public {
+        StaleAwareQuoteOracle staleNewOracle = new StaleAwareQuoteOracle();
+        staleNewOracle.setStale(true);
+        staleNewOracle.setPublishTime(uint64(block.timestamp - 1 hours));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TWAPFeed.StaleQuoteTokenPrice.selector, address(quoteToken), uint64(block.timestamp - 1 hours)
+            )
+        );
+        harness.setQuoteTokenOracle(address(staleNewOracle));
+    }
+
     function test_quoteTokenOracleFailover_RecoversWhenOldOracleReverts() public {
         MockERC20 token = new MockERC20("Token", "TOKEN");
         MockUniswapV3Pool pool =

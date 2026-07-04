@@ -288,25 +288,26 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     }
 
     /// @notice Set the quote token oracle
-    /// @dev L-6: a swap to a quote oracle whose reported price diverges from
-    ///      the existing oracle's by more than MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS
-    ///      is rejected. The quote oracle multiplies every TWAP price; an
-    ///      unbounded swap with a wildly inflated quote price would
-    ///      mis-value every Uniswap-priced asset in a single tx. Emit
-    ///      old/new prices so monitoring can flag suspicious approved swaps.
+    /// @dev A fresh-to-fresh swap whose reported price diverges from the existing
+    ///      oracle by more than MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS is rejected.
+    ///      If the old oracle is stale or reverting, the swap may proceed using
+    ///      only the new oracle's fresh normalized price so governance can recover.
+    ///      Emit old/new prices when both are observable.
     /// @param _quoteTokenOracle New quote token oracle address
     function setQuoteTokenOracle(address _quoteTokenOracle) external onlyOwner {
         if (_quoteTokenOracle == address(0)) revert("Invalid quote token oracle");
         address oldOracle = address(quoteTokenOracle);
+        uint256 newPrice = _getNormalizedQuoteTokenPrice(_quoteTokenOracle);
 
         if (oldOracle != address(0)) {
-            uint256 oldPrice = _getNormalizedQuoteTokenPrice(oldOracle);
-            uint256 newPrice = _getNormalizedQuoteTokenPrice(_quoteTokenOracle);
-            uint256 deviationBps = _absoluteDeviationBps(oldPrice, newPrice);
-            if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
-                revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, deviationBps);
+            (bool oldPriceAvailable, uint256 oldPrice) = _tryGetNormalizedQuoteTokenPrice(oldOracle);
+            if (oldPriceAvailable) {
+                uint256 deviationBps = _absoluteDeviationBps(oldPrice, newPrice);
+                if (deviationBps > MAX_QUOTE_ORACLE_SWAP_DEVIATION_BPS) {
+                    revert QuoteOracleSwapDeviationTooHigh(oldPrice, newPrice, deviationBps);
+                }
+                emit QuoteTokenOracleSwapPrices(oldPrice, newPrice, deviationBps);
             }
-            emit QuoteTokenOracleSwapPrices(oldPrice, newPrice, deviationBps);
         }
 
         quoteTokenOracle = IOracleFeed(_quoteTokenOracle);
