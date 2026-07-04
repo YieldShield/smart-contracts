@@ -205,7 +205,7 @@ contract ShieldReceiptNFT is ERC721, Ownable, IShieldReceiptNFT {
         if (approvalTimestamp == 0) {
             return false;
         }
-        return approvalTimestamp >= _unlockTime(tokenId) && approvalTimestamp > _tokenMovementTimestamp[tokenId];
+        return approvalTimestamp >= _unlockTime(tokenId) && approvalTimestamp >= _tokenMovementTimestamp[tokenId];
     }
 
     /// @dev Block per-token approvals during the lock window. Without this gate,

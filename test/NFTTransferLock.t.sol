@@ -246,7 +246,6 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         vm.expectRevert();
         shieldNFT.transferFrom(recipient, finalRecipient, tokenId);
 
-        vm.warp(block.timestamp + 1);
         vm.prank(recipient);
         shieldNFT.setApprovalForAll(operator, true);
 
@@ -384,7 +383,6 @@ contract NFTTransferLockTest is Test, TestTimelockHelper {
         vm.expectRevert();
         protectorNFT.transferFrom(recipient, finalRecipient, tokenId);
 
-        vm.warp(block.timestamp + 1);
         vm.prank(recipient);
         protectorNFT.setApprovalForAll(operator, true);
 
