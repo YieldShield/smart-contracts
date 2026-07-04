@@ -169,9 +169,10 @@ interface ICompositeOracle is IPriceOracle {
 
     // ============ Graceful Fallback ============
 
-    /// @notice Get value with graceful fallback (tries backup sources, never reverts for configured tokens)
-    /// @dev Tries active feed first, then backup if available. Returns (0, false) if all sources fail.
-    ///      This is useful for _checkCapacity to get price even when primary oracle is stale.
+    /// @notice Get value with guarded fallback for configured tokens
+    /// @dev Tries the active feed first. Uses the inactive feed only when the active feed
+    ///      has a transient failure and no dual-feed dispute is active or unresolved.
+    ///      Returns (0, false) when all allowed sources fail or the active feed is disputed.
     /// @param token The token address
     /// @param amount The amount of tokens
     /// @return value USD value (8 decimals), 0 if all sources fail

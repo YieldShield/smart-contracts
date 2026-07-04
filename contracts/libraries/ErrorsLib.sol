@@ -113,8 +113,6 @@ library ErrorsLib {
     error FeeAccrualWouldConsumePosition(uint256 tokenId, uint256 positionAmount, uint256 feeAmount);
     /// @notice Thrown when actual token balance no longer covers recorded pool accounting
     error AccountedBalanceExceedsTokenBalance(address token, uint256 accountedBalance, uint256 actualBalance);
-    /// @notice Thrown when old protector backing must be claimed before a fresh epoch can launch
-    error ResidualProtectorBackingPending(uint256 amount);
     /// @notice Thrown when cross-asset exits would compensate protectors with a taxed shielded token
     error IncompatibleShieldedTokenForCrossAssetWithdrawal(address token);
     /// @notice Thrown when governance must prove shielded transfer integrity before clearing a suspension

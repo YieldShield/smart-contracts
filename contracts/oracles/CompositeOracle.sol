@@ -574,9 +574,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
-    /// @dev Dispute-only price reader used by the dual-feed challenge gate. Challenges
-    ///      must be anchored to the backup feed's protected price path, so a fresh raw
-    ///      `getPriceUnsafe` reading cannot bypass feed-level circuit breakers.
+    /// @dev Named wrapper for dispute-gate reads. It intentionally uses the same
+    ///      protected `getPrice` path as normal feed reads, rather than `getPriceUnsafe`,
+    ///      so feed-level circuit breakers still apply during challenge checks.
     function _tryGetNormalizedDisputeFeedPrice(address feed, address token)
         internal
         view

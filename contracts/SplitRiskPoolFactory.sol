@@ -126,9 +126,9 @@ contract SplitRiskPoolFactory is
      * including minimumCreationBondUsd below, are part of that initial baseline and
      * are populated by initialize() on first deploy.
      *
-     * After deployment, future upgrades must append new storage below this marker and
-     * initialize newly-added config through a reinitializer called with upgradeToAndCall.
-     * Do not rely on initialize() to seed config added in later versions.
+     * Pool and factory UUPS upgrades are disabled. Keep new deployment state appended
+     * below this marker so storage snapshots remain reviewable, but ship logic changes
+     * through a fresh factory deployment rather than upgradeToAndCall.
      */
     address[] public activePools;
     mapping(address => uint256) private _activePoolIndexPlusOne;
@@ -156,9 +156,8 @@ contract SplitRiskPoolFactory is
      * @notice Initializes the factory contract
      * @dev Sets up access control, governance timelock, pool implementation address,
      *      and the v1 creation-bond baseline. Can only be called once during deployment.
-     *      minimumCreationBondUsd is seeded here for first deployment only because it is part of the
-     *      original storage baseline. Future upgrades must not rely on initialize; any config added
-     *      after deployment must use a reinitializer executed via upgradeToAndCall.
+     *      minimumCreationBondUsd is seeded here because it is part of the original storage baseline.
+     *      Future logic/config additions should be introduced through a fresh factory deployment.
      * @param initialOwner Initial owner address
      * @param governanceTimelock_ Governance timelock address
      * @param poolImplementation_ Address of the SplitRiskPool implementation contract
@@ -1869,9 +1868,9 @@ contract SplitRiskPoolFactory is
     bytes32 public poolImplementationCodehash;
 
     /**
-     * @dev Storage gap for future upgrades.
-     * This ensures that future versions of this contract can add new storage variables
-     * without colliding with storage variables in derived contracts.
+     * @dev Reserved storage slots retained for layout documentation and compatibility
+     * with the checked storage snapshots. Factory upgrades are disabled; future logic
+     * changes require fresh deployment instead of consuming this gap on-chain.
      */
     uint256[32] private __gap;
 }

@@ -454,8 +454,7 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
 
     function test_claimCommission_StaysCallableWhenPaused() public {
         // Pass-3 audit follow-up: B4 made commission-bucket overflow revert
-        // with `RewardAccumulationIncomplete`, and `_tryCalculateAndAccumulateFees`
-        // does not catch that revert. Once `accumulatedCommissions` saturates,
+        // with `RewardAccumulationIncomplete`. Once `accumulatedCommissions` saturates,
         // every fee-accruing withdrawal reverts until the bucket is drained —
         // and `claimCommission` is the ONLY drain path. Pause must therefore
         // NOT block `claimCommission`, otherwise a saturated+paused pool

@@ -346,6 +346,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @notice Get the current utilization ratio of the pool
      * @dev Returns the USD-based ratio so tokens with different decimals or prices
      *      are compared in the same unit. Equivalent to getUtilizationRatioUsd().
+     *      Reads the protected backing oracle and reverts when that price path fails closed.
      * @return utilizationRatio Utilization ratio in basis points (0-10000 = 0%-100%)
      */
     function getUtilizationRatio() public view returns (uint256) {
@@ -1318,28 +1319,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
     }
 
-    /// @dev Best-effort fee accrual for exit flows that can safely continue without
-    ///      newly priced fees. If protected shielded pricing is unavailable or
-    ///      disputed, returns zero new fees and leaves the position amount intact.
-    function _tryCalculateAndAccumulateFees(uint256 tokenId)
-        internal
-        returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
-    {
-        if (shieldedTokenTransferIntegrityBroken) {
-            _advanceFeeBaselineWithoutAccruingFees(tokenId);
-            return (0, 0, 0);
-        }
-
-        if (_hasOraclePendingChallenge(SHIELDED_TOKEN) || _hasOracleChallengeablePrice(SHIELDED_TOKEN)) {
-            return (0, 0, 0);
-        }
-
-        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedFeeAccrualPrice();
-        if (!priceAvailable) return (0, 0, 0);
-
-        return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
-    }
-
     function _advanceFeeBaselineWithoutAccruingFees(uint256 tokenId) internal {
         (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedFeeAccrualPrice();
         if (!priceAvailable) {
@@ -1944,9 +1923,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      *      protector tokens in the pool to meet collateral requirements.
      *      Uses USD-BASED accounting for capacity checks via price oracle.
      *      Stores valueAtDeposit and collateralAmount for cross-asset withdrawal.
+     *      Shielded tokens that debit transfer tax are rejected because cross-asset
+     *      accounting requires exact shielded-token round trips.
      * @param asset The yield-bearing token to deposit (must be SHIELDED_TOKEN)
      * @param depositAmount Amount of asset to deposit
-     * @param minReceivedAmount Minimum tokens to receive after transfer (slippage protection for fee-on-transfer tokens)
+     * @param minReceivedAmount Minimum tokens to receive; exact receipt must still equal depositAmount
      * @return tokenId The minted NFT token ID
      * @custom:error UnsupportedAsset If asset is not the shielded token
      * @custom:error InsufficientDepositAmount If amount is below minimum
@@ -1978,7 +1959,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
 
-        // Transfer asset from depositor (balance-delta for fee-on-transfer tokens)
+        // Balance-delta transfer, followed by an exact-receipt check. Fee-on-transfer
+        // shielded tokens are intentionally unsupported for cross-asset accounting.
         uint256 received = _transferAndGetReceived(asset, depositAmount);
         if (received != depositAmount) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
@@ -2384,8 +2366,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @notice Withdraws tokens from a protector position
      * @dev Allows partial or full withdrawal. For partial withdrawals, proportionally
      *      adjusts reward debt and claimed commissions (MasterChef pattern).
-     *      Requires unlock process to be completed (unlockRequestTime <= block.timestamp).
-     *      Unlock completion removes the time gate only; collateral and utilization limits still apply.
+     *      Requires the unlock process to be completed and still inside the 7-day
+     *      protector unlock window. Once the window expires, the protector must
+     *      start a fresh unlock process. Unlock completion removes the time gate
+     *      only; collateral and utilization limits still apply.
      *      Only available amount (after utilization lock) can be withdrawn.
      * @param tokenId The protector NFT token ID
      * @param amount Amount of tokens to withdraw
@@ -2394,7 +2378,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @custom:error InvalidTokenId If caller is not the NFT owner
      * @custom:error UnsupportedAsset If preferredAsset is not BACKING_TOKEN
      * @custom:error NoTokensToWithdraw If amount is zero
-     * @custom:error InsufficientUnlockedTokens If unlock period has not passed or amount exceeds available backing
+     * @custom:error InsufficientUnlockedTokens If unlock is immature, expired, or amount exceeds available backing
      * @custom:error InsufficientTokenBalance If pool has insufficient balance
      * @custom:error AccessControlDenied If access control is set and caller is not authorized
      */
@@ -2990,9 +2974,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         ProtocolAccessControlUpgradeable.unpause();
     }
 
-    /// @notice Clears a shielded-token transfer-integrity suspension after governance validates a clean round trip.
+    /// @notice Clears a shielded-token transfer-integrity suspension after governance validates a clean pool-side round trip.
     /// @dev Governance is the timelock. If the pool still accounts for shielded-token liabilities,
-    ///      `probeAmount` must be nonzero and must round-trip exactly through a third-party probe.
+    ///      `probeAmount` must be nonzero and must round-trip exactly from the pool through
+    ///      a third-party probe and back. This proves the pool/probe transfer path, not that
+    ///      every arbitrary user transfer amount is untaxed.
     function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external onlyGovernance {
         if (!shieldedTokenTransferIntegrityBroken) {
             return;
@@ -3202,10 +3188,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     }
 
     /**
-     * @dev Storage gap for future upgrades.
-     * This ensures that future versions of this contract can add new storage variables
-     * without colliding with storage variables in derived contracts.
-     * The remaining slots shrink as upgrade state is appended below.
+     * @dev Reserved storage slots retained for layout documentation and compatibility
+     * with the checked storage snapshots. Pool upgrades are disabled; future logic
+     * changes require fresh deployment instead of consuming this gap on-chain.
      */
     /// @notice Cached shielded token decimals for native-unit accounting
     uint8 public shieldedTokenDecimals;
@@ -3221,13 +3206,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorShares;
     /// @notice Sticky launch flag used to lock creator-only ACL changes after first deposit
     /// @dev Layout-stable: this field has occupied this slot since the original
-    ///      deployment. Do NOT insert new state above it — append after, claiming
-    ///      slots from `__gap`, so existing proxy storage remains valid on upgrade.
+    ///      deployment. Do NOT insert new state above it; append after existing
+    ///      fields so storage snapshots remain comparable across fresh deployments.
     bool public hasEverLaunched;
     /// @notice Current protector share generation; increments when a shield activation wipes all backing assets
-    /// @dev Appended after `hasEverLaunched` in upgrade-safe order: existing proxies
-    ///      had this slot zero-initialised inside the prior `__gap`, so the value
-    ///      reads as 0 on first upgrade — matching the intended initial epoch.
+    /// @dev Appended after `hasEverLaunched` in the historical layout order and
+    ///      retained so storage snapshots continue documenting the deployed shape.
     uint256 public protectorShareEpoch;
     /// @notice tokenId => share generation used to exclude wiped shares from future backing deposits
     mapping(uint256 => uint256) public protectorShareEpochs;
