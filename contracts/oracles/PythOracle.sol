@@ -451,7 +451,8 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
     /// @notice Whether this token feed satisfies the strict protected-price policy.
     /// @dev Pyth's protected path checks freshness, confidence width, and spot/EMA deviation.
     function supportsStrictProtectedPrice(address token) external view returns (bool) {
-        return isTokenSupported[token];
+        return
+            isTokenSupported[token] && (!_requiresSequencerUptimeFeed() || address(sequencerUptimeFeed) != address(0));
     }
 
     /// @notice Calculate the protected USD value of an amount of tokens

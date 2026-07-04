@@ -9,6 +9,7 @@ import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
+import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 
 contract RejectingPythRefundCaller {
     receive() external payable {
@@ -191,6 +192,28 @@ contract PythOracleTest is Test {
         );
         assertFalse(
             oracle.supportsStrictProtectedPrice(address(0xBEEF)), "unsupported token should not support strict path"
+        );
+    }
+
+    function testSupportsStrictProtectedPriceRequiresSequencerFeedOnKnownL2() public {
+        vm.chainId(42161);
+        vm.prank(owner);
+        PythOracle l2Oracle = new PythOracle(address(mockPyth), MAX_PRICE_AGE);
+        vm.prank(owner);
+        l2Oracle.setTokenPriceFeed(address(token1), FEED_ID_1);
+
+        assertFalse(
+            l2Oracle.supportsStrictProtectedPrice(address(token1)),
+            "strict marker should fail closed without required sequencer feed"
+        );
+
+        MockSequencerUptimeFeed sequencerFeed = new MockSequencerUptimeFeed();
+        vm.prank(owner);
+        l2Oracle.setSequencerUptimeFeed(address(sequencerFeed));
+
+        assertTrue(
+            l2Oracle.supportsStrictProtectedPrice(address(token1)),
+            "strict marker should recover after sequencer feed is configured"
         );
     }
 
