@@ -145,6 +145,7 @@ contract SplitRiskPoolFactory is
     event PoolImplementationPinChecked(address indexed implementation, bytes32 codehash);
     event BootstrapModeFinalized(address indexed caller);
     event ManagedOracleUpdated(bytes32 indexed oracleRole, address indexed previousOracle, address indexed newOracle);
+    event CompositeOracleTokenFeedRemoved(address indexed token);
 
     error PoolImplementationCodehashMismatch(bytes32 expectedCodehash, bytes32 actualCodehash);
 
@@ -533,7 +534,7 @@ contract SplitRiskPoolFactory is
     }
 
     function removeCompositeOracleTokenFeed(address token) external onlyGovernance {
-        _removeTokenAndCompositeFeed(token);
+        _removeCompositeOracleFeedOnly(token);
     }
 
     function scheduleCompositeOracleForceResetToPrimary(address token) external onlyGovernance {
@@ -1842,6 +1843,17 @@ contract SplitRiskPoolFactory is
         delete tokenInfo[token];
         delete tokenRequiresStrictProtectedPrice[token];
         emit EventsLib.TokenRemoved(token);
+    }
+
+    function _removeCompositeOracleFeedOnly(address token) internal {
+        if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
+        _requireTokenUnusedByActivePools(token);
+        _compositeOracleAdmin().removeTokenOracleFeed(token);
+        TokenWhitelistLib.TokenInfo storage info = tokenInfo[token];
+        info.primaryOracleFeed = address(0);
+        info.backupOracleFeed = address(0);
+        delete tokenRequiresStrictProtectedPrice[token];
+        emit CompositeOracleTokenFeedRemoved(token);
     }
 
     function _configureOracleFeeds(address token, address primaryOracleFeed, address backupOracleFeed) internal {

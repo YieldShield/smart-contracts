@@ -910,12 +910,20 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.removeCompositeOracleTokenFeed(address(tokenB));
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removed");
-        assertFalse(factory.isWhitelisted(address(tokenB)), "token should be delisted with removed feed");
-        (,, address removedToken, address primaryOracleFeed, address backupOracleFeed,) =
+        assertTrue(factory.isWhitelisted(address(tokenB)), "feed removal should not delist token");
+        (,, address storedToken, address primaryOracleFeed, address backupOracleFeed,) =
             factory.tokenInfo(address(tokenB));
-        assertEq(removedToken, address(0), "tokenInfo should be deleted");
+        assertEq(storedToken, address(tokenB), "tokenInfo should remain for governance re-registration");
         assertEq(primaryOracleFeed, address(0), "primary feed should be cleared");
         assertEq(backupOracleFeed, address(0), "backup feed should be cleared");
+
+        vm.prank(governanceTimelock);
+        factory.setCompositeOracleTokenFeed(address(tokenB), address(oracle));
+
+        assertTrue(compositeOracle.isTokenSupported(address(tokenB)), "governance should re-register feed");
+        (,,, primaryOracleFeed, backupOracleFeed,) = factory.tokenInfo(address(tokenB));
+        assertEq(primaryOracleFeed, address(oracle), "primary feed should be restored");
+        assertEq(backupOracleFeed, address(0), "backup feed should remain empty");
     }
 
     function testFactoryCannotRemoveCompositeOracleFeedUsedByActivePool() public {
@@ -936,7 +944,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.removeCompositeOracleTokenFeed(address(tokenB));
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removable after pool closes");
-        assertFalse(factory.isWhitelisted(address(tokenB)), "token should be delisted after pool closes");
+        assertTrue(factory.isWhitelisted(address(tokenB)), "token should remain whitelisted after feed-only removal");
     }
 
     function testFactoryCanCancelCompositeOracleFeedRemovalWhenAuthorized() public {
