@@ -143,6 +143,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Custom error when primary and backup feeds are the same
     error SameFeedNotAllowed(address feed);
 
+    /// @notice Custom error when dual feeds disagree on fee-accrual price support
+    error FeeAccrualBasisMismatch(address token, address primaryFeed, address backupFeed);
+
     /// @notice Custom error when a strict circuit-breaker price is requested from an unsupported feed
     error CircuitBreakerNotSupported(address token, address feed);
 
@@ -331,6 +334,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         // BUG-1 FIX: Validate that primary and backup feeds are different
         if (primaryFeed == backupFeed) revert SameFeedNotAllowed(primaryFeed);
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
+        _validateFeeAccrualBasisCompatibility(token, primaryFeed, backupFeed);
         _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
@@ -1155,6 +1159,18 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         assembly ("memory-safe") {
             revert(add(data, 0x20), mload(data))
+        }
+    }
+
+    function _validateFeeAccrualBasisCompatibility(address token, address primaryFeed, address backupFeed)
+        internal
+        view
+    {
+        (bool primarySupportsFeeAccrual,) = _tryGetFeeAccrualPrice(primaryFeed, token);
+        (bool backupSupportsFeeAccrual,) = _tryGetFeeAccrualPrice(backupFeed, token);
+
+        if (primarySupportsFeeAccrual != backupSupportsFeeAccrual) {
+            revert FeeAccrualBasisMismatch(token, primaryFeed, backupFeed);
         }
     }
 

@@ -366,6 +366,30 @@ contract CompositeOracleTest is Test {
         assertEq(compositeOracle.getPriceForFeeAccrual(address(tokenA)), compositeOracle.getPrice(address(tokenA)));
     }
 
+    function testSetTokenOracleFeedDual_RevertsWhenFeeAccrualBasisDiffers() public {
+        MockERC20 underlyingAsset = new MockERC20("Underlying", "UND");
+        MockERC4626 vault = new MockERC4626(IERC20(address(underlyingAsset)), "Vault", "VLT");
+        MockOracle underlyingOracle = new MockOracle();
+        underlyingOracle.setPrice(address(underlyingAsset), 1e8);
+
+        ERC4626OracleFeed erc4626Feed = new ERC4626OracleFeed(address(underlyingOracle));
+        uint256 minSupply = erc4626Feed.MIN_VAULT_SHARE_COUNT() * 1e18;
+        underlyingAsset.mint(address(this), minSupply);
+        underlyingAsset.approve(address(vault), minSupply);
+        vault.deposit(minSupply, address(this));
+        erc4626Feed.registerVault(address(vault), address(underlyingAsset));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.FeeAccrualBasisMismatch.selector,
+                address(vault),
+                address(mockOracle),
+                address(erc4626Feed)
+            )
+        );
+        compositeOracle.setTokenOracleFeedDual(address(vault), address(mockOracle), address(erc4626Feed));
+    }
+
     function testStrictCircuitBreakerRequirement_AllowsERC4626WithStrictUnderlying() public {
         MockERC20 underlyingAsset = new MockERC20("Underlying", "UND");
         MockERC4626 vault = new MockERC4626(IERC20(address(underlyingAsset)), "Vault", "VLT");
