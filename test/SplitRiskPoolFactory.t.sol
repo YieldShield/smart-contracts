@@ -258,6 +258,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         uint256 colleteralRatio,
         address creator
     );
+    event PoolImplementationPinChecked(address indexed implementation, bytes32 codehash);
 
     CompositeOracle public compositeOracle;
 
@@ -1159,6 +1160,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         address pinnedImplementation = factory.splitRiskPoolImplementation();
         vm.prank(governanceTimelock);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit PoolImplementationPinChecked(pinnedImplementation, pinnedImplementation.codehash);
         factory.setPoolImplementation(pinnedImplementation);
         assertEq(factory.splitRiskPoolImplementation(), pinnedImplementation, "pinned implementation remains active");
         assertEq(

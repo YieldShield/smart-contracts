@@ -142,6 +142,7 @@ contract SplitRiskPoolFactory is
     mapping(address => bool) private _compositeOracleAuthorizedCallerActive;
 
     event PoolImplementationUpdated(address indexed previousImplementation, address indexed newImplementation);
+    event PoolImplementationPinChecked(address indexed implementation, bytes32 codehash);
     event BootstrapModeFinalized(address indexed caller);
     event ManagedOracleUpdated(bytes32 indexed oracleRole, address indexed previousOracle, address indexed newOracle);
 
@@ -179,18 +180,20 @@ contract SplitRiskPoolFactory is
     }
 
     /**
-     * @notice Sets the pool implementation address for new pool deployments
+     * @notice Asserts the pinned pool implementation remains the active implementation
      * @dev Only callable by governance. The implementation is pinned at factory initialization;
-     *      changing pool bytecode requires deploying a new factory so future pools cannot be
-     *      pointed at arbitrary UUPS-shaped code.
-     * @param newImplementation Address of the new pool implementation contract
+     *      changing pool bytecode requires deploying a new factory. This compatibility entrypoint
+     *      rejects every address except the pinned implementation and emits a pin-check event.
+     * @param newImplementation Address expected to equal the pinned pool implementation
      * @custom:error InvalidAssetAddress If newImplementation is zero address
      */
     function setPoolImplementation(address newImplementation) external onlyGovernance {
-        _validatePoolImplementation(newImplementation);
+        bytes32 implementationCodehash = _validatePoolImplementation(newImplementation);
         if (newImplementation != splitRiskPoolImplementation) revert ErrorsLib.InvalidAssetAddress();
-        emit PoolImplementationUpdated(splitRiskPoolImplementation, newImplementation);
-        splitRiskPoolImplementation = newImplementation;
+        if (implementationCodehash != poolImplementationCodehash) {
+            revert PoolImplementationCodehashMismatch(poolImplementationCodehash, implementationCodehash);
+        }
+        emit PoolImplementationPinChecked(newImplementation, implementationCodehash);
     }
 
     /**
