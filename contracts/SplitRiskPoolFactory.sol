@@ -145,6 +145,8 @@ contract SplitRiskPoolFactory is
     event BootstrapModeFinalized(address indexed caller);
     event ManagedOracleUpdated(bytes32 indexed oracleRole, address indexed previousOracle, address indexed newOracle);
 
+    error PoolImplementationCodehashMismatch(bytes32 expectedCodehash, bytes32 actualCodehash);
+
     bytes32 public constant PYTH_ORACLE_ROLE = keccak256("PYTH_ORACLE");
     bytes32 public constant ERC4626_ORACLE_FEED_ROLE = keccak256("ERC4626_ORACLE_FEED");
 
@@ -825,7 +827,7 @@ contract SplitRiskPoolFactory is
         uint256 receivedBond = _collectAndValidateCreationBond(_backingToken, _creationBondAmount);
 
         // Create and deploy pool using library
-        if (splitRiskPoolImplementation == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        _requirePinnedPoolImplementation();
 
         ISplitRiskPoolFactory.PoolInfo memory info;
         (poolAddress, info) = PoolCreationLib.createAndStorePool(
@@ -861,6 +863,15 @@ contract SplitRiskPoolFactory is
         }
 
         return poolAddress;
+    }
+
+    function _requirePinnedPoolImplementation() internal view {
+        address implementation = splitRiskPoolImplementation;
+        if (implementation == address(0)) revert ErrorsLib.InvalidAssetAddress();
+        bytes32 actualCodehash = implementation.codehash;
+        if (actualCodehash != poolImplementationCodehash) {
+            revert PoolImplementationCodehashMismatch(poolImplementationCodehash, actualCodehash);
+        }
     }
 
     /* View Functions */

@@ -1166,6 +1166,28 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         );
     }
 
+    function testCreatePoolRejectsMismatchedImplementationCodehash() public {
+        bytes32 badCodehash = keccak256("bad pool implementation codehash");
+        vm.store(address(factory), bytes32(uint256(76)), badCodehash);
+        assertEq(factory.poolImplementationCodehash(), badCodehash, "test must corrupt the recorded codehash");
+        assertNotEq(
+            factory.splitRiskPoolImplementation().codehash,
+            badCodehash,
+            "implementation codehash should differ from corrupted pin"
+        );
+        uint256 creationBondAmount = _defaultCreationBondAmount(address(tokenB));
+        _prepareCreationBond(address(this), address(tokenB), creationBondAmount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SplitRiskPoolFactory.PoolImplementationCodehashMismatch.selector,
+                badCodehash,
+                factory.splitRiskPoolImplementation().codehash
+            )
+        );
+        factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, creationBondAmount);
+    }
+
     function testFinalizeBootstrapDisablesOwnerBootstrapBypass() public {
         MockERC20 tokenC = new MockERC20("Token C", "TKNC");
         oracle.setPrice(address(tokenC), 1e8);
