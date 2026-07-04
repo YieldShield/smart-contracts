@@ -1500,6 +1500,65 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
     }
 
+    function testCancelGovernanceTimelockTransferUnblocksPoolCreation() public {
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SplitRiskPoolFactory.GovernanceTransferPending.selector, replacementGovernance)
+        );
+        factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
+
+        vm.prank(governanceTimelock);
+        factory.cancelGovernanceTimelockTransfer();
+
+        assertEq(factory.pendingGovernanceTimelock(), address(0), "pending governance should clear");
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        assertTrue(factory.isPoolActive(poolAddress), "pool creation should resume after cancel");
+    }
+
+    function testCancelGovernanceTimelockTransferRevertsWithoutPendingTransfer() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ProtocolAccessControlUpgradeable.NoPendingGovernance.selector);
+        factory.cancelGovernanceTimelockTransfer();
+    }
+
+    function testCancelPoolGovernanceTimelockTransfersClearsStagedPools() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+
+        vm.prank(governanceTimelock);
+        factory.setGovernanceTimelock(replacementGovernance);
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+
+        assertEq(pool.pendingGovernanceTimelock(), replacementGovernance, "pool should be staged");
+
+        vm.prank(governanceTimelock);
+        factory.cancelGovernanceTimelockTransfer();
+
+        vm.prank(replacementGovernance);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, replacementGovernance
+            )
+        );
+        pool.acceptGovernanceTimelock();
+
+        vm.prank(governanceTimelock);
+        factory.cancelPoolGovernanceTimelockTransfers(0, 1, replacementGovernance);
+
+        assertEq(pool.pendingGovernanceTimelock(), address(0), "pool pending governance should clear");
+
+        vm.prank(replacementGovernance);
+        vm.expectRevert(ProtocolAccessControlUpgradeable.NoPendingGovernance.selector);
+        pool.acceptGovernanceTimelock();
+    }
+
     function testRevertCreatePoolWithoutDefaultOracle() public {
         // Create a new factory without setting default oracle
         SplitRiskPool poolImpl = new SplitRiskPool();

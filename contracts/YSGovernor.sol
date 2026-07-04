@@ -35,6 +35,9 @@ contract YSGovernor is
     uint256 public constant MIN_GOVERNOR_PROPOSAL_THRESHOLD = 10_000 * 10 ** 18;
     uint256 public constant MAX_GOVERNOR_PROPOSAL_THRESHOLD = 100_000 * 10 ** 18;
     uint256 public constant MIN_GOVERNOR_TIMELOCK_DELAY = 2 days;
+    uint256 public constant MAX_GOVERNOR_TIMELOCK_DELAY = 30 days;
+    uint256 public constant MIN_GOVERNOR_QUORUM_NUMERATOR = 2;
+    uint256 public constant MAX_GOVERNOR_QUORUM_NUMERATOR = 20;
 
     bytes4 private constant GET_MIN_DELAY_SELECTOR = bytes4(keccak256("getMinDelay()"));
     bytes4 private constant GET_ROLE_MEMBER_COUNT_SELECTOR = bytes4(keccak256("getRoleMemberCount(bytes32)"));
@@ -47,8 +50,10 @@ contract YSGovernor is
     error GovernorVotingDelayOutOfRange(uint48 provided, uint48 minimum, uint48 maximum);
     error GovernorVotingPeriodOutOfRange(uint32 provided, uint32 minimum, uint32 maximum);
     error GovernorProposalThresholdOutOfRange(uint256 provided, uint256 minimum, uint256 maximum);
+    error GovernorQuorumNumeratorOutOfRange(uint256 provided, uint256 minimum, uint256 maximum);
     error GovernorInvalidTimelock(address candidate);
     error GovernorTimelockDelayTooShort(address candidate, uint256 provided, uint256 minimum);
+    error GovernorTimelockDelayTooLong(address candidate, uint256 provided, uint256 maximum);
     error GovernorTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
     error GovernorTimelockInvalidRole(
         address candidate, bytes32 role, address expectedMember, address actualMember, uint256 memberCount
@@ -108,6 +113,15 @@ contract YSGovernor is
             );
         }
         _setProposalThreshold(newProposalThreshold);
+    }
+
+    function updateQuorumNumerator(uint256 newQuorumNumerator) public override onlyGovernance {
+        if (newQuorumNumerator < MIN_GOVERNOR_QUORUM_NUMERATOR || newQuorumNumerator > MAX_GOVERNOR_QUORUM_NUMERATOR) {
+            revert GovernorQuorumNumeratorOutOfRange(
+                newQuorumNumerator, MIN_GOVERNOR_QUORUM_NUMERATOR, MAX_GOVERNOR_QUORUM_NUMERATOR
+            );
+        }
+        _updateQuorumNumerator(newQuorumNumerator);
     }
 
     function updateTimelock(TimelockController newTimelock) public override {
@@ -180,6 +194,9 @@ contract YSGovernor is
         if (!_isLocalDevelopmentChain() && minDelay < MIN_GOVERNOR_TIMELOCK_DELAY) {
             revert GovernorTimelockDelayTooShort(candidate, minDelay, MIN_GOVERNOR_TIMELOCK_DELAY);
         }
+        if (minDelay > MAX_GOVERNOR_TIMELOCK_DELAY) {
+            revert GovernorTimelockDelayTooLong(candidate, minDelay, MAX_GOVERNOR_TIMELOCK_DELAY);
+        }
 
         _requireSoleRoleMember(candidate, DEFAULT_ADMIN_ROLE_VALUE, candidate);
         _requireSoleRoleMember(candidate, PROPOSER_ROLE_VALUE, address(this));
@@ -204,6 +221,9 @@ contract YSGovernor is
         uint256 minDelay = abi.decode(data, (uint256));
         if (!_isLocalDevelopmentChain() && minDelay < MIN_GOVERNOR_TIMELOCK_DELAY) {
             revert GovernorTimelockDelayTooShort(candidate, minDelay, MIN_GOVERNOR_TIMELOCK_DELAY);
+        }
+        if (minDelay > MAX_GOVERNOR_TIMELOCK_DELAY) {
+            revert GovernorTimelockDelayTooLong(candidate, minDelay, MAX_GOVERNOR_TIMELOCK_DELAY);
         }
 
         _validateInitialDefaultAdmin(candidate, expectedBootstrapAdmin);

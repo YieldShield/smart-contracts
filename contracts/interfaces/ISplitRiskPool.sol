@@ -160,6 +160,7 @@ interface ISplitRiskPool {
     ) external;
     function setGovernanceTimelockFromFactory(address newGovernanceTimelock) external;
     function acceptGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external;
+    function cancelGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external;
 
     // Payment Functions
     function payPoolFee() external;

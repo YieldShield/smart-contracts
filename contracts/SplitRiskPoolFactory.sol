@@ -239,6 +239,15 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    function cancelGovernanceTimelockTransfer()
+        public
+        override(ProtocolAccessControlUpgradeable, ISplitRiskPoolFactory)
+        onlyGovernance
+    {
+        _cancelGovernanceTimelockTransfer();
+        _clearPoolGovernanceTransferTracking();
+    }
+
     /// @notice Starts the same pending governance transfer on a page of historical pools.
     /// @dev Call after `setGovernanceTimelock` and before the factory accepts the new timelock.
     // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
@@ -294,6 +303,24 @@ contract SplitRiskPoolFactory is
         }
     }
 
+    function cancelPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit, address expectedPendingGovernance)
+        external
+        override
+        onlyGovernance
+    {
+        if (expectedPendingGovernance == address(0)) revert NoPendingGovernance();
+        uint256 end = _poolPageEnd(offset, limit);
+        for (uint256 i = offset; i < end;) {
+            SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
+            if (pool.pendingGovernanceTimelock() == expectedPendingGovernance) {
+                pool.cancelGovernanceTimelockFromFactory(expectedPendingGovernance);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice Returns the pending governance timelock address
     function pendingGovernanceTimelock()
         public
@@ -334,6 +361,17 @@ contract SplitRiskPoolFactory is
         }
         _pendingGovernancePoolTransferTarget = targetGovernance;
         _pendingGovernancePoolTransfersRemaining = pools.length;
+    }
+
+    function _clearPoolGovernanceTransferTracking() internal {
+        unchecked {
+            ++_governancePoolTransferEpoch;
+        }
+        if (_governancePoolTransferEpoch == 0) {
+            _governancePoolTransferEpoch = 1;
+        }
+        _pendingGovernancePoolTransferTarget = address(0);
+        _pendingGovernancePoolTransfersRemaining = 0;
     }
 
     function _markPoolGovernanceTransferStaged(address pool, address targetGovernance) internal {

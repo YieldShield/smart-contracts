@@ -14,8 +14,10 @@ import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol
 ///         (exactly one DEFAULT_ADMIN_ROLE member, equal to the timelock itself).
 contract YSTimelockController is TimelockController, AccessControlEnumerable {
     uint256 public constant MIN_PUBLIC_DELAY = 2 days;
+    uint256 public constant MAX_PUBLIC_DELAY = 30 days;
 
     error PublicTimelockDelayTooShort(uint256 providedDelay, uint256 minimumDelay);
+    error PublicTimelockDelayTooLong(uint256 providedDelay, uint256 maximumDelay);
     error DefaultAdminMustBeTimelock(address account);
     error TimelockDefaultAdminCannotBeRevoked();
     error TimelockOperationalRoleFrozen(bytes32 role, address account);
@@ -123,6 +125,9 @@ contract YSTimelockController is TimelockController, AccessControlEnumerable {
     function _validatePublicDelay(uint256 delay) internal view {
         if (!_isLocalDevelopmentChain() && delay < MIN_PUBLIC_DELAY) {
             revert PublicTimelockDelayTooShort(delay, MIN_PUBLIC_DELAY);
+        }
+        if (delay > MAX_PUBLIC_DELAY) {
+            revert PublicTimelockDelayTooLong(delay, MAX_PUBLIC_DELAY);
         }
     }
 

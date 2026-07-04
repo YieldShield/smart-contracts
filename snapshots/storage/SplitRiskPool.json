@@ -380,10 +380,17 @@
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
-      "label": "__gap",
+      "label": "_factoryStagedGovernanceTimelock",
       "offset": 0,
       "slot": "105",
-      "type": "t_array(t_uint256)24_storage"
+      "type": "t_address"
+    },
+    {
+      "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "106",
+      "type": "t_array(t_uint256)23_storage"
     }
   ],
   "types": {
@@ -392,10 +399,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)24_storage": {
+    "t_array(t_uint256)23_storage": {
       "encoding": "inplace",
-      "label": "uint256[24]",
-      "numberOfBytes": "768",
+      "label": "uint256[23]",
+      "numberOfBytes": "736",
       "base": "t_uint256"
     },
     "t_array(t_uint256)47_storage": {

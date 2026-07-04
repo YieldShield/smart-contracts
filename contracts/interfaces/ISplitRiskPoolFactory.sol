@@ -110,9 +110,12 @@ interface ISplitRiskPoolFactory {
     function setTokenRequiresStrictProtectedPrice(address token, bool required) external;
     function setGovernanceTimelock(address newGovernanceTimelock) external;
     function acceptGovernanceTimelock() external;
+    function cancelGovernanceTimelockTransfer() external;
     function pendingGovernanceTimelock() external view returns (address);
     function startPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external;
     function acceptPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit) external;
+    function cancelPoolGovernanceTimelockTransfers(uint256 offset, uint256 limit, address expectedPendingGovernance)
+        external;
     function finalizeBootstrap() external;
     function setCompositeOracle(address newOracle) external;
     function setDefaultProtocolFeeRecipient(address newRecipient) external;

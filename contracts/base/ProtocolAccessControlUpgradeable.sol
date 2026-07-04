@@ -21,6 +21,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     error UnauthorizedPendingGovernance(address caller);
     error InvalidGovernanceTimelock(address candidate);
     error GovernanceTimelockDelayTooShort(address candidate, uint256 minDelay);
+    error GovernanceTimelockDelayTooLong(address candidate, uint256 delay, uint256 maxDelay);
     error GovernanceTimelockImplementationMismatch(address candidate, bytes32 expectedCodehash, bytes32 actualCodehash);
     error GovernanceTimelockAdminRetained(address candidate, address retainedAdmin);
     /// @notice Thrown when the timelock candidate has admin role members beyond the candidate itself.
@@ -32,6 +33,7 @@ abstract contract ProtocolAccessControlUpgradeable is
 
     event GovernanceTimelockUpdated(address indexed previousGovernance, address indexed newGovernance);
     event GovernanceTimelockTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
+    event GovernanceTimelockTransferCancelled(address indexed currentGovernance, address indexed cancelledGovernance);
 
     address internal _governanceTimelock;
     address internal _pendingGovernanceTimelock;
@@ -46,6 +48,7 @@ abstract contract ProtocolAccessControlUpgradeable is
     bytes32 private constant EXECUTOR_ROLE_VALUE = keccak256("EXECUTOR_ROLE");
     bytes32 private constant CANCELLER_ROLE_VALUE = keccak256("CANCELLER_ROLE");
     uint256 private constant MIN_PUBLIC_GOVERNANCE_DELAY = 2 days;
+    uint256 private constant MAX_PUBLIC_GOVERNANCE_DELAY = 30 days;
 
     function __ProtocolAccessControl_init(address initialOwner, address governanceTimelock_) internal onlyInitializing {
         __Ownable_init(initialOwner);
@@ -101,6 +104,18 @@ abstract contract ProtocolAccessControlUpgradeable is
         }
     }
 
+    /// @notice Cancels a pending governance timelock transfer.
+    function cancelGovernanceTimelockTransfer() public virtual onlyGovernance {
+        _cancelGovernanceTimelockTransfer();
+    }
+
+    function _cancelGovernanceTimelockTransfer() internal returns (address cancelledGovernance) {
+        cancelledGovernance = _pendingGovernanceTimelock;
+        if (cancelledGovernance == address(0)) revert NoPendingGovernance();
+        _pendingGovernanceTimelock = address(0);
+        emit GovernanceTimelockTransferCancelled(_governanceTimelock, cancelledGovernance);
+    }
+
     /// @notice Returns the pending governance timelock address
     function pendingGovernanceTimelock() public view virtual returns (address) {
         return _pendingGovernanceTimelock;
@@ -122,6 +137,9 @@ abstract contract ProtocolAccessControlUpgradeable is
         if (minDelay == 0) revert GovernanceTimelockDelayTooShort(candidate, minDelay);
         if (!_isLocalDevelopmentChain() && minDelay < MIN_PUBLIC_GOVERNANCE_DELAY) {
             revert GovernanceTimelockDelayTooShort(candidate, minDelay);
+        }
+        if (minDelay > MAX_PUBLIC_GOVERNANCE_DELAY) {
+            revert GovernanceTimelockDelayTooLong(candidate, minDelay, MAX_PUBLIC_GOVERNANCE_DELAY);
         }
 
         (success, data) =

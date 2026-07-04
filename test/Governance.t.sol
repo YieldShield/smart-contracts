@@ -404,6 +404,50 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         governor.execute(targets, values, calldatas, descriptionHash);
     }
 
+    function test_GovernorSettingsAllowQuorumNumeratorBounds() public {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.updateQuorumNumerator.selector, 2), "Allow minimum quorum numerator"
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+        assertEq(governor.quorumNumerator(), 2);
+
+        (targets, values, calldatas, descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.updateQuorumNumerator.selector, 20), "Allow maximum quorum numerator"
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+        assertEq(governor.quorumNumerator(), 20);
+    }
+
+    function test_GovernorSettingsRejectQuorumNumeratorOutsideBounds() public {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.updateQuorumNumerator.selector, 1), "Reject low quorum numerator"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorQuorumNumeratorOutOfRange.selector,
+                1,
+                governor.MIN_GOVERNOR_QUORUM_NUMERATOR(),
+                governor.MAX_GOVERNOR_QUORUM_NUMERATOR()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+
+        (targets, values, calldatas, descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.updateQuorumNumerator.selector, 100), "Reject high quorum numerator"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSGovernor.GovernorQuorumNumeratorOutOfRange.selector,
+                100,
+                governor.MIN_GOVERNOR_QUORUM_NUMERATOR(),
+                governor.MAX_GOVERNOR_QUORUM_NUMERATOR()
+            )
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+    }
+
     function test_UpdateTimelockRejectsShortPublicDelay() public {
         TimelockController replacementTimelock = _deployGovernorControlledTimelock(0);
         vm.chainId(1);
@@ -848,6 +892,35 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         publicTimelock.updateDelay(1 days);
     }
 
+    function test_YSTimelockConstructor_RevertsAbovePublicCeiling() public {
+        address[] memory emptyAddrs = new address[](0);
+        vm.expectRevert(
+            abi.encodeWithSelector(YSTimelockController.PublicTimelockDelayTooLong.selector, 30 days + 1, 30 days)
+        );
+        new YSTimelockController(30 days + 1, emptyAddrs, emptyAddrs, deployer);
+    }
+
+    function test_YSTimelockUpdateDelay_RevertsAbovePublicCeiling() public {
+        address[] memory emptyAddrs = new address[](0);
+        YSTimelockController publicTimelock = new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(YSTimelockController.PublicTimelockDelayTooLong.selector, 30 days + 1, 30 days)
+        );
+        vm.prank(address(publicTimelock));
+        publicTimelock.updateDelay(30 days + 1);
+    }
+
+    function test_YSTimelockUpdateDelay_AllowsPublicCeiling() public {
+        address[] memory emptyAddrs = new address[](0);
+        YSTimelockController publicTimelock = new YSTimelockController(2 days, emptyAddrs, emptyAddrs, deployer);
+
+        vm.prank(address(publicTimelock));
+        publicTimelock.updateDelay(30 days);
+
+        assertEq(publicTimelock.getMinDelay(), 30 days);
+    }
+
     function test_YSTimelockUpdateDelay_AllowsShortLocalDelay() public {
         address[] memory emptyAddrs = new address[](0);
         YSTimelockController localTimelock = new YSTimelockController(1 days, emptyAddrs, emptyAddrs, deployer);
@@ -877,6 +950,22 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
 }
 
 contract ProtocolAccessControlUpgradeableTest is Test {
+    function test_InitializeRejectsGovernanceTimelockAboveCeiling() public {
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(30 days + 1, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooLong.selector,
+                address(currentGovernance),
+                30 days + 1,
+                30 days
+            )
+        );
+        harness.initializeHarness(address(this), address(currentGovernance));
+    }
+
     function test_GovernanceTimelockRotationRejectsDifferentImplementation() public {
         address[] memory noExtraAdmins = new address[](0);
         MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
@@ -893,6 +982,25 @@ contract ProtocolAccessControlUpgradeableTest is Test {
                 address(replacementGovernance),
                 address(currentGovernance).codehash,
                 address(replacementGovernance).codehash
+            )
+        );
+        vm.prank(address(currentGovernance));
+        harness.setGovernanceTimelock(address(replacementGovernance));
+    }
+
+    function test_GovernanceTimelockRotationRejectsDelayAboveCeiling() public {
+        address[] memory noExtraAdmins = new address[](0);
+        MutableGovernanceTimelock currentGovernance = new MutableGovernanceTimelock(2 days, noExtraAdmins);
+        MutableGovernanceTimelock replacementGovernance = new MutableGovernanceTimelock(30 days + 1, noExtraAdmins);
+        ProtocolAccessControlHarness harness = new ProtocolAccessControlHarness();
+        harness.initializeHarness(address(this), address(currentGovernance));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolAccessControlUpgradeable.GovernanceTimelockDelayTooLong.selector,
+                address(replacementGovernance),
+                30 days + 1,
+                30 days
             )
         );
         vm.prank(address(currentGovernance));

@@ -2817,6 +2817,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         _requireFactoryGovernanceTransferAlignment(newGovernanceTimelock);
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
+        _factoryStagedGovernanceTimelock = address(0);
     }
 
     function _requireFactoryGovernanceTransferAlignment(address newGovernanceTimelock) internal view {
@@ -2851,12 +2852,17 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _validateKnownDefaultAdminCleared(newGovernanceTimelock, owner());
         _validateKnownDefaultAdminCleared(newGovernanceTimelock, _governanceTimelock);
         _pendingGovernanceTimelock = newGovernanceTimelock;
+        _factoryStagedGovernanceTimelock = newGovernanceTimelock;
         emit GovernanceTimelockTransferStarted(_governanceTimelock, newGovernanceTimelock);
     }
 
     /// @notice Completes the two-step governance transfer
     /// @dev Only callable by the pending governance address
     function acceptGovernanceTimelock() public override(ProtocolAccessControlUpgradeable) {
+        if (_pendingGovernanceTimelock != address(0) && _factoryStagedGovernanceTimelock == _pendingGovernanceTimelock)
+        {
+            revert InvalidGovernanceTimelock(_pendingGovernanceTimelock);
+        }
         address previousGovernance = governanceTimelock();
         ProtocolAccessControlUpgradeable.acceptGovernanceTimelock();
 
@@ -2864,6 +2870,15 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             poolConfig.protocolFeeRecipient = governanceTimelock();
             emit EventsLib.ProtocolFeeRecipientUpdated(previousGovernance, poolConfig.protocolFeeRecipient);
         }
+    }
+
+    function cancelGovernanceTimelockTransfer() public override(ProtocolAccessControlUpgradeable) onlyGovernance {
+        if (_pendingGovernanceTimelock != address(0) && _factoryStagedGovernanceTimelock == _pendingGovernanceTimelock)
+        {
+            revert InvalidGovernanceTimelock(_pendingGovernanceTimelock);
+        }
+        _cancelGovernanceTimelockTransfer();
+        _factoryStagedGovernanceTimelock = address(0);
     }
 
     function acceptGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external override {
@@ -2887,6 +2902,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _governanceTimelock = _pendingGovernanceTimelock;
         _governanceTimelockCodehash = _pendingGovernanceTimelock.codehash;
         _pendingGovernanceTimelock = address(0);
+        _factoryStagedGovernanceTimelock = address(0);
 
         if (owner() == previousGovernance) {
             _transferOwnership(_governanceTimelock);
@@ -2895,6 +2911,22 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             poolConfig.protocolFeeRecipient = _governanceTimelock;
             emit EventsLib.ProtocolFeeRecipientUpdated(previousGovernance, poolConfig.protocolFeeRecipient);
         }
+    }
+
+    function cancelGovernanceTimelockFromFactory(address expectedGovernanceTimelock) external override {
+        address factory = _poolFactoryController();
+        if (msg.sender != factory) {
+            revert ErrorsLib.AccessControlDenied(msg.sender, "cancelGovernanceTimelockFromFactory");
+        }
+        if (
+            expectedGovernanceTimelock == address(0) || _pendingGovernanceTimelock != expectedGovernanceTimelock
+                || _factoryStagedGovernanceTimelock != expectedGovernanceTimelock
+        ) {
+            revert InvalidGovernanceTimelock(expectedGovernanceTimelock);
+        }
+
+        _cancelGovernanceTimelockTransfer();
+        _factoryStagedGovernanceTimelock = address(0);
     }
 
     /// @notice Returns the pending governance timelock address
@@ -3297,5 +3329,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     mapping(uint256 => uint256) public protectorEpochBackingRemainingShares;
     /// @notice tokenId => whether its expired-epoch backing dust has been settled
     mapping(uint256 => bool) public protectorEpochBackingPositionSettled;
-    uint256[24] private __gap;
+    /// @notice Pending timelock staged by the factory, if any.
+    address private _factoryStagedGovernanceTimelock;
+    uint256[23] private __gap;
 }
