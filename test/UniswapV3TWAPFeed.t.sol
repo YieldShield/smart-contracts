@@ -486,6 +486,10 @@ contract UniswapV3TWAPFeedTest is Test {
         (bool isStale, uint64 publishTime) = localHarness.isPriceStale(address(token));
         assertTrue(isStale);
         assertEq(publishTime, 123);
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TWAPFeed.StaleQuoteTokenPrice.selector, address(quoteToken), uint64(123))
+        );
+        localHarness.getPrice(address(token));
 
         staleQuoteOracle.setStale(false);
         staleQuoteOracle.setPublishTime(uint64(block.timestamp + 1));

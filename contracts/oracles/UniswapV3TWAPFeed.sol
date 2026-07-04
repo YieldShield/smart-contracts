@@ -156,6 +156,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
 
     /// @notice Thrown when the computed TWAP price truncates to zero after decimal normalization
     error PriceTruncatedToZero(address token);
+    error StaleQuoteTokenPrice(address quoteToken, uint64 publishTime);
 
     /// @notice Constructor
     /// @param _twapPeriod TWAP observation period in seconds
@@ -372,6 +373,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     }
 
     function _getNormalizedQuoteTokenPrice(address oracle) internal view returns (uint256 normalizedPrice) {
+        (bool quoteStale, uint64 quotePublishTime) = _quoteTokenPriceStaleness(oracle);
+        if (quoteStale) revert StaleQuoteTokenPrice(quoteToken, quotePublishTime);
         uint256 price = IOracleFeed(oracle).getPrice(quoteToken);
         if (price == 0) revert PriceTruncatedToZero(quoteToken);
         normalizedPrice = price.normalize(IOracleFeed(oracle).decimals(), 18);
@@ -383,6 +386,8 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         view
         returns (bool success, uint256 normalizedPrice)
     {
+        (bool quoteStale,) = _quoteTokenPriceStaleness(oracle);
+        if (quoteStale) return (false, 0);
         try IOracleFeed(oracle).getPrice(quoteToken) returns (uint256 price) {
             if (price == 0) return (false, 0);
             try IOracleFeed(oracle).decimals() returns (uint8 priceDecimals) {
@@ -478,7 +483,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
             if (minimumLiquidity != 0 && averageLiquidity < minimumLiquidity) {
                 return (true, 0);
             }
-            (bool quoteStale, uint64 quotePublishTime) = _quoteTokenPriceStaleness();
+            (bool quoteStale, uint64 quotePublishTime) = _quoteTokenPriceStaleness(address(quoteTokenOracle));
             if (quoteStale) {
                 return (true, quotePublishTime);
             }
@@ -488,9 +493,9 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         }
     }
 
-    function _quoteTokenPriceStaleness() internal view returns (bool isStale, uint64 publishTime) {
+    function _quoteTokenPriceStaleness(address oracle) internal view returns (bool isStale, uint64 publishTime) {
         (bool success, bytes memory data) =
-            address(quoteTokenOracle).staticcall(abi.encodeWithSignature("isPriceStale(address)", quoteToken));
+            oracle.staticcall(abi.encodeWithSignature("isPriceStale(address)", quoteToken));
         if (!success || data.length < 64) {
             return (true, 0);
         }
