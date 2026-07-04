@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {SequencerUptimeGuard} from "../contracts/oracles/SequencerUptimeGuard.sol";
-import {MockSequencerUptimeFeed} from "../contracts/mocks/MockSequencerUptimeFeed.sol";
-import {MockERC20} from "../contracts/mocks/MockERC20.sol";
-import {PythOracle} from "../contracts/oracles/PythOracle.sol";
-import {PythEMAOracleFeed} from "../contracts/oracles/PythEMAOracleFeed.sol";
-import {ERC4626OracleFeed} from "../contracts/oracles/ERC4626OracleFeed.sol";
-import {UniswapV3TWAPFeed} from "../contracts/oracles/UniswapV3TWAPFeed.sol";
+import { Test } from "forge-std/Test.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { SequencerUptimeGuard } from "../contracts/oracles/SequencerUptimeGuard.sol";
+import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
+import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+import { PythOracle } from "../contracts/oracles/PythOracle.sol";
+import { PythEMAOracleFeed } from "../contracts/oracles/PythEMAOracleFeed.sol";
+import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
+import { UniswapV3TWAPFeed } from "../contracts/oracles/UniswapV3TWAPFeed.sol";
 
 /// @dev Minimal concrete harness exposing the abstract guard's internals.
 contract GuardHarness is SequencerUptimeGuard {
-    constructor() SequencerUptimeGuard() {}
+    constructor() SequencerUptimeGuard() { }
 
     function check() external view {
         _checkSequencerUptime();
@@ -148,6 +148,22 @@ contract SequencerUptimeGuardTest is Test {
         (bool isUp, bool gracePassed,) = h.getSequencerStatus();
         assertTrue(isUp);
         assertTrue(gracePassed);
+    }
+
+    function test_GetSequencerStatusFailsClosedWhenStartedAtBecomesZero() public {
+        vm.chainId(ARBITRUM_ONE);
+        GuardHarness h = new GuardHarness();
+        MockSequencerUptimeFeed feed = new MockSequencerUptimeFeed();
+        h.setSequencerUptimeFeed(address(feed));
+
+        feed.setStartedAt(0);
+
+        (bool isUp, bool gracePassed, uint256 timeSinceUp) = h.getSequencerStatus();
+        assertFalse(isUp);
+        assertFalse(gracePassed);
+        assertEq(timeSinceUp, 0);
+        vm.expectRevert(SequencerUptimeGuard.SequencerDown.selector);
+        h.check();
     }
 
     // -------------------------------------------------------------------------

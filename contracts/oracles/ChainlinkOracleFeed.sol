@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IOracleFeed} from "../interfaces/IOracleFeed.sol";
-import {DecimalNormalizationLib} from "../libraries/DecimalNormalizationLib.sol";
-import {OracleValidationLib} from "../libraries/OracleValidationLib.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
+import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
 
 /// @title AggregatorV3Interface
 /// @notice Minimal interface for Chainlink price feeds
@@ -230,7 +230,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         underlying = feed;
         try IChainlinkAggregatorProxy(feed).aggregator() returns (address agg) {
             underlying = agg;
-        } catch {}
+        } catch { }
     }
 
     /// @notice Re-cache the aggregator min/max-answer bounds for an already-registered token.
@@ -548,6 +548,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
 
         isUp = answer == 0;
+        if (startedAt == 0) {
+            return (false, false, 0);
+        }
         // A `startedAt` slightly ahead of `block.timestamp` would otherwise panic the
         // unsigned subtraction. Treat it as "just came up" (grace period still active).
         if (startedAt > block.timestamp) {

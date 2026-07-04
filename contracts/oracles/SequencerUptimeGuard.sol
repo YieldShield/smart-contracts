@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title ISequencerUptimeFeed
 /// @notice Minimal Chainlink interface used to read an L2 sequencer uptime feed.
@@ -120,6 +120,7 @@ abstract contract SequencerUptimeGuard is Ownable {
         // slither-disable-next-line unused-return
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
         isUp = answer == 0;
+        if (startedAt == 0) return (false, false, 0);
         if (startedAt > block.timestamp) return (isUp, false, 0);
         timeSinceUp = block.timestamp - startedAt;
         gracePeriodPassed = timeSinceUp > GRACE_PERIOD_TIME;

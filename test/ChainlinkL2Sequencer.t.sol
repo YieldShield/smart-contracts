@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import {Test, console} from "forge-std/Test.sol";
-import {ChainlinkOracleFeed} from "../contracts/oracles/ChainlinkOracleFeed.sol";
-import {CompositeOracle} from "../contracts/oracles/CompositeOracle.sol";
-import {MockSequencerUptimeFeed} from "../contracts/mocks/MockSequencerUptimeFeed.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
+import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 
 /// @title MockChainlinkPriceFeed
 /// @notice Mock Chainlink price feed for unit testing
@@ -279,6 +279,24 @@ contract ChainlinkL2SequencerTest is Test {
         assertTrue(isUp);
         assertTrue(gracePeriodPassed);
         assertEq(timeSinceUp, 3601);
+    }
+
+    function test_GetSequencerStatus_FailsClosedWhenStartedAtBecomesZero() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        mockSequencerFeed.setStartedAt(0);
+
+        (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) = chainlinkFeed.getSequencerStatus();
+
+        assertFalse(isUp);
+        assertFalse(gracePeriodPassed);
+        assertEq(timeSinceUp, 0);
+
+        vm.expectRevert(ChainlinkOracleFeed.SequencerDown.selector);
+        chainlinkFeed.getPrice(testToken);
+
+        (bool isStale, uint256 updatedAt) = chainlinkFeed.isPriceStale(testToken);
+        assertTrue(isStale);
+        assertEq(updatedAt, 0);
     }
 
     // ============ Sequencer Up - Within Grace Period ============
