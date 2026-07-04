@@ -53,6 +53,7 @@ interface ISplitRiskPoolFactory {
     function creationBonds(address pool) external view returns (address creator, address token, uint256 amount);
     function minimumCreationBondUsd() external view returns (uint256);
     function maxActivePools() external view returns (uint256);
+    function poolImplementationCodehash() external view returns (bytes32);
     function bootstrapModeEnabled() external view returns (bool);
     function poolCount() external view returns (uint256);
     function getPoolInfo(address pool) external view returns (ISplitRiskPoolFactory.PoolInfo memory);

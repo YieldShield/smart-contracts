@@ -168,9 +168,10 @@ contract SplitRiskPoolFactory is
         initializer
     {
         if (governanceTimelock_ == address(0)) revert GovernanceZeroAddress();
-        _validatePoolImplementation(poolImplementation_);
+        bytes32 implementationCodehash = _validatePoolImplementation(poolImplementation_);
         __ProtocolAccessControl_init(initialOwner, governanceTimelock_);
         splitRiskPoolImplementation = poolImplementation_;
+        poolImplementationCodehash = implementationCodehash;
         minimumCreationBondUsd = DEFAULT_MINIMUM_CREATION_BOND_USD;
         maxActivePools = MAX_POOLS;
         bootstrapModeEnabled = true;
@@ -178,12 +179,15 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Sets the pool implementation address for new pool deployments
-     * @dev Only callable by governance. Updates the implementation used for UUPS proxy deployments.
+     * @dev Only callable by governance. The implementation is pinned at factory initialization;
+     *      changing pool bytecode requires deploying a new factory so future pools cannot be
+     *      pointed at arbitrary UUPS-shaped code.
      * @param newImplementation Address of the new pool implementation contract
      * @custom:error InvalidAssetAddress If newImplementation is zero address
      */
     function setPoolImplementation(address newImplementation) external onlyGovernance {
         _validatePoolImplementation(newImplementation);
+        if (newImplementation != splitRiskPoolImplementation) revert ErrorsLib.InvalidAssetAddress();
         emit PoolImplementationUpdated(splitRiskPoolImplementation, newImplementation);
         splitRiskPoolImplementation = newImplementation;
     }
@@ -1729,13 +1733,20 @@ contract SplitRiskPoolFactory is
         isPoolActive[pool] = false;
     }
 
-    function _validatePoolImplementation(address implementation) internal view {
-        if (implementation == address(0) || implementation.code.length == 0) revert ErrorsLib.InvalidAssetAddress();
+    function _validatePoolImplementation(address implementation)
+        internal
+        view
+        returns (bytes32 implementationCodehash)
+    {
+        if (implementation == address(0) || implementation.code.length == 0) {
+            revert ErrorsLib.InvalidAssetAddress();
+        }
         try IERC1822Proxiable(implementation).proxiableUUID() returns (bytes32 slot) {
             if (slot != ERC1967Utils.IMPLEMENTATION_SLOT) revert ErrorsLib.InvalidAssetAddress();
         } catch {
             revert ErrorsLib.InvalidAssetAddress();
         }
+        implementationCodehash = implementation.codehash;
     }
 
     function _addToken(
@@ -1854,11 +1865,13 @@ contract SplitRiskPoolFactory is
     mapping(address => address) private _poolGovernanceTransferTarget;
     uint256 private _governancePoolTransferEpoch;
     mapping(address => uint256) private _poolGovernanceTransferEpoch;
+    /// @notice Code hash of the audited pool implementation accepted for future pool deployments.
+    bytes32 public poolImplementationCodehash;
 
     /**
      * @dev Storage gap for future upgrades.
      * This ensures that future versions of this contract can add new storage variables
      * without colliding with storage variables in derived contracts.
      */
-    uint256[33] private __gap;
+    uint256[32] private __gap;
 }

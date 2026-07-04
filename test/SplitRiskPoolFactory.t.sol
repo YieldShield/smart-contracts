@@ -1115,15 +1115,16 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     function testFactoryInterfaceExposesAdminSurface() public {
         ISplitRiskPoolFactory factoryInterface = ISplitRiskPoolFactory(address(factory));
-        SplitRiskPool newImplementation = new SplitRiskPool();
+        address pinnedImplementation = factory.splitRiskPoolImplementation();
 
         assertEq(factoryInterface.splitRiskPoolImplementation(), factory.splitRiskPoolImplementation());
+        assertEq(factoryInterface.poolImplementationCodehash(), factory.poolImplementationCodehash());
         assertEq(factoryInterface.defaultProtocolFeeRecipient(), address(this));
         assertTrue(factoryInterface.bootstrapModeEnabled());
 
         vm.prank(governanceTimelock);
-        factoryInterface.setPoolImplementation(address(newImplementation));
-        assertEq(factoryInterface.splitRiskPoolImplementation(), address(newImplementation));
+        factoryInterface.setPoolImplementation(pinnedImplementation);
+        assertEq(factoryInterface.splitRiskPoolImplementation(), pinnedImplementation);
 
         address newRecipient = address(0xFEE);
         vm.prank(governanceTimelock);
@@ -1132,6 +1133,12 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
     }
 
     function testSetPoolImplementationValidatesUUPSImplementation() public {
+        assertEq(
+            factory.poolImplementationCodehash(),
+            factory.splitRiskPoolImplementation().codehash,
+            "initial pool implementation codehash should be pinned"
+        );
+
         vm.prank(governanceTimelock);
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
         factory.setPoolImplementation(user1);
@@ -1140,12 +1147,22 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
         factory.setPoolImplementation(address(tokenB));
 
+        SplitRiskPoolFactoryV2Mock wrongUupsImplementation = new SplitRiskPoolFactoryV2Mock();
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.setPoolImplementation(address(wrongUupsImplementation));
+
         SplitRiskPool newImplementation = new SplitRiskPool();
         vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
         factory.setPoolImplementation(address(newImplementation));
 
+        address pinnedImplementation = factory.splitRiskPoolImplementation();
+        vm.prank(governanceTimelock);
+        factory.setPoolImplementation(pinnedImplementation);
+        assertEq(factory.splitRiskPoolImplementation(), pinnedImplementation, "pinned implementation remains active");
         assertEq(
-            factory.splitRiskPoolImplementation(), address(newImplementation), "valid UUPS implementation accepted"
+            factory.poolImplementationCodehash(), pinnedImplementation.codehash, "codehash records pinned bytecode"
         );
     }
 
