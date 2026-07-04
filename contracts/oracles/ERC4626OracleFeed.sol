@@ -212,7 +212,7 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         uint256 underlyingUnit = _getScaleFactor(underlying, underlyingDecimals);
         uint256 minimumSupply = _getMinimumVaultSupply(vault, shareDecimals, shareUnit);
         _requireMinimumVaultSupply(vault, minimumSupply);
-        uint256 referenceAssetsPerShare = _conservativeAssetsPerShare(vault, shareUnit);
+        uint256 referenceAssetsPerShare = _accountingAssetsPerShare(vault, shareUnit);
 
         VaultConfig memory config = VaultConfig({
             underlying: underlying,
@@ -239,7 +239,7 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         _requireMinimumVaultSupply(vault, config.minimumSupply);
         _requireMinimumVaultValue(vault, config, true);
 
-        uint256 scheduledReference = _conservativeAssetsPerShare(vault, config.shareUnit);
+        uint256 scheduledReference = _accountingAssetsPerShare(vault, config.shareUnit);
 
         uint256 executableAt = block.timestamp + SHARE_PRICE_REFERENCE_REFRESH_DELAY;
         uint256 expiresAt = executableAt + SHARE_PRICE_REFERENCE_REFRESH_EXPIRY;
@@ -274,7 +274,7 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         _requireMinimumVaultSupply(vault, config.minimumSupply);
         _requireMinimumVaultValue(vault, config, true);
 
-        uint256 currentAssetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
+        uint256 currentAssetsPerShare = _accountingAssetsPerShare(vault, config.shareUnit);
         _requireAssetsPerShareWithinReference(
             vault,
             currentAssetsPerShare,
@@ -523,8 +523,13 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         uint256 totalSupply = IERC4626(vault).totalSupply();
         _requireMinimumVaultSupply(vault, config.minimumSupply, totalSupply);
 
-        uint256 assetsPerShare = _conservativeAssetsPerShare(vault, config.shareUnit);
-        assetsPerShare = _boundedAssetsPerShare(vault, assetsPerShare, config, clampUpwardToReference);
+        uint256 accountingAssetsPerShare = _accountingAssetsPerShare(vault, config.shareUnit);
+        uint256 boundedAccountingAssetsPerShare =
+            _boundedAssetsPerShare(vault, accountingAssetsPerShare, config, clampUpwardToReference);
+        uint256 redeemableAssetsPerShare = _redeemableAssetsPerShare(vault, config.shareUnit);
+        uint256 assetsPerShare = redeemableAssetsPerShare < boundedAccountingAssetsPerShare
+            ? redeemableAssetsPerShare
+            : boundedAccountingAssetsPerShare;
         _requireMinimumVaultValue(vault, config, useProtectedUnderlying);
         // Codex P2 follow-up: preserve the safe/unsafe contract end-to-end —
         // the vault's unsafe getter forwards useCircuitBreaker=false so the
@@ -551,10 +556,12 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         }
     }
 
-    function _conservativeAssetsPerShare(address vault, uint256 shareUnit) internal view returns (uint256) {
-        uint256 convertAssets = IERC4626(vault).convertToAssets(shareUnit);
-        uint256 redeemAssets = IERC4626(vault).previewRedeem(shareUnit);
-        return redeemAssets < convertAssets ? redeemAssets : convertAssets;
+    function _accountingAssetsPerShare(address vault, uint256 shareUnit) internal view returns (uint256) {
+        return IERC4626(vault).convertToAssets(shareUnit);
+    }
+
+    function _redeemableAssetsPerShare(address vault, uint256 shareUnit) internal view returns (uint256) {
+        return IERC4626(vault).previewRedeem(shareUnit);
     }
 
     function _requireAssetsPerShareWithinReference(
