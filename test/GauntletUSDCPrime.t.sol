@@ -9,6 +9,12 @@ import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+contract FeeAccrualAwareMockOracle is MockOracle {
+    function getPriceForFeeAccrual(address token) external view returns (uint256) {
+        return _rawPrice(token);
+    }
+}
+
 /// @title GauntletUSDCPrimeTest
 /// @notice Integration tests for MockGauntletUSDCPrime vault with ERC4626OracleFeed and CompositeOracle dual-feed
 contract GauntletUSDCPrimeTest is Test {
@@ -39,8 +45,8 @@ contract GauntletUSDCPrimeTest is Test {
         // Deploy Gauntlet USDC Prime vault
         gtusdc = new MockGauntletUSDCPrime(IERC20(address(usdc)), ANNUAL_YIELD_BPS);
 
-        // Deploy MockOracle for underlying price
-        mockOracle = new MockOracle();
+        // Deploy fee-accrual-aware MockOracle for underlying and backup prices.
+        mockOracle = new FeeAccrualAwareMockOracle();
         mockOracle.setPrice(address(usdc), USDC_PRICE);
         // Set initial gtUSDC market price (backup price)
         mockOracle.setPrice(address(gtusdc), USDC_PRICE);
