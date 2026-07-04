@@ -99,6 +99,7 @@ interface ISplitRiskPool {
     function forfeitCommission(uint256 tokenId) external;
     function settleExpiredProtectorPosition(uint256 tokenId) external;
     function claimExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut) external returns (uint256 received);
+    function settleExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut) external returns (uint256 received);
     function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external;
 
     // View Functions

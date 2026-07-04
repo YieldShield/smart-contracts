@@ -83,6 +83,8 @@ contract ShieldActivationLossOracle is IPriceOracle {
 contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper {
     using stdStorage for StdStorage;
 
+    bytes4 private constant ENFORCED_PAUSE = bytes4(keccak256("EnforcedPause()"));
+
     SplitRiskPool internal pool;
     ShieldReceiptNFT internal shieldNFT;
     ProtectorReceiptNFT internal protectorNFT;
@@ -208,6 +210,28 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
 
         oracle.setPrice(address(shieldedToken), 1e18);
         oracle.setPrice(address(backingToken), 1e18);
+    }
+
+    function _createExpiredBackingReserve()
+        internal
+        returns (uint256 majorityProtectorTokenId, uint256 minorityProtectorTokenId, uint256 freshProtectorTokenId)
+    {
+        _disableTvlCapAndUseHighPrecisionPrices();
+
+        vm.prank(protector1);
+        majorityProtectorTokenId = pool.depositBackingAsset(address(backingToken), 150e18, 0);
+
+        vm.prank(protector2);
+        minorityProtectorTokenId = pool.depositBackingAsset(address(backingToken), 50e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 200e18 - 2, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        vm.prank(protector1);
+        freshProtectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
     }
 
     function test_crossAssetShieldActivationSocializesProtectorLossesAndCommissions() public {
@@ -634,6 +658,67 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(backingToken.balanceOf(protector2) - minorityBalanceBefore, 1, "minority holder receives one wei");
     }
 
+    function test_permissionlessExpiredBackingSettlementPaysOwnerAndClearsReserve() public {
+        (uint256 majorityProtectorTokenId, uint256 minorityProtectorTokenId,) = _createExpiredBackingReserve();
+
+        (, uint256 backingPoolBalanceBefore) = pool.getPoolBalances();
+        assertEq(backingPoolBalanceBefore, 100e18 + 2, "fresh backing plus expired reserve should be tracked");
+
+        uint256 majorityBalanceBefore = backingToken.balanceOf(protector1);
+        vm.prank(address(0xBEEF));
+        uint256 majorityReceived = pool.settleExpiredProtectorBacking(majorityProtectorTokenId, 1);
+        assertEq(majorityReceived, 1, "keeper settlement should pay majority owner");
+        assertEq(backingToken.balanceOf(protector1) - majorityBalanceBefore, 1, "owner receives settled backing");
+
+        vm.expectRevert();
+        protectorNFT.ownerOf(majorityProtectorTokenId);
+
+        uint256 minorityBalanceBefore = backingToken.balanceOf(protector2);
+        vm.prank(address(0xBEEF));
+        uint256 minorityReceived = pool.settleExpiredProtectorBacking(minorityProtectorTokenId, 1);
+        assertEq(minorityReceived, 1, "keeper settlement should pay final owner");
+        assertEq(backingToken.balanceOf(protector2) - minorityBalanceBefore, 1, "final owner receives settled backing");
+
+        (, uint256 backingPoolBalanceAfter) = pool.getPoolBalances();
+        assertEq(backingPoolBalanceAfter, 100e18, "expired reserve should be fully cleared");
+    }
+
+    function test_claimExpiredProtectorBackingRevertsWhenPaused() public {
+        (uint256 majorityProtectorTokenId,,) = _createExpiredBackingReserve();
+
+        vm.prank(governance);
+        pool.pause();
+
+        vm.prank(protector1);
+        vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
+        pool.claimExpiredProtectorBacking(majorityProtectorTokenId, 1);
+    }
+
+    function test_permissionlessExpiredBackingSettlementRevertsWhenPaused() public {
+        (uint256 majorityProtectorTokenId,,) = _createExpiredBackingReserve();
+
+        vm.prank(governance);
+        pool.pause();
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
+        pool.settleExpiredProtectorBacking(majorityProtectorTokenId, 1);
+    }
+
+    function test_governanceCanSettleExpiredBackingWhilePaused() public {
+        (uint256 majorityProtectorTokenId,,) = _createExpiredBackingReserve();
+
+        vm.prank(governance);
+        pool.pause();
+
+        uint256 ownerBalanceBefore = backingToken.balanceOf(protector1);
+        vm.prank(governance);
+        uint256 received = pool.settleExpiredProtectorBacking(majorityProtectorTokenId, 1);
+
+        assertEq(received, 1, "governance can clear paused expired reserve");
+        assertEq(backingToken.balanceOf(protector1) - ownerBalanceBefore, 1, "settlement still pays owner");
+    }
+
     function test_crossAssetShieldActivationForfeitsShieldedAssetsToProtectors() public {
         vm.prank(protector1);
         uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
@@ -681,6 +766,24 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         (uint256 shieldedPoolBalance, uint256 backingPoolBalance) = pool.getPoolBalances();
         assertEq(shieldedPoolBalance, 0, "settlement should clear tracked shielded balance");
         assertEq(backingPoolBalance, 0, "activation should have drained backing");
+    }
+
+    function test_settleExpiredProtectorPositionRevertsWhenPaused() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.startPrank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        pool.shieldedWithdraw(shieldTokenId, address(backingToken), 0);
+        vm.stopPrank();
+
+        vm.prank(governance);
+        pool.pause();
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(abi.encodeWithSelector(ENFORCED_PAUSE));
+        pool.settleExpiredProtectorPosition(protectorTokenId);
     }
 
     function test_governanceAclBlocksExpiredProtectorSettlementPayout() public {

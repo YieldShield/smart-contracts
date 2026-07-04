@@ -1577,15 +1577,21 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
                 currentEpochCommissionReserve = 0;
             }
             if (reserveUnprotectedDust) {
-                protectorEpochBackingRemainingReserve[expiredEpoch] += currentProtectorTokens;
-                protectorEpochBackingRemainingShares[expiredEpoch] = expiredShares;
-                totalProtectorTokens = 0;
-                emit EventsLib.ProtectorResidualBackingReserved(expiredEpoch, BACKING_TOKEN, currentProtectorTokens);
+                _reserveProtectorBackingForExpiredEpoch(expiredEpoch, expiredShares, currentProtectorTokens);
             }
             pendingProtectorRewardDust = 0;
             totalProtectorShares = 0;
             protectorShareEpoch += 1;
         }
+    }
+
+    function _reserveProtectorBackingForExpiredEpoch(uint256 expiredEpoch, uint256 expiredShares, uint256 amount)
+        internal
+    {
+        protectorEpochBackingRemainingReserve[expiredEpoch] += amount;
+        protectorEpochBackingRemainingShares[expiredEpoch] = expiredShares;
+        totalProtectorTokens = 0;
+        emit EventsLib.ProtectorResidualBackingReserved(expiredEpoch, BACKING_TOKEN, amount);
     }
 
     /// @dev Claims pending commissions for a protector position using share-based accounting.
@@ -1745,7 +1751,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      *      drained-pool reserves after a full shield activation while preserving ownership of funds.
      * @param tokenId The protector NFT token ID
      */
-    function settleExpiredProtectorPosition(uint256 tokenId) external nonReentrant {
+    function settleExpiredProtectorPosition(uint256 tokenId) external nonReentrant whenNotPaused {
         if (protectorShareEpochs[tokenId] >= protectorShareEpoch) {
             revert ErrorsLib.InvalidTokenId();
         }
@@ -1772,12 +1778,44 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     function claimExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut)
         external
         nonReentrant
+        whenNotPaused
         onlyProtectorNFTOwner(tokenId)
         returns (uint256 received)
     {
         _requirePoolAccountingBalancesCovered();
         _requireProtectorWithdrawalAllowed(msg.sender, "claimExpiredProtectorBacking");
 
+        received = _claimExpiredProtectorBackingTo(msg.sender, tokenId, minAmountOut);
+    }
+
+    /**
+     * @notice Settles expired residual backing to its owner without requiring the owner to call.
+     * @dev Keepers can call while unpaused. Governance can also call while paused to clear
+     *      already-expired residual backing that would otherwise block pool retirement.
+     * @param tokenId The protector NFT token ID
+     * @param minAmountOut Minimum backing tokens the owner must actually receive
+     * @return received Actual backing tokens received by the owner
+     */
+    function settleExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut)
+        external
+        nonReentrant
+        returns (uint256 received)
+    {
+        if (msg.sender != governanceTimelock()) {
+            _requireNotPaused();
+        }
+        _requirePoolAccountingBalancesCovered();
+
+        address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
+        _requireProtectorWithdrawalAllowed(positionOwner, "settleExpiredProtectorBacking");
+
+        received = _claimExpiredProtectorBackingTo(positionOwner, tokenId, minAmountOut);
+    }
+
+    function _claimExpiredProtectorBackingTo(address recipient, uint256 tokenId, uint256 minAmountOut)
+        internal
+        returns (uint256 received)
+    {
         uint256 positionShares_ = _getProtectorPositionShares(tokenId);
         if (!_hasExpiredProtectorBackingClaimState(tokenId, positionShares_)) {
             revert ErrorsLib.InvalidTokenId();
@@ -1786,8 +1824,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 positionEpoch = protectorShareEpochs[tokenId];
 
         // Settle any expired-epoch commissions before burning the receipt.
-        _claimCommissionTo(msg.sender, tokenId, positionShares_);
-        if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != msg.sender) {
+        _claimCommissionTo(recipient, tokenId, positionShares_);
+        if (IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId) != recipient) {
             revert ErrorsLib.InvalidTokenId();
         }
 
@@ -1813,11 +1851,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         if (claimAmount != 0) {
             poolState.totalBackingTokenBalance -= claimAmount;
-            received = _transferOutAndGetReceived(BACKING_TOKEN, msg.sender, claimAmount);
+            received = _transferOutAndGetReceived(BACKING_TOKEN, recipient, claimAmount);
         }
         SlippageLib.enforceMinReceived(received, minAmountOut);
 
-        emit EventsLib.ProtectorAssetWithdrawn(msg.sender, BACKING_TOKEN, received, positionShares_);
+        emit EventsLib.ProtectorAssetWithdrawn(recipient, BACKING_TOKEN, received, positionShares_);
     }
 
     /**
