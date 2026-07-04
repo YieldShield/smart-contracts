@@ -497,10 +497,14 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
         return _getEquivalentAmountForPrices(tokenA, amountA, tokenB, priceA, priceB);
     }
 
-    /// @notice Check if a price is stale for a given token
+    /// @notice Check if a price is stale or fails the protected Pyth price path for a given token
+    /// @dev `publishTime` is the oldest relevant time-based Pyth leg. When `isStale`
+    ///      is true because the confidence or spot/EMA deviation guard fails, there is
+    ///      no separate failure timestamp; callers should treat the boolean as the
+    ///      fail-closed signal and the timestamp as context for the latest time check.
     /// @param token The token address
-    /// @return isStale True if the price is stale
-    /// @return publishTime The publish time of the current price
+    /// @return isStale True if the price is time-stale or fails protected validation
+    /// @return publishTime Oldest relevant publish time, or 0 if sequencer/feed status is unavailable
     function isPriceStale(address token) external view returns (bool isStale, uint64 publishTime) {
         if (_isSequencerUnavailableForStaleness()) {
             return (true, 0);
