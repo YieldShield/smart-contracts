@@ -515,7 +515,10 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
         bool baseStale = baseSpotStale || baseEmaStale;
         uint64 baseOldestPublishTime = _olderPublishTime(baseSpotPublishTime, baseEmaPublishTime);
         if (quoteFeedId == bytes32(0)) {
-            return (baseStale, baseOldestPublishTime);
+            if (baseStale) {
+                return (true, baseOldestPublishTime);
+            }
+            return _protectedPricePathStaleness(token, baseOldestPublishTime);
         }
 
         uint256 quoteMaxAge = effectiveMaxPriceAgeForFeedId(quoteFeedId);
@@ -526,7 +529,10 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
         uint64 oldestPublishTime = _olderPublishTime(baseOldestPublishTime, quoteOldestPublishTime);
         bool spotSkewStale = _isCompositePublishTimeSkewTooHigh(baseSpotPublishTime, quoteSpotPublishTime);
         bool emaSkewStale = _isCompositePublishTimeSkewTooHigh(baseEmaPublishTime, quoteEmaPublishTime);
-        return (baseStale || quoteStale || spotSkewStale || emaSkewStale, oldestPublishTime);
+        if (baseStale || quoteStale || spotSkewStale || emaSkewStale) {
+            return (true, oldestPublishTime);
+        }
+        return _protectedPricePathStaleness(token, oldestPublishTime);
     }
 
     /// @notice Get the update fee for price feeds
@@ -757,6 +763,18 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
             return (true, publishTime);
         }
         isStale = (currentTime - rawPublishTime) > priceAge;
+    }
+
+    function _protectedPricePathStaleness(address token, uint64 publishTime)
+        internal
+        view
+        returns (bool isStale, uint64 observedPublishTime)
+    {
+        try this.getPrice(token) returns (uint256 price) {
+            return (price == 0, publishTime);
+        } catch {
+            return (true, publishTime);
+        }
     }
 
     function _validatePriceNotStale(address token, bytes32 feedId, uint256 publishTime, uint256 priceAge)

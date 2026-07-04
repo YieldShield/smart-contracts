@@ -125,6 +125,27 @@ contract PythOracleTest is Test {
         mockPyth.updatePriceFeeds{ value: fee }(updateDataArray);
     }
 
+    function _updatePriceFeedWithEmaPrice(
+        bytes32 feedId,
+        int64 spotPrice,
+        uint64 spotConf,
+        int64 emaPrice,
+        uint64 emaConf,
+        int32 expo,
+        uint64 publishTime
+    ) internal {
+        PythStructs.PriceFeed memory priceFeed;
+        priceFeed.id = feedId;
+        priceFeed.price = PythStructs.Price({ price: spotPrice, conf: spotConf, expo: expo, publishTime: publishTime });
+        priceFeed.emaPrice = PythStructs.Price({ price: emaPrice, conf: emaConf, expo: expo, publishTime: publishTime });
+
+        bytes[] memory updateDataArray = new bytes[](1);
+        updateDataArray[0] = abi.encode(priceFeed);
+
+        uint256 fee = mockPyth.getUpdateFee(updateDataArray);
+        mockPyth.updatePriceFeeds{ value: fee }(updateDataArray);
+    }
+
     /* ============ Basic Price Reading Tests ============ */
 
     function testGetPrice() public view {
@@ -738,6 +759,10 @@ contract PythOracleTest is Test {
             abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 1e8, 200)
         );
         oracle.getPrice(address(token1));
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "wide confidence should make protected staleness true");
+        assertEq(publishTime, uint64(block.timestamp));
     }
 
     function testGetPrice_AcceptsConfiguredConfidenceBound() public {
@@ -759,6 +784,18 @@ contract PythOracleTest is Test {
             abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 1e8, 200)
         );
         oracle.getPrice(address(token1));
+    }
+
+    function testIsPriceStale_ChecksSpotEmaDeviation() public {
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeedWithEmaPrice(FEED_ID_1, 2e8, 1e4, 1e8, 1e4, -8, uint64(block.timestamp));
+
+        vm.expectRevert();
+        oracle.getPrice(address(token1));
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "spot/EMA deviation should make protected staleness true");
+        assertEq(publishTime, uint64(block.timestamp));
     }
 
     function testCompositePriceFeed_MultipliesBaseQuoteByQuoteUsd() public {
@@ -854,6 +891,10 @@ contract PythOracleTest is Test {
             abi.encodeWithSelector(PythOracle.PriceConfidenceTooWide.selector, address(token1), 3e6, 95e6, 200)
         );
         oracle.getPrice(address(token1));
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "wide quote confidence should make protected staleness true");
+        assertEq(publishTime, uint64(block.timestamp));
     }
 
     function testCompositePriceFeed_RevertsWhenCombinedConfidenceTooWide() public {
@@ -868,6 +909,10 @@ contract PythOracleTest is Test {
             abi.encodeWithSelector(PythOracle.CompositePriceConfidenceTooWide.selector, address(token1), 203, 200)
         );
         oracle.getPrice(address(token1));
+
+        (bool isStale, uint64 publishTime) = oracle.isPriceStale(address(token1));
+        assertTrue(isStale, "wide combined confidence should make protected staleness true");
+        assertEq(publishTime, uint64(block.timestamp));
     }
 
     function testCompositePriceFeed_AllowsCombinedConfidenceAtThreshold() public {
