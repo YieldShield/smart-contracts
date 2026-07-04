@@ -354,6 +354,7 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
 
         vm.prank(governance);
         accessControl.setOwner(unauthorized);
+        // Mirrors a governance-timelock migration where ACL ownership is not transferred to the new timelock.
         (, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) = pool.getAccessControlStatus();
         assertTrue(depositsGated, "ACL still gates deposits after authority transfer");
         assertFalse(withdrawalsGated, "ACL stops gating withdrawals when timelock loses authority");

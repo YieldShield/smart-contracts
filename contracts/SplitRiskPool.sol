@@ -3183,6 +3183,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         abi.decode(returndata, (bool));
     }
 
+    /// @dev Withdrawal gating intentionally fails open when the active ACL is no longer
+    ///      owned or solely administered by the current governance timelock. Governance
+    ///      migrations that require continued withdrawal gating must transfer ACL authority
+    ///      to the new timelock before relying on this status.
     function _withdrawalAccessControlActive() internal view returns (bool) {
         address activeAccessControl = accessControl;
         return accessControlCanGateWithdrawals && activeAccessControl != address(0)
