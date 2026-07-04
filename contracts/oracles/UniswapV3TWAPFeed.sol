@@ -549,19 +549,19 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
     {
         // price = 1.0001^tick, expressed as raw token1 units per raw token0 unit.
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
-        uint256 rawPriceX18;
+        uint256 scaledBaseAmount = FullMath.mulDiv(tokenScale, 1e18, quoteScale);
 
         if (sqrtPriceX96 <= type(uint128).max) {
             uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-            rawPriceX18 =
-                _isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
-        } else {
-            uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
-            rawPriceX18 =
-                _isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
+            return _isToken0
+                ? FullMath.mulDiv(ratioX192, scaledBaseAmount, 1 << 192)
+                : FullMath.mulDiv(1 << 192, scaledBaseAmount, ratioX192);
         }
 
-        return FullMath.mulDiv(rawPriceX18, tokenScale, quoteScale);
+        uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
+        return _isToken0
+            ? FullMath.mulDiv(ratioX128, scaledBaseAmount, 1 << 128)
+            : FullMath.mulDiv(1 << 128, scaledBaseAmount, ratioX128);
     }
 
     function _safeObserveTwapWindow(IUniswapV3Pool pool, address poolAddress)

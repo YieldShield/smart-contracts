@@ -129,15 +129,28 @@ contract UniswapV3TWAPFeedTest is Test {
     }
 
     function _expectedPriceFromTick(int24 tick, bool isToken0) internal pure returns (uint256) {
+        return _expectedPriceFromTickWithScales(tick, isToken0, 1e18, 1e18);
+    }
+
+    function _expectedPriceFromTickWithScales(int24 tick, bool isToken0, uint256 tokenScale, uint256 quoteScale)
+        internal
+        pure
+        returns (uint256)
+    {
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
+        uint256 scaledBaseAmount = FullMath.mulDiv(tokenScale, 1e18, quoteScale);
 
         if (sqrtPriceX96 <= type(uint128).max) {
             uint256 ratioX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-            return isToken0 ? FullMath.mulDiv(ratioX192, 1e18, 1 << 192) : FullMath.mulDiv(1 << 192, 1e18, ratioX192);
+            return isToken0
+                ? FullMath.mulDiv(ratioX192, scaledBaseAmount, 1 << 192)
+                : FullMath.mulDiv(1 << 192, scaledBaseAmount, ratioX192);
         }
 
         uint256 ratioX128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
-        return isToken0 ? FullMath.mulDiv(ratioX128, 1e18, 1 << 128) : FullMath.mulDiv(1 << 128, 1e18, ratioX128);
+        return isToken0
+            ? FullMath.mulDiv(ratioX128, scaledBaseAmount, 1 << 128)
+            : FullMath.mulDiv(1 << 128, scaledBaseAmount, ratioX128);
     }
 
     function test_priceFromTick_MatchesTickMath_PositiveTick() public view {
@@ -172,7 +185,12 @@ contract UniswapV3TWAPFeedTest is Test {
         uint256 rawUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e18);
         uint256 humanUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e6);
 
-        assertEq(humanUnitPrice, rawUnitPrice * 1e12, "18/6 pair must scale raw pool ratio up");
+        assertEq(
+            humanUnitPrice,
+            _expectedPriceFromTickWithScales(tick, true, 1e18, 1e6),
+            "18/6 pair must keep full-precision scale"
+        );
+        assertGe(humanUnitPrice, rawUnitPrice * 1e12, "18/6 pair should not lose precision versus raw scaling");
         assertApproxEqRel(humanUnitPrice, 1e18, 1e15, "one whole token should price near one whole quote");
     }
 
@@ -182,8 +200,28 @@ contract UniswapV3TWAPFeedTest is Test {
         uint256 rawUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e18);
         uint256 humanUnitPrice = harness.priceFromTick(tick, true, 1e6, 1e18);
 
-        assertEq(humanUnitPrice, rawUnitPrice / 1e12, "6/18 pair must scale raw pool ratio down");
+        assertEq(
+            humanUnitPrice,
+            _expectedPriceFromTickWithScales(tick, true, 1e6, 1e18),
+            "6/18 pair must keep full-precision scale"
+        );
+        assertApproxEqAbs(humanUnitPrice, rawUnitPrice / 1e12, 1, "6/18 pair should scale raw ratio down");
         assertApproxEqRel(humanUnitPrice, 1e18, 1e15, "one whole token should price near one whole quote");
+    }
+
+    function test_priceFromTick_FoldsDecimalScaleBeforeRoundingTinyRatio() public view {
+        int24 tick = -552_000;
+
+        uint256 rawUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e18);
+        uint256 humanUnitPrice = harness.priceFromTick(tick, true, 1e18, 1e6);
+
+        assertEq(rawUnitPrice, 0, "unscaled 18-decimal ratio is below one wei");
+        assertEq(
+            humanUnitPrice,
+            _expectedPriceFromTickWithScales(tick, true, 1e18, 1e6),
+            "scaled quote should be computed before rounding"
+        );
+        assertGt(humanUnitPrice, 0, "decimal scaling should rescue representable tiny quote prices");
     }
 
     function test_setTokenPool_RevertsWhenAverageLiquidityBelowFloor() public {
