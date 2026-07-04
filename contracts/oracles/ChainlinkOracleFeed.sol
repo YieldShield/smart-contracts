@@ -551,10 +551,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (startedAt == 0) {
             return (false, false, 0);
         }
-        // A `startedAt` slightly ahead of `block.timestamp` would otherwise panic the
-        // unsigned subtraction. Treat it as "just came up" (grace period still active).
+        // A future `startedAt` means the status cannot be trusted yet.
         if (startedAt > block.timestamp) {
-            return (isUp, false, 0);
+            return (false, false, 0);
         }
         timeSinceUp = block.timestamp - startedAt;
         gracePeriodPassed = timeSinceUp > GRACE_PERIOD_TIME;

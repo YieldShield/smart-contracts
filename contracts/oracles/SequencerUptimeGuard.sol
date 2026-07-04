@@ -121,7 +121,7 @@ abstract contract SequencerUptimeGuard is Ownable {
         (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
         isUp = answer == 0;
         if (startedAt == 0) return (false, false, 0);
-        if (startedAt > block.timestamp) return (isUp, false, 0);
+        if (startedAt > block.timestamp) return (false, false, 0);
         timeSinceUp = block.timestamp - startedAt;
         gracePeriodPassed = timeSinceUp > GRACE_PERIOD_TIME;
     }

@@ -166,6 +166,25 @@ contract SequencerUptimeGuardTest is Test {
         h.check();
     }
 
+    function test_GetSequencerStatusFailsClosedWhenStartedAtMovesIntoFuture() public {
+        vm.chainId(ARBITRUM_ONE);
+        GuardHarness h = new GuardHarness();
+        MockSequencerUptimeFeed feed = new MockSequencerUptimeFeed();
+        h.setSequencerUptimeFeed(address(feed));
+
+        feed.setStartedAt(block.timestamp + 1);
+
+        (bool isUp, bool gracePassed, uint256 timeSinceUp) = h.getSequencerStatus();
+        assertFalse(isUp);
+        assertFalse(gracePassed);
+        assertEq(timeSinceUp, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SequencerUptimeGuard.GracePeriodNotOver.selector, 0, h.GRACE_PERIOD_TIME())
+        );
+        h.check();
+    }
+
     // -------------------------------------------------------------------------
     // Wiring: each production feed actually calls the gate on its read path
     // -------------------------------------------------------------------------

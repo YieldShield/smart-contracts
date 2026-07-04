@@ -299,6 +299,20 @@ contract ChainlinkL2SequencerTest is Test {
         assertEq(updatedAt, 0);
     }
 
+    function test_GetSequencerStatus_FailsClosedWhenStartedAtMovesIntoFuture() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        mockSequencerFeed.setStartedAt(block.timestamp + 1);
+
+        (bool isUp, bool gracePeriodPassed, uint256 timeSinceUp) = chainlinkFeed.getSequencerStatus();
+
+        assertFalse(isUp);
+        assertFalse(gracePeriodPassed);
+        assertEq(timeSinceUp, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.GracePeriodNotOver.selector, 0, 3600));
+        chainlinkFeed.getPrice(testToken);
+    }
+
     // ============ Sequencer Up - Within Grace Period ============
 
     function test_GetPrice_RevertsInGracePeriod() public {
