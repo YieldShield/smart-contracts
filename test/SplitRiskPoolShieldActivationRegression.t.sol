@@ -473,6 +473,32 @@ contract SplitRiskPoolShieldActivationRegressionTest is Test, TestTimelockHelper
         assertEq(pool.accumulatedCommissions(), accumulatedBefore, "accumulated commission must remain untouched");
     }
 
+    function test_getClaimableCommissionCapsCurrentEpochToAccumulatedCommissions() public {
+        vm.prank(protector1);
+        uint256 protectorTokenId = pool.depositBackingAsset(address(backingToken), 100e18, 0);
+
+        vm.prank(shieldedUser);
+        uint256 shieldTokenId = pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
+
+        oracle.setPrice(address(shieldedToken), 2e8);
+        vm.prank(shieldedUser);
+        pool.claimRewards(shieldTokenId);
+
+        uint256 rawClaimable = pool.getClaimableCommission(protectorTokenId);
+        assertGt(rawClaimable, 1, "test requires a current-epoch commission claim");
+        uint256 cappedClaimable = rawClaimable - 1;
+
+        stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(cappedClaimable);
+
+        assertEq(pool.getClaimableCommission(protectorTokenId), cappedClaimable, "view should cap to payable bucket");
+
+        uint256 ownerBalanceBefore = shieldedToken.balanceOf(protector1);
+        vm.prank(protector1);
+        pool.claimCommission(protectorTokenId);
+
+        assertEq(shieldedToken.balanceOf(protector1) - ownerBalanceBefore, cappedClaimable, "claim pays capped amount");
+    }
+
     function test_backingDustCanBeExitedWhenProtectorClaimsRoundToZero() public {
         _disableTvlCapAndUseHighPrecisionPrices();
 

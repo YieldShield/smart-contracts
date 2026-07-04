@@ -1853,6 +1853,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (positionShares_ == 0) return 0;
 
         uint256 claimable = _calculateClaimableCommission(tokenId, positionShares_);
+        if (claimable > accumulatedCommissions) claimable = accumulatedCommissions;
         uint256 positionEpoch = protectorShareEpochs[tokenId];
         if (positionEpoch < protectorShareEpoch && claimable > protectorEpochRemainingReserve[positionEpoch]) {
             return protectorEpochRemainingReserve[positionEpoch];
