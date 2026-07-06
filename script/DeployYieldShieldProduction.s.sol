@@ -69,6 +69,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address sgov;
         address spy;
         address qqq;
+        address tsla;
+        address amzn;
+        address pltr;
+        address nflx;
+        address amd;
+        bool tslaExternal;
+        bool amznExternal;
+        bool pltrExternal;
+        bool nflxExternal;
+        bool amdExternal;
     }
 
     struct RobinhoodDemoFeeds {
@@ -77,6 +87,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address sgov;
         address spy;
         address qqq;
+        address tsla;
+        address amzn;
+        address pltr;
+        address nflx;
+        address amd;
     }
 
     struct RobinhoodDemoPools {
@@ -84,6 +99,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address spyUsdg;
         address qqqUsdg;
         address usdgWeth;
+        address tslaUsdg;
+        address amznUsdg;
+        address pltrUsdg;
+        address nflxUsdg;
+        address amdUsdg;
     }
 
     uint256 internal constant ROBINHOOD_MAINNET_CHAIN_ID = 4663;
@@ -119,6 +139,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
     bytes32 private constant NAME_GOVERNOR = "YSGovernor";
+    bytes32 private constant NAME_ROBINHOOD_STOCK_TOKEN = "RobinhoodStockToken";
     string private constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
     string private constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
@@ -129,6 +150,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS = "YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS";
     string private constant ENV_ROBINHOOD_TESTNET_TEST_WALLET = "YS_ROBINHOOD_TESTNET_TEST_WALLET";
+    string private constant ENV_ROBINHOOD_TESTNET_TSLA_TOKEN = "YS_ROBINHOOD_TESTNET_TSLA_TOKEN";
+    string private constant ENV_ROBINHOOD_TESTNET_AMZN_TOKEN = "YS_ROBINHOOD_TESTNET_AMZN_TOKEN";
+    string private constant ENV_ROBINHOOD_TESTNET_PLTR_TOKEN = "YS_ROBINHOOD_TESTNET_PLTR_TOKEN";
+    string private constant ENV_ROBINHOOD_TESTNET_NFLX_TOKEN = "YS_ROBINHOOD_TESTNET_NFLX_TOKEN";
+    string private constant ENV_ROBINHOOD_TESTNET_AMD_TOKEN = "YS_ROBINHOOD_TESTNET_AMD_TOKEN";
     string private constant ENV_BOOTSTRAP_HOLDER_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_GUARD";
     string private constant ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER = "YS_PRODUCTION_BOOTSTRAP_HOLDER_FALLBACK_HANDLER";
     string private constant ENV_BOOTSTRAP_HOLDER_MODULE_GUARD = "YS_PRODUCTION_BOOTSTRAP_HOLDER_MODULE_GUARD";
@@ -700,18 +726,50 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         assets.sgov = address(new MockRobinhoodStockToken("Robinhood Test SGOV", "SGOV"));
         assets.spy = address(new MockRobinhoodStockToken("Robinhood Test SPY", "SPY"));
         assets.qqq = address(new MockRobinhoodStockToken("Robinhood Test QQQ", "QQQ"));
+        (assets.tsla, assets.tslaExternal) =
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_TSLA_TOKEN, "Robinhood Test TSLA", "TSLA");
+        (assets.amzn, assets.amznExternal) =
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMZN_TOKEN, "Robinhood Test AMZN", "AMZN");
+        (assets.pltr, assets.pltrExternal) =
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_PLTR_TOKEN, "Robinhood Test PLTR", "PLTR");
+        (assets.nflx, assets.nflxExternal) =
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_NFLX_TOKEN, "Robinhood Test NFLX", "NFLX");
+        (assets.amd, assets.amdExternal) =
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMD_TOKEN, "Robinhood Test AMD", "AMD");
 
         deployments.push(Deployment("RobinhoodTestUSDG", assets.usdg));
         deployments.push(Deployment("RobinhoodTestWETH", assets.weth));
         deployments.push(Deployment("RobinhoodTestSGOV", assets.sgov));
         deployments.push(Deployment("RobinhoodTestSPY", assets.spy));
         deployments.push(Deployment("RobinhoodTestQQQ", assets.qqq));
+        deployments.push(Deployment("RobinhoodTestTSLA", assets.tsla));
+        deployments.push(Deployment("RobinhoodTestAMZN", assets.amzn));
+        deployments.push(Deployment("RobinhoodTestPLTR", assets.pltr));
+        deployments.push(Deployment("RobinhoodTestNFLX", assets.nflx));
+        deployments.push(Deployment("RobinhoodTestAMD", assets.amd));
 
         console.log("USDG:", assets.usdg);
         console.log("WETH:", assets.weth);
         console.log("SGOV:", assets.sgov);
         console.log("SPY:", assets.spy);
         console.log("QQQ:", assets.qqq);
+        console.log("TSLA:", assets.tsla);
+        console.log("AMZN:", assets.amzn);
+        console.log("PLTR:", assets.pltr);
+        console.log("NFLX:", assets.nflx);
+        console.log("AMD:", assets.amd);
+    }
+
+    function _robinhoodDemoStockToken(string memory envName, string memory name, string memory symbol)
+        internal
+        returns (address token, bool externalToken)
+    {
+        token = vm.envOr(envName, address(0));
+        if (token != address(0)) {
+            _requireProductionContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
+            return (token, true);
+        }
+        return (address(new MockRobinhoodStockToken(name, symbol)), false);
     }
 
     function _deployRobinhoodDemoFeeds() internal returns (RobinhoodDemoFeeds memory feeds) {
@@ -720,12 +778,22 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         feeds.sgov = address(new MockChainlinkAggregator("SGOV / USD", 8, 10_043_500_000));
         feeds.spy = address(new MockChainlinkAggregator("SPY / USD", 8, 74_477_000_000));
         feeds.qqq = address(new MockChainlinkAggregator("QQQ / USD", 8, 71_466_135_000));
+        feeds.tsla = address(new MockChainlinkAggregator("TSLA / USD", 8, 33_200_000_000));
+        feeds.amzn = address(new MockChainlinkAggregator("AMZN / USD", 8, 22_500_000_000));
+        feeds.pltr = address(new MockChainlinkAggregator("PLTR / USD", 8, 15_000_000_000));
+        feeds.nflx = address(new MockChainlinkAggregator("NFLX / USD", 8, 126_000_000_000));
+        feeds.amd = address(new MockChainlinkAggregator("AMD / USD", 8, 17_500_000_000));
 
         deployments.push(Deployment("RobinhoodUSDGMockChainlinkFeed", feeds.usdg));
         deployments.push(Deployment("RobinhoodWETHMockChainlinkFeed", feeds.weth));
         deployments.push(Deployment("RobinhoodSGOVMockChainlinkFeed", feeds.sgov));
         deployments.push(Deployment("RobinhoodSPYMockChainlinkFeed", feeds.spy));
         deployments.push(Deployment("RobinhoodQQQMockChainlinkFeed", feeds.qqq));
+        deployments.push(Deployment("RobinhoodTSLAMockChainlinkFeed", feeds.tsla));
+        deployments.push(Deployment("RobinhoodAMZNMockChainlinkFeed", feeds.amzn));
+        deployments.push(Deployment("RobinhoodPLTRMockChainlinkFeed", feeds.pltr));
+        deployments.push(Deployment("RobinhoodNFLXMockChainlinkFeed", feeds.nflx));
+        deployments.push(Deployment("RobinhoodAMDMockChainlinkFeed", feeds.amd));
     }
 
     function _configureRobinhoodDemoFeeds(
@@ -738,6 +806,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         chainlinkOracleFeed.setTokenFeed(assets.sgov, feeds.sgov);
         chainlinkOracleFeed.setTokenFeed(assets.spy, feeds.spy);
         chainlinkOracleFeed.setTokenFeed(assets.qqq, feeds.qqq);
+        chainlinkOracleFeed.setTokenFeed(assets.tsla, feeds.tsla);
+        chainlinkOracleFeed.setTokenFeed(assets.amzn, feeds.amzn);
+        chainlinkOracleFeed.setTokenFeed(assets.pltr, feeds.pltr);
+        chainlinkOracleFeed.setTokenFeed(assets.nflx, feeds.nflx);
+        chainlinkOracleFeed.setTokenFeed(assets.amd, feeds.amd);
     }
 
     function _addRobinhoodDemoTokens(
@@ -750,6 +823,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _addRobinhoodDemoToken(factory, assets.sgov, "Robinhood Test SGOV", "SGOV", chainlinkOracleFeed, 12_500);
         _addRobinhoodDemoToken(factory, assets.spy, "Robinhood Test SPY", "SPY", chainlinkOracleFeed, 20_000);
         _addRobinhoodDemoToken(factory, assets.qqq, "Robinhood Test QQQ", "QQQ", chainlinkOracleFeed, 22_500);
+        _addRobinhoodDemoToken(factory, assets.tsla, "Robinhood Test TSLA", "TSLA", chainlinkOracleFeed, 25_000);
+        _addRobinhoodDemoToken(factory, assets.amzn, "Robinhood Test AMZN", "AMZN", chainlinkOracleFeed, 25_000);
+        _addRobinhoodDemoToken(factory, assets.pltr, "Robinhood Test PLTR", "PLTR", chainlinkOracleFeed, 30_000);
+        _addRobinhoodDemoToken(factory, assets.nflx, "Robinhood Test NFLX", "NFLX", chainlinkOracleFeed, 25_000);
+        _addRobinhoodDemoToken(factory, assets.amd, "Robinhood Test AMD", "AMD", chainlinkOracleFeed, 30_000);
     }
 
     function _addRobinhoodDemoToken(
@@ -770,6 +848,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _mintRobinhoodDemoAsset(assets.sgov, deployer, 10_000e18);
         _mintRobinhoodDemoAsset(assets.spy, deployer, 10_000e18);
         _mintRobinhoodDemoAsset(assets.qqq, deployer, 10_000e18);
+        _mintRobinhoodDemoStockAsset(assets.tsla, assets.tslaExternal, deployer, 100e18);
+        _mintRobinhoodDemoStockAsset(assets.amzn, assets.amznExternal, deployer, 100e18);
+        _mintRobinhoodDemoStockAsset(assets.pltr, assets.pltrExternal, deployer, 100e18);
+        _mintRobinhoodDemoStockAsset(assets.nflx, assets.nflxExternal, deployer, 100e18);
+        _mintRobinhoodDemoStockAsset(assets.amd, assets.amdExternal, deployer, 100e18);
 
         if (testWallet != address(0)) {
             _mintRobinhoodDemoAsset(assets.usdg, testWallet, 100_000e6);
@@ -777,12 +860,25 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _mintRobinhoodDemoAsset(assets.sgov, testWallet, 1_000e18);
             _mintRobinhoodDemoAsset(assets.spy, testWallet, 1_000e18);
             _mintRobinhoodDemoAsset(assets.qqq, testWallet, 1_000e18);
+            _mintRobinhoodDemoStockAsset(assets.tsla, assets.tslaExternal, testWallet, 5e18);
+            _mintRobinhoodDemoStockAsset(assets.amzn, assets.amznExternal, testWallet, 5e18);
+            _mintRobinhoodDemoStockAsset(assets.pltr, assets.pltrExternal, testWallet, 5e18);
+            _mintRobinhoodDemoStockAsset(assets.nflx, assets.nflxExternal, testWallet, 5e18);
+            _mintRobinhoodDemoStockAsset(assets.amd, assets.amdExternal, testWallet, 5e18);
             console.log("Robinhood test wallet funded:", testWallet);
         }
     }
 
     function _mintRobinhoodDemoAsset(address token, address to, uint256 amount) internal {
         IProductionMintableERC20(token).mint(to, amount);
+    }
+
+    function _mintRobinhoodDemoStockAsset(address token, bool externalToken, address to, uint256 amount) internal {
+        if (externalToken) {
+            console.log("Robinhood stock token is externally managed, skipping mint:", token);
+            return;
+        }
+        _mintRobinhoodDemoAsset(token, to, amount);
     }
 
     function _createRobinhoodDemoPools(SplitRiskPoolFactory factory, RobinhoodDemoAssets memory assets)
@@ -793,11 +889,21 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         pools.spyUsdg = _createRobinhoodDemoPool(factory, assets.spy, "SPY", assets.usdg, "USDG", 20_000, 600e6);
         pools.qqqUsdg = _createRobinhoodDemoPool(factory, assets.qqq, "QQQ", assets.usdg, "USDG", 22_500, 600e6);
         pools.usdgWeth = _createRobinhoodDemoPool(factory, assets.usdg, "USDG", assets.weth, "WETH", 20_000, 1e18);
+        pools.tslaUsdg = _createRobinhoodDemoPool(factory, assets.tsla, "TSLA", assets.usdg, "USDG", 25_000, 600e6);
+        pools.amznUsdg = _createRobinhoodDemoPool(factory, assets.amzn, "AMZN", assets.usdg, "USDG", 25_000, 600e6);
+        pools.pltrUsdg = _createRobinhoodDemoPool(factory, assets.pltr, "PLTR", assets.usdg, "USDG", 30_000, 600e6);
+        pools.nflxUsdg = _createRobinhoodDemoPool(factory, assets.nflx, "NFLX", assets.usdg, "USDG", 25_000, 600e6);
+        pools.amdUsdg = _createRobinhoodDemoPool(factory, assets.amd, "AMD", assets.usdg, "USDG", 30_000, 600e6);
 
         deployments.push(Deployment("RobinhoodSGOVUSDGPool", pools.sgovUsdg));
         deployments.push(Deployment("RobinhoodSPYUSDGPool", pools.spyUsdg));
         deployments.push(Deployment("RobinhoodQQQUSDGPool", pools.qqqUsdg));
         deployments.push(Deployment("RobinhoodUSDGWETHPool", pools.usdgWeth));
+        deployments.push(Deployment("RobinhoodTSLAUSDGPool", pools.tslaUsdg));
+        deployments.push(Deployment("RobinhoodAMZNUSDGPool", pools.amznUsdg));
+        deployments.push(Deployment("RobinhoodPLTRUSDGPool", pools.pltrUsdg));
+        deployments.push(Deployment("RobinhoodNFLXUSDGPool", pools.nflxUsdg));
+        deployments.push(Deployment("RobinhoodAMDUSDGPool", pools.amdUsdg));
     }
 
     function _createRobinhoodDemoPool(
@@ -820,6 +926,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _seedRobinhoodDemoPosition(pools.spyUsdg, assets.usdg, 100_000e6, assets.spy, 10e18);
         _seedRobinhoodDemoPosition(pools.qqqUsdg, assets.usdg, 100_000e6, assets.qqq, 10e18);
         _seedRobinhoodDemoPosition(pools.usdgWeth, assets.weth, 100e18, assets.usdg, 10_000e6);
+        _seedRobinhoodDemoPositionIfShieldedAvailable(pools.tslaUsdg, assets.usdg, 75_000e6, assets.tsla, 1e18);
+        _seedRobinhoodDemoPositionIfShieldedAvailable(pools.amznUsdg, assets.usdg, 75_000e6, assets.amzn, 1e18);
+        _seedRobinhoodDemoPositionIfShieldedAvailable(pools.pltrUsdg, assets.usdg, 75_000e6, assets.pltr, 1e18);
+        _seedRobinhoodDemoPositionIfShieldedAvailable(pools.nflxUsdg, assets.usdg, 75_000e6, assets.nflx, 1e18);
+        _seedRobinhoodDemoPositionIfShieldedAvailable(pools.amdUsdg, assets.usdg, 75_000e6, assets.amd, 1e18);
     }
 
     function _seedRobinhoodDemoPosition(
@@ -831,6 +942,25 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal {
         IERC20(backingToken).approve(pool, backingAmount);
         SplitRiskPool(payable(pool)).depositBackingAsset(backingToken, backingAmount, 0);
+        IERC20(shieldedToken).approve(pool, shieldedAmount);
+        SplitRiskPool(payable(pool)).depositShieldedAsset(shieldedToken, shieldedAmount, 0);
+    }
+
+    function _seedRobinhoodDemoPositionIfShieldedAvailable(
+        address pool,
+        address backingToken,
+        uint256 backingAmount,
+        address shieldedToken,
+        uint256 shieldedAmount
+    ) internal {
+        IERC20(backingToken).approve(pool, backingAmount);
+        SplitRiskPool(payable(pool)).depositBackingAsset(backingToken, backingAmount, 0);
+
+        if (IERC20(shieldedToken).balanceOf(deployer) < shieldedAmount) {
+            console.log("Skipping shielded seed; deployer lacks Robinhood faucet token:", shieldedToken);
+            return;
+        }
+
         IERC20(shieldedToken).approve(pool, shieldedAmount);
         SplitRiskPool(payable(pool)).depositShieldedAsset(shieldedToken, shieldedAmount, 0);
     }

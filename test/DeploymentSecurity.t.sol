@@ -1296,8 +1296,8 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(governor)
         );
 
-        assertEq(factory.poolCount(), 4);
-        assertEq(factory.getWhitelistedTokens().length, 5);
+        assertEq(factory.poolCount(), 9);
+        assertEq(factory.getWhitelistedTokens().length, 10);
         assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.authorizedCallerCount(), 0);
 
@@ -1327,8 +1327,8 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(erc4626OracleFeed.owner(), address(factory));
-        assertEq(factory.poolCount(), 4);
-        assertEq(factory.getWhitelistedTokens().length, 5);
+        assertEq(factory.poolCount(), 9);
+        assertEq(factory.getWhitelistedTokens().length, 10);
 
         vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
     }
