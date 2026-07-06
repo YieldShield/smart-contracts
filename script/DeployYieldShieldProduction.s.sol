@@ -623,7 +623,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         } else {
             console.log("\nNo pools or whitelisted assets were created in this production bootstrap.");
         }
-        console.log("Bootstrap holder must self-delegate YS before the first governance proposal.");
+        console.log("Bootstrap holder is self-delegated for YS voting power at deployment.");
         console.log("No external timelock admin is retained after deployment.");
         if (!_robinhoodTestnetDemoAssetsRequested()) {
             console.log("Configure launch assets and oracle feeds through governance after review.");
