@@ -37,7 +37,7 @@ contract FailingStrictProbeFactory {
 /// @notice Each test pins one of the six follow-up findings:
 ///         B4 commission overflow reverts, B5 whenNotPaused fee paths,
 ///         B6 same-asset withdraw also gates BACKING challenge, B7
-///         _getShieldedSpotPrice internalises challenge guard, B8
+///         backing deposits fail closed on shielded oracle challenges, B8
 ///         governance backstop on setPoolFeeRecipient, B9 fail-closed
 ///         strict-pricing probe handling.
 contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
@@ -510,16 +510,14 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     }
 
     // ----------------------------------------------------------------------
-    // B7: _getShieldedSpotPrice internalises challenge guard
+    // B7: backing deposits fail closed on shielded oracle challenges
     // ----------------------------------------------------------------------
 
-    /// @notice Any caller of `_getShieldedSpotPrice` must now see a revert
-    ///         when the shielded leg is challengeable, even if the caller
-    ///         itself didn't gate. Backing-asset deposits use the spot
-    ///         fallback path in `_validateDeposit`; the test uses a deviation
-    ///         (challengeable, not yet challenged) to also exercise the
-    ///         `_hasOracleChallengeablePrice` half of the guard.
-    function test_B7_getShieldedSpotPrice_RevertsOnShieldedChallengeable() public {
+    /// @notice Backing-asset deposits must fail closed when the shielded leg is
+    ///         challengeable because capacity and accounting checks price both legs.
+    ///         The test uses a deviation (challengeable, not yet challenged) to
+    ///         exercise the `_hasOracleChallengeablePrice` half of the guard.
+    function test_B7_depositBacking_RevertsOnShieldedChallengeable() public {
         // First seed a backing position so the deposit path is reachable.
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 1_000e18, 0);

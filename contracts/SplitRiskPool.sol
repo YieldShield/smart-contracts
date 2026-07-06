@@ -565,22 +565,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0;
     }
 
-    /// @dev Returns the current shielded-token spot price for non-critical TVL estimation paths.
-    ///      Intentionally uses the unprotected getter — view paths must opt into the raw
-    ///      active-feed value because the safe `getPrice` would otherwise revert during a
-    ///      dual-feed challenge window or fully halt view callers when the protected path
-    ///      is temporarily unavailable.
-    ///
-    ///      B7: explicitly fail closed if the shielded leg has a pending or currently
-    ///      challengeable dual-feed dispute. No current state-changing caller enables
-    ///      this fallback; it is kept only for future non-critical valuation paths that
-    ///      intentionally opt into unsafe spot pricing.
-    function _getShieldedSpotPrice() internal view returns (uint256 price) {
-        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
-        price = IPriceOracle(poolConfig.priceOracle).getPriceUnsafe(SHIELDED_TOKEN);
-        if (price == 0) revert ErrorsLib.InvalidOraclePrice();
-    }
-
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
         try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (uint256 protectedPrice) {
@@ -623,19 +607,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /// @dev Returns shielded-token USD value using native shielded token units.
     function _getShieldedValue(uint256 amount) internal view returns (uint256) {
         return Math.mulDiv(amount, _getShieldedPrice(), shieldedTokenScale);
-    }
-
-    /// @dev Returns shielded-token USD value using the spot path for non-critical TVL estimation.
-    function _getShieldedSpotValue(uint256 amount) internal view returns (uint256) {
-        return Math.mulDiv(amount, _getShieldedSpotPrice(), shieldedTokenScale);
-    }
-
-    /// @dev Best-effort wrapper for protected shielded-token valuation.
-    function _tryGetShieldedValue(uint256 amount) internal view returns (bool success, uint256 value) {
-        uint256 price;
-        (success, price) = _tryGetShieldedProtectedPrice();
-        if (!success) return (false, 0);
-        return (true, Math.mulDiv(amount, price, shieldedTokenScale));
     }
 
     /// @dev Returns the default minimum deposit for a token scale, targeting roughly 0.01 token.
@@ -885,15 +856,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @dev Gets total value locked in the pool (for TVL limit check)
      * @return totalValueUsd The combined USD value of all deposited assets
      */
-    function _getTotalPoolValueUsd(bool allowShieldedSpotFallback) internal view returns (uint256 totalValueUsd) {
-        uint256 shieldedValueUsd;
-        if (allowShieldedSpotFallback) {
-            (bool success, uint256 protectedShieldedValue) = _tryGetShieldedValue(poolState.shieldedTokenBalance);
-            shieldedValueUsd = success ? protectedShieldedValue : _getShieldedSpotValue(poolState.shieldedTokenBalance);
-        } else {
-            shieldedValueUsd = _getShieldedValue(poolState.shieldedTokenBalance);
-        }
-
+    function _getTotalPoolValueUsd() internal view returns (uint256 totalValueUsd) {
+        uint256 shieldedValueUsd = _getShieldedValue(poolState.shieldedTokenBalance);
         return shieldedValueUsd + _getProtectedBackingValue(poolState.totalBackingTokenBalance);
     }
 
@@ -941,7 +905,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 minDepositAmount = 0;
         uint256 maxDepositAmount = 0;
         uint256 depositValueUsd = 0;
-        bool allowShieldedSpotFallback = false;
 
         if (asset == SHIELDED_TOKEN) {
             minDepositAmount = poolConfig.shieldedMinDepositAmount;
@@ -959,7 +922,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (depositAmount > maxDepositAmount) revert ErrorsLib.DepositAmountTooLarge();
         if (depositAmount > ConstantsLib.MAX_SAFE_ACCUMULATION) revert ErrorsLib.DepositAmountTooLarge();
         if (depositValueUsd == 0 && depositAmount > 0) revert ErrorsLib.InvalidOraclePrice();
-        if (_getTotalPoolValueUsd(allowShieldedSpotFallback) + depositValueUsd > poolConfig.maxTotalValueLockedUsd) {
+        if (_getTotalPoolValueUsd() + depositValueUsd > poolConfig.maxTotalValueLockedUsd) {
             revert ErrorsLib.TVLLimitExceeded();
         }
     }
