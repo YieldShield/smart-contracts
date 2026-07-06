@@ -87,6 +87,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Emitted when min/max answer bounds are cached for a feed
     event FeedBoundsCached(address indexed token, address indexed feed, int192 minAnswer, int192 maxAnswer);
 
+    /// @notice Emitted when cached bounds look like Chainlink sentinel values rather than real clamps
+    event FeedBoundsLookLikeSentinel(address indexed token, address indexed feed, int192 minAnswer, int192 maxAnswer);
+
     /// @notice Emitted when a feed proxy does not expose min/max answer bounds
     event FeedBoundsUnavailable(address indexed token, address indexed feed);
 
@@ -211,6 +214,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
                 tokenFeedMaxAnswer[token] = maxA;
                 tokenFeedBoundsAggregator[token] = underlying;
                 emit FeedBoundsCached(token, feed, minA, maxA);
+                if (_hasSentinelAggregatorBounds(minA, maxA)) {
+                    emit FeedBoundsLookLikeSentinel(token, feed, minA, maxA);
+                }
                 return;
             } catch {
                 // fall through
@@ -410,6 +416,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         if (minA == 0 && maxA == 0) {
             return false;
         }
+        if (_hasSentinelAggregatorBounds(minA, maxA)) {
+            return false;
+        }
 
         address cachedAggregator = tokenFeedBoundsAggregator[token];
         if (cachedAggregator == address(0)) {
@@ -417,6 +426,10 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         }
 
         return _resolveUnderlyingAggregator(address(tokenFeeds[token])) == cachedAggregator;
+    }
+
+    function _hasSentinelAggregatorBounds(int192 minA, int192 maxA) internal pure returns (bool) {
+        return minA == 1 && maxA == type(int192).max;
     }
 
     function _getPrice(address token) internal view returns (uint256) {

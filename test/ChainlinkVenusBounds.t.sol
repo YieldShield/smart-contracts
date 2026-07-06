@@ -93,6 +93,8 @@ contract ChainlinkVenusBoundsTest is Test {
 
     int192 internal constant MIN_BOUND = 0.1e8; // $0.10 floor
     int192 internal constant MAX_BOUND = 100_000e8; // $100k ceiling
+    int192 internal constant SENTINEL_MIN_BOUND = 1;
+    int192 internal constant SENTINEL_MAX_BOUND = type(int192).max;
 
     function setUp() public {
         feed = new ChainlinkOracleFeed(3600);
@@ -114,6 +116,24 @@ contract ChainlinkVenusBoundsTest is Test {
         feed.setTokenFeed(token, address(proxy));
 
         assertFalse(feed.supportsStrictProtectedPrice(token));
+    }
+
+    function test_setTokenFeed_FlagsSentinelBoundsAndDisablesStrictSupport() public {
+        MockChainlinkProxyWithBounds proxy =
+            new MockChainlinkProxyWithBounds(2_000e8, 8, SENTINEL_MIN_BOUND, SENTINEL_MAX_BOUND);
+
+        vm.expectEmit(true, true, false, true);
+        emit ChainlinkOracleFeed.FeedBoundsCached(token, address(proxy), SENTINEL_MIN_BOUND, SENTINEL_MAX_BOUND);
+        vm.expectEmit(true, true, false, true);
+        emit ChainlinkOracleFeed.FeedBoundsLookLikeSentinel(
+            token, address(proxy), SENTINEL_MIN_BOUND, SENTINEL_MAX_BOUND
+        );
+        feed.setTokenFeed(token, address(proxy));
+
+        assertEq(feed.tokenFeedMinAnswer(token), SENTINEL_MIN_BOUND);
+        assertEq(feed.tokenFeedMaxAnswer(token), SENTINEL_MAX_BOUND);
+        assertFalse(feed.supportsStrictProtectedPrice(token), "sentinel bounds are not a strict circuit breaker");
+        assertEq(feed.getPrice(token), 2_000e8, "non-strict price path should stay live");
     }
 
     function test_removeTokenFeed_RequiresSchedule() public {
@@ -311,6 +331,20 @@ contract ChainlinkVenusBoundsTest is Test {
 
     function test_compositeStrictRequirementRejectsChainlinkFeedWithoutBounds() public {
         MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(2_000e8, 8);
+        feed.setTokenFeed(token, address(proxy));
+
+        CompositeOracle composite = new CompositeOracle();
+        composite.setTokenOracleFeed(token, address(feed));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CompositeOracle.CircuitBreakerNotSupported.selector, token, address(feed))
+        );
+        composite.setStrictCircuitBreakerRequired(token, true);
+    }
+
+    function test_compositeStrictRequirementRejectsChainlinkFeedWithSentinelBounds() public {
+        MockChainlinkProxyWithBounds proxy =
+            new MockChainlinkProxyWithBounds(2_000e8, 8, SENTINEL_MIN_BOUND, SENTINEL_MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
 
         CompositeOracle composite = new CompositeOracle();
