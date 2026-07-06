@@ -898,6 +898,13 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     function testFactoryCanRemoveCompositeOracleFeedWhenAuthorized() public {
         vm.prank(governanceTimelock);
+        factory.setTokenRequiresStrictProtectedPrice(address(tokenB), true);
+        assertTrue(factory.tokenRequiresStrictProtectedPrice(address(tokenB)), "factory strict flag should be enabled");
+        assertTrue(
+            compositeOracle.strictCircuitBreakerRequired(address(tokenB)), "composite strict flag should be enabled"
+        );
+
+        vm.prank(governanceTimelock);
         factory.scheduleCompositeOracleTokenFeedRemoval(address(tokenB));
         assertEq(
             compositeOracle.scheduledRemovalTime(address(tokenB)),
@@ -911,6 +918,14 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
         assertFalse(compositeOracle.isTokenSupported(address(tokenB)), "feed should be removed");
         assertTrue(factory.isWhitelisted(address(tokenB)), "feed removal should not delist token");
+        assertTrue(
+            factory.tokenRequiresStrictProtectedPrice(address(tokenB)),
+            "feed-only removal should preserve factory strict policy"
+        );
+        assertFalse(
+            compositeOracle.strictCircuitBreakerRequired(address(tokenB)),
+            "removed composite feed should clear oracle-local strict flag"
+        );
         (,, address storedToken, address primaryOracleFeed, address backupOracleFeed,) =
             factory.tokenInfo(address(tokenB));
         assertEq(storedToken, address(tokenB), "tokenInfo should remain for governance re-registration");
@@ -921,9 +936,19 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setCompositeOracleTokenFeed(address(tokenB), address(oracle));
 
         assertTrue(compositeOracle.isTokenSupported(address(tokenB)), "governance should re-register feed");
+        assertTrue(
+            compositeOracle.strictCircuitBreakerRequired(address(tokenB)),
+            "re-registration should re-sync preserved strict policy"
+        );
         (,,, primaryOracleFeed, backupOracleFeed,) = factory.tokenInfo(address(tokenB));
         assertEq(primaryOracleFeed, address(oracle), "primary feed should be restored");
         assertEq(backupOracleFeed, address(0), "backup feed should remain empty");
+
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15_000);
+        assertTrue(
+            SplitRiskPool(payable(poolAddress)).requiresStrictProtectedBackingPrice(),
+            "new pools should snapshot preserved strict policy"
+        );
     }
 
     function testFactoryCannotRemoveCompositeOracleFeedUsedByActivePool() public {

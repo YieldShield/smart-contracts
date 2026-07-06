@@ -509,6 +509,7 @@ contract SplitRiskPoolFactory is
     function setCompositeOracleTokenFeed(address token, address oracleFeed) external onlyGovernance {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeed(token, oracleFeed);
+        _syncCompositeOracleStrictRequirement(token, tokenRequiresStrictProtectedPrice[token]);
         _validateCompositeOracleTokenFeed(token);
         tokenInfo[token].primaryOracleFeed = oracleFeed;
         tokenInfo[token].backupOracleFeed = address(0);
@@ -520,6 +521,7 @@ contract SplitRiskPoolFactory is
     {
         if (!isWhitelisted[token]) revert TokenWhitelistLib.TokenNotWhitelisted();
         _compositeOracleAdmin().setTokenOracleFeedDual(token, primaryFeed, backupFeed);
+        _syncCompositeOracleStrictRequirement(token, tokenRequiresStrictProtectedPrice[token]);
         _validateCompositeOracleTokenFeed(token);
         tokenInfo[token].primaryOracleFeed = primaryFeed;
         tokenInfo[token].backupOracleFeed = backupFeed;
@@ -1852,7 +1854,6 @@ contract SplitRiskPoolFactory is
         TokenWhitelistLib.TokenInfo storage info = tokenInfo[token];
         info.primaryOracleFeed = address(0);
         info.backupOracleFeed = address(0);
-        delete tokenRequiresStrictProtectedPrice[token];
         emit CompositeOracleTokenFeedRemoved(token);
     }
 
