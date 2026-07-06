@@ -489,6 +489,19 @@ contract UniswapV3TWAPFeedTest is Test {
         assertEq(harness.scheduledQuoteTokenOraclePrice(), 1e18);
     }
 
+    function test_quoteTokenOracleFailover_RevertsAtExpiryBoundary() public {
+        MockOracle newQuoteOracle = new MockOracle();
+        newQuoteOracle.setPrice(address(quoteToken), 1e8);
+
+        harness.scheduleQuoteTokenOracleFailover(address(newQuoteOracle));
+        uint256 executableAt = block.timestamp + harness.QUOTE_ORACLE_FAILOVER_DELAY();
+        uint256 expiresAt = executableAt + harness.QUOTE_ORACLE_FAILOVER_EXPIRY();
+
+        vm.warp(expiresAt);
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.QuoteOracleFailoverExpired.selector, expiresAt));
+        harness.executeQuoteTokenOracleFailover();
+    }
+
     function test_quoteTokenOracleFailover_SucceedsWhenOldOracleStillDisagrees() public {
         MockOracle newQuoteOracle = new MockOracle();
         newQuoteOracle.setPrice(address(quoteToken), 2e8);

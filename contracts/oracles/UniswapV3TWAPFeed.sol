@@ -341,7 +341,7 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
         if (newOracle == address(0) || executableAt == 0) revert QuoteOracleFailoverNotScheduled();
         if (block.timestamp < executableAt) revert QuoteOracleFailoverTooEarly(executableAt);
         uint256 expiresAt = executableAt + QUOTE_ORACLE_FAILOVER_EXPIRY;
-        if (block.timestamp > expiresAt) revert QuoteOracleFailoverExpired(expiresAt);
+        if (block.timestamp >= expiresAt) revert QuoteOracleFailoverExpired(expiresAt);
 
         uint256 newPrice = _getNormalizedQuoteTokenPrice(newOracle);
         uint256 scheduledPrice = scheduledQuoteTokenOraclePrice;
