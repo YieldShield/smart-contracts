@@ -749,9 +749,10 @@ contract CompositeOracle is ICompositeOracle, Ownable {
             return;
         }
 
-        // Once activated, the backup becomes the feed used by protected pool valuation paths.
-        // Do not re-check the primary protected path here: the challenge may be
-        // completing precisely because that path is now unusable.
+        // Once activated, the backup is eligible for protected valuation. If the
+        // primary remains live and still deviates from the backup, protected reads
+        // continue to fail closed until governance accepts the backup as a
+        // single-feed configuration.
         _requireCircuitBreakerSupport(token, config.backupFeed);
 
         config.isBackupActive = true;

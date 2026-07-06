@@ -110,7 +110,8 @@ Access control added to `payPoolFee()` and `payProtocolFee()`.
 **Task:** Verify and configure:
 - Chainlink price feeds for target tokens
 - ERC4626 oracle feeds for vault tokens
-- MetaOracleAdapter parameters (deviation threshold, challenge duration)
+- CompositeOracle parameters (deviation threshold, challenge duration)
+- Post-finalization runbook: if a dual-feed challenge finalizes but the primary feed remains live and deviant, protected pool valuation stays fail-closed; governance must reconfigure the token to a single-feed backup once the backup is accepted as canonical.
 **Effort:** Medium (1 day)
 
 ### 5.3 Whitelist Initial Tokens
@@ -206,4 +207,3 @@ Access control added to `payPoolFee()` and `payProtocolFee()`.
 ---
 
 *This plan should be reviewed and updated as tasks are completed.*
-
