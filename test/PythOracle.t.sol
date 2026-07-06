@@ -811,6 +811,18 @@ contract PythOracleTest is Test {
         assertEq(oracle.getEmaPrice(address(token1)), 104_500_000);
     }
 
+    function testCompositePriceFeed_RevertsWhenProductRoundsToZero() public {
+        vm.prank(owner);
+        oracle.setTokenCompositePriceFeed(address(token1), FEED_ID_1, FEED_ID_2);
+
+        vm.warp(block.timestamp + 1);
+        _updatePriceFeed(FEED_ID_1, 1, 0, -8, uint64(block.timestamp));
+        _updatePriceFeed(FEED_ID_2, 1, 0, -8, uint64(block.timestamp));
+
+        vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidPrice.selector, address(token1), 0));
+        oracle.getPriceUnsafe(address(token1));
+    }
+
     function testSetMaxCompositePublishTimeSkewRejectsZero() public {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(PythOracle.InvalidCompositePublishTimeSkew.selector, 0, 1));

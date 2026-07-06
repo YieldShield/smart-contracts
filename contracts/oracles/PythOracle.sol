@@ -672,7 +672,9 @@ contract PythOracle is IPriceOracle, IOracleFeed, SequencerUptimeGuard {
             _readPythPrice(token, quoteFeedId, useEma, effectiveMaxPriceAgeForFeedId(quoteFeedId));
         _validateCompositePublishTimeSkew(token, feedId, quoteFeedId, basePublishTime, quotePublishTime);
         _validateCompositeConfidence(token, baseConfidenceBps, quoteConfidenceBps, useEma);
-        return Math.mulDiv(basePrice, quoteUsdPrice, 1e8);
+        uint256 compositePrice = Math.mulDiv(basePrice, quoteUsdPrice, 1e8);
+        if (compositePrice == 0) revert InvalidPrice(token, 0);
+        return compositePrice;
     }
 
     function _readPythPrice(address token, bytes32 feedId, bool useEma, uint256 priceAge)
