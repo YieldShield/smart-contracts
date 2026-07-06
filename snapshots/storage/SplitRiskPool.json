@@ -362,7 +362,7 @@
       "label": "shieldedTransferIntegrityProbe",
       "offset": 1,
       "slot": "101",
-      "type": "t_contract(TransferIntegrityProbe)9547"
+      "type": "t_contract(TransferIntegrityProbe)"
     },
     {
       "contract": "contracts/SplitRiskPool.sol:SplitRiskPool",
@@ -428,7 +428,7 @@
       "label": "bytes32",
       "numberOfBytes": "32"
     },
-    "t_contract(TransferIntegrityProbe)9547": {
+    "t_contract(TransferIntegrityProbe)": {
       "encoding": "inplace",
       "label": "contract TransferIntegrityProbe",
       "numberOfBytes": "20"

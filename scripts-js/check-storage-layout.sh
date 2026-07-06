@@ -7,11 +7,12 @@
 #
 # The raw `forge inspect ... storageLayout --json` output embeds compiler-internal
 # AST identifiers (`astId` on every storage/type entry, plus numeric suffixes on
-# `t_struct(...)NNN_storage` type keys/references). Those drift on every unrelated
-# source edit and produce noise diffs that pressure reviewers to rubber-stamp
-# snapshot refreshes — at which point a *real* slot shift could slip through. We
-# canonicalise the JSON before snapshotting and comparing so only load-bearing
-# fields (slot, offset, label, type modulo astId) drive the diff.
+# `t_struct(...)NNN_storage` and `t_contract(...)NNN` type keys/references). Those
+# drift on every unrelated source edit and produce noise diffs that pressure
+# reviewers to rubber-stamp snapshot refreshes — at which point a *real* slot
+# shift could slip through. We canonicalise the JSON before snapshotting and
+# comparing so only load-bearing fields (slot, offset, label, type modulo astId)
+# drive the diff.
 #
 # Usage:
 #   bash scripts-js/check-storage-layout.sh           # check
@@ -31,19 +32,20 @@ mkdir -p "$SNAPSHOT_DIR"
 normalize() {
   jq '
     def strip_struct_id: gsub("t_struct\\((?<n>[^)]+)\\)[0-9]+_storage"; "t_struct(\(.n))_storage");
+    def strip_type_id: strip_struct_id | gsub("t_contract\\((?<n>[^)]+)\\)[0-9]+"; "t_contract(\(.n))");
     walk(if type == "object" then del(.astId) else . end)
-    | .storage |= map(.type |= strip_struct_id)
+    | .storage |= map(.type |= strip_type_id)
     | .types |= (
-        with_entries(.key |= strip_struct_id)
+        with_entries(.key |= strip_type_id)
         | map_values(
             # Struct entries carry their members in `.members[].type`. Mapping
             # entries carry their key/value types in `.key`/`.value`. Array
             # entries carry their element type in `.base`. Each of these can
-            # reference a struct, so they all need the same astId scrub.
-            (if has("members") then .members |= map(.type |= strip_struct_id) else . end)
-            | (if has("value") then .value |= strip_struct_id else . end)
-            | (if has("base")  then .base  |= strip_struct_id else . end)
-            | (if has("key")   then .key   |= strip_struct_id else . end)
+            # reference compiler-suffixed types, so they all need the same scrub.
+            (if has("members") then .members |= map(.type |= strip_type_id) else . end)
+            | (if has("value") then .value |= strip_type_id else . end)
+            | (if has("base")  then .base  |= strip_type_id else . end)
+            | (if has("key")   then .key   |= strip_type_id else . end)
           )
       )
   '
