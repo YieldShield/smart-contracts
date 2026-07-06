@@ -2942,11 +2942,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         _pause();
     }
 
-    /// @notice Lets the factory clear a dust-only protector side before governance deactivates the pool.
+    /// @notice Lets the factory clear zero-share protector backing dust before governance deactivates the pool.
     /// @dev This is intentionally narrower than normal withdrawals: it only applies when there
-    ///      are no shielded liabilities, no reserved fees, and backing is at or below the pool
-    ///      minimum deposit amount. The residual is swept to the protocol fee recipient and
-    ///      the creation bond can then be forfeited by the factory.
+    ///      are no shielded liabilities, no reserved fees, no live protector shares, and tracked
+    ///      backing is at or below the pool minimum deposit amount. The residual is swept to the
+    ///      protocol fee recipient, and the factory can then return the creator's creation bond.
     function sweepInactiveProtectorBackingDustFromFactory()
         external
         nonReentrant

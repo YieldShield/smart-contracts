@@ -2053,6 +2053,35 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertEq(tokenB.balanceOf(user2), recipientBalanceBefore, "Protocol recipient should receive nothing");
     }
 
+    function testDeactivateDustPoolReturnsCreationBondForZeroShareCleanup() public {
+        vm.prank(governanceTimelock);
+        factory.setDefaultProtocolFeeRecipient(user2);
+
+        uint256 expectedBondAmount = _defaultCreationBondAmount(address(tokenB));
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15_000);
+        uint256 creatorBalanceBefore = tokenB.balanceOf(address(this));
+        uint256 recipientBalanceBefore = tokenB.balanceOf(user2);
+
+        vm.prank(governanceTimelock);
+        factory.deactivateDustPool(poolAddress);
+
+        assertEq(factory.activePoolCount(), 0, "Dust deactivation should free the active slot");
+        assertFalse(factory.isPoolActive(poolAddress), "Dust pool should no longer be active");
+        assertEq(
+            tokenB.balanceOf(address(this)) - creatorBalanceBefore,
+            expectedBondAmount,
+            "Creator should recover the creation bond"
+        );
+        assertEq(tokenB.balanceOf(user2), recipientBalanceBefore, "Protocol recipient should not receive honest bond");
+        (address creator,, uint256 amount) = factory.creationBonds(poolAddress);
+        assertEq(creator, address(0), "Creation bond should be cleared after return");
+        assertEq(amount, 0, "Creation bond amount should be cleared after return");
+
+        address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15_000);
+        assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
+        assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
     function testDeactivateProtectorOnlyPoolFreesSlotWithoutSweepingBacking() public {
         vm.prank(governanceTimelock);
         factory.setDefaultProtocolFeeRecipient(user2);

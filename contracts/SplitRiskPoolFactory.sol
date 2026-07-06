@@ -1133,14 +1133,15 @@ contract SplitRiskPoolFactory is
         emit EventsLib.PoolDeactivated(pool);
     }
 
-    /// @notice Deactivates a dust-only pool and frees its active slot.
-    /// @dev Governance-only escape hatch for pool-cap griefing. The pool itself enforces
-    ///      that no shielded liabilities or reserved fees remain and that protector backing
-    ///      is at or below its configured minimum deposit amount before sweeping it.
+    /// @notice Deactivates a zero-share residual-dust pool and frees its active slot.
+    /// @dev Governance-only cleanup for pools with no shielded liabilities, no reserved fees,
+    ///      no live protector shares, and only sub-minimum tracked backing dust. Live
+    ///      protector-only pools use deactivateProtectorOnlyPool instead.
     // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
     // slither-disable-next-line reentrancy-eth
     function deactivateDustPool(address pool) external onlyGovernance nonReentrant {
-        if (_poolInfo[pool].shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
+        ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
+        if (info.shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
         if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
 
         ISplitRiskPool targetPool = ISplitRiskPool(pool);
@@ -1150,7 +1151,7 @@ contract SplitRiskPoolFactory is
         targetPool.sweepInactiveProtectorBackingDustFromFactory();
         _pauseAndRequirePoolEmpty(pool);
         _removeActivePool(pool);
-        _forfeitCreationBond(pool);
+        _returnCreationBond(pool, info.creator);
         emit EventsLib.PoolDeactivated(pool);
     }
 
