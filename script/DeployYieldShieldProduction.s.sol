@@ -10,6 +10,7 @@ import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
 import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggregator.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
@@ -712,7 +713,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         RobinhoodDemoAssets memory assets = _deployRobinhoodDemoAssets();
         RobinhoodDemoFeeds memory feeds = _deployRobinhoodDemoFeeds();
         _configureRobinhoodDemoFeeds(chainlinkOracleFeed, assets, feeds);
-        _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr);
+        address stockOracleFeed = _deployRobinhoodStockOracleFeed(d.chainlinkOracleFeedAddr);
+        _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr, stockOracleFeed);
         _mintRobinhoodDemoBalances(assets);
         RobinhoodDemoPools memory pools = _createRobinhoodDemoPools(factory, assets);
         _seedRobinhoodDemoLiquidity(assets, pools);
@@ -813,21 +815,68 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         chainlinkOracleFeed.setTokenFeed(assets.amd, feeds.amd);
     }
 
+    function _deployRobinhoodStockOracleFeed(address chainlinkOracleFeed) internal returns (address stockOracleFeed) {
+        stockOracleFeed = address(new RobinhoodStockOracleFeed(chainlinkOracleFeed));
+        deployments.push(Deployment("RobinhoodStockOracleFeed", stockOracleFeed));
+        console.log("RobinhoodStockOracleFeed:", stockOracleFeed);
+    }
+
     function _addRobinhoodDemoTokens(
         SplitRiskPoolFactory factory,
         RobinhoodDemoAssets memory assets,
-        address chainlinkOracleFeed
+        address chainlinkOracleFeed,
+        address stockOracleFeed
     ) internal {
         _addRobinhoodDemoToken(factory, assets.usdg, "Robinhood Test USDG", "USDG", chainlinkOracleFeed, 10_000);
         _addRobinhoodDemoToken(factory, assets.weth, "Robinhood Test WETH", "WETH", chainlinkOracleFeed, 20_000);
-        _addRobinhoodDemoToken(factory, assets.sgov, "Robinhood Test SGOV", "SGOV", chainlinkOracleFeed, 12_500);
-        _addRobinhoodDemoToken(factory, assets.spy, "Robinhood Test SPY", "SPY", chainlinkOracleFeed, 20_000);
-        _addRobinhoodDemoToken(factory, assets.qqq, "Robinhood Test QQQ", "QQQ", chainlinkOracleFeed, 22_500);
-        _addRobinhoodDemoToken(factory, assets.tsla, "Robinhood Test TSLA", "TSLA", chainlinkOracleFeed, 25_000);
-        _addRobinhoodDemoToken(factory, assets.amzn, "Robinhood Test AMZN", "AMZN", chainlinkOracleFeed, 25_000);
-        _addRobinhoodDemoToken(factory, assets.pltr, "Robinhood Test PLTR", "PLTR", chainlinkOracleFeed, 30_000);
-        _addRobinhoodDemoToken(factory, assets.nflx, "Robinhood Test NFLX", "NFLX", chainlinkOracleFeed, 25_000);
-        _addRobinhoodDemoToken(factory, assets.amd, "Robinhood Test AMD", "AMD", chainlinkOracleFeed, 30_000);
+        _addRobinhoodDemoStockToken(
+            factory, assets.sgov, "Robinhood Test SGOV", "SGOV", chainlinkOracleFeed, stockOracleFeed, 12_500
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.spy, "Robinhood Test SPY", "SPY", chainlinkOracleFeed, stockOracleFeed, 20_000
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.qqq, "Robinhood Test QQQ", "QQQ", chainlinkOracleFeed, stockOracleFeed, 22_500
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.tsla, "Robinhood Test TSLA", "TSLA", chainlinkOracleFeed, stockOracleFeed, 25_000
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.amzn, "Robinhood Test AMZN", "AMZN", chainlinkOracleFeed, stockOracleFeed, 25_000
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.pltr, "Robinhood Test PLTR", "PLTR", chainlinkOracleFeed, stockOracleFeed, 30_000
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.nflx, "Robinhood Test NFLX", "NFLX", chainlinkOracleFeed, stockOracleFeed, 25_000
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.amd, "Robinhood Test AMD", "AMD", chainlinkOracleFeed, stockOracleFeed, 30_000
+        );
+    }
+
+    /// @dev Registers a stock/ETF demo token in the CompositeOracle through the
+    ///      RobinhoodStockOracleFeed wrapper so the corporate-action `oraclePaused()` flag
+    ///      gates pricing. Env-supplied official faucet tokens might not implement the
+    ///      probe; those fall back to the bare ChainlinkOracleFeed with a logged warning.
+    ///      The ChainlinkOracleFeed keeps the token feed registration either way — the
+    ///      wrapper only delegates to it.
+    function _addRobinhoodDemoStockToken(
+        SplitRiskPoolFactory factory,
+        address token,
+        string memory name,
+        string memory symbol,
+        address chainlinkOracleFeed,
+        address stockOracleFeed,
+        uint256 minCollateralRatioBp
+    ) internal {
+        address oracleFeed = stockOracleFeed;
+        (bool probeSuccess, bytes memory probeData) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
+        if (!probeSuccess || probeData.length < 32) {
+            console.log("Robinhood stock token missing oraclePaused(); using bare Chainlink feed:", token);
+            oracleFeed = chainlinkOracleFeed;
+        }
+        _addRobinhoodDemoToken(factory, token, name, symbol, oracleFeed, minCollateralRatioBp);
     }
 
     function _addRobinhoodDemoToken(
