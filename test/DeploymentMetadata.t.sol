@@ -61,6 +61,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant CURRENT_RUN_DEDUPE_TEST_CHAIN_ID = 777_777_780;
     uint256 internal constant FRESHEST_RESOLUTION_TEST_CHAIN_ID = 777_777_782;
     uint256 internal constant EMPTY_EXPORT_TEST_CHAIN_ID = 777_777_783;
+    uint256 internal constant CORE_CONTRACT_EXPORT_TEST_CHAIN_ID = 777_777_786;
     uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_900;
 
     function test_exportDeployments_PreservesExistingEntriesNotSupersededByCurrentRun() public {
@@ -141,6 +142,46 @@ contract DeploymentMetadataTest is Test {
         string memory exportedJson = vm.readFile(deploymentPath);
         assertEq(vm.parseJsonString(exportedJson, string.concat(".", vm.toString(factory))), "SplitRiskPoolFactory");
         assertEq(vm.parseJsonString(exportedJson, ".networkName"), "chain-777777783");
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+    }
+
+    function test_exportDeployments_RecordsProductionCoreContracts() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(CORE_CONTRACT_EXPORT_TEST_CHAIN_ID);
+        address ysToken = address(0x1001);
+        address timelock = address(0x1002);
+        address governor = address(0x1003);
+        address pythOracle = address(0x1004);
+        address erc4626OracleFeed = address(0x1005);
+        address compositeOracle = address(0x1006);
+        address factoryImplementation = address(0x1007);
+        address poolImplementation = address(0x1008);
+        address factory = address(0x1009);
+
+        deployHelpers.addDeployment("YSToken", ysToken);
+        deployHelpers.addDeployment("TimelockController", timelock);
+        deployHelpers.addDeployment("YSGovernor", governor);
+        deployHelpers.addDeployment("PythOracle", pythOracle);
+        deployHelpers.addDeployment("ERC4626OracleFeed", erc4626OracleFeed);
+        deployHelpers.addDeployment("CompositeOracle", compositeOracle);
+        deployHelpers.addDeployment("SplitRiskPoolFactoryImplementation", factoryImplementation);
+        deployHelpers.addDeployment("SplitRiskPoolImplementation", poolImplementation);
+        deployHelpers.addDeployment("SplitRiskPoolFactory", factory);
+
+        deployHelpers.exportDeploymentsHarness();
+
+        string memory exportedJson = vm.readFile(deploymentPath);
+        _assertDeploymentEntry(exportedJson, ysToken, "YSToken");
+        _assertDeploymentEntry(exportedJson, timelock, "TimelockController");
+        _assertDeploymentEntry(exportedJson, governor, "YSGovernor");
+        _assertDeploymentEntry(exportedJson, pythOracle, "PythOracle");
+        _assertDeploymentEntry(exportedJson, erc4626OracleFeed, "ERC4626OracleFeed");
+        _assertDeploymentEntry(exportedJson, compositeOracle, "CompositeOracle");
+        _assertDeploymentEntry(exportedJson, factoryImplementation, "SplitRiskPoolFactoryImplementation");
+        _assertDeploymentEntry(exportedJson, poolImplementation, "SplitRiskPoolImplementation");
+        _assertDeploymentEntry(exportedJson, factory, "SplitRiskPoolFactory");
+        assertEq(vm.parseJsonString(exportedJson, ".networkName"), "chain-777777786");
 
         _removeDeploymentFileIfPresent(deploymentPath);
     }
@@ -297,6 +338,10 @@ contract DeploymentMetadataTest is Test {
         if (vm.exists(deploymentPath)) {
             vm.removeFile(deploymentPath);
         }
+    }
+
+    function _assertDeploymentEntry(string memory json, address deployed, string memory expectedName) internal pure {
+        assertEq(vm.parseJsonString(json, string.concat(".", vm.toString(deployed))), expectedName);
     }
 
     function _broadcastPathForChain(uint256 chainId) internal view returns (string memory) {
