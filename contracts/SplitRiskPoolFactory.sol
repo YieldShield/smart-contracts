@@ -181,20 +181,24 @@ contract SplitRiskPoolFactory is
     }
 
     /**
-     * @notice Asserts the pinned pool implementation remains the active implementation
-     * @dev Only callable by governance. The implementation is pinned at factory initialization;
-     *      changing pool bytecode requires deploying a new factory. This compatibility entrypoint
-     *      rejects every address except the pinned implementation and emits a pin-check event.
+     * @notice Legacy alias for checking the pinned pool implementation
+     * @dev Kept for existing governance tooling. This does not update the implementation;
+     *      changing pool bytecode requires deploying a new factory.
      * @param newImplementation Address expected to equal the pinned pool implementation
-     * @custom:error InvalidAssetAddress If newImplementation is zero address
      */
     function setPoolImplementation(address newImplementation) external onlyGovernance {
-        bytes32 implementationCodehash = _validatePoolImplementation(newImplementation);
-        if (newImplementation != splitRiskPoolImplementation) revert ErrorsLib.InvalidAssetAddress();
-        if (implementationCodehash != poolImplementationCodehash) {
-            revert PoolImplementationCodehashMismatch(poolImplementationCodehash, implementationCodehash);
-        }
-        emit PoolImplementationPinChecked(newImplementation, implementationCodehash);
+        _assertPinnedPoolImplementation(newImplementation);
+    }
+
+    /**
+     * @notice Asserts the pinned pool implementation remains the active implementation
+     * @dev Only callable by governance. The implementation is pinned at factory initialization;
+     *      changing pool bytecode requires deploying a new factory.
+     * @param expectedImplementation Address expected to equal the pinned pool implementation
+     * @custom:error InvalidAssetAddress If expectedImplementation is zero, non-UUPS, or not the pinned address
+     */
+    function assertPinnedPoolImplementation(address expectedImplementation) external onlyGovernance {
+        _assertPinnedPoolImplementation(expectedImplementation);
     }
 
     /**
@@ -1802,6 +1806,15 @@ contract SplitRiskPoolFactory is
             revert ErrorsLib.InvalidAssetAddress();
         }
         implementationCodehash = implementation.codehash;
+    }
+
+    function _assertPinnedPoolImplementation(address expectedImplementation) internal {
+        bytes32 implementationCodehash = _validatePoolImplementation(expectedImplementation);
+        if (expectedImplementation != splitRiskPoolImplementation) revert ErrorsLib.InvalidAssetAddress();
+        if (implementationCodehash != poolImplementationCodehash) {
+            revert PoolImplementationCodehashMismatch(poolImplementationCodehash, implementationCodehash);
+        }
+        emit PoolImplementationPinChecked(expectedImplementation, implementationCodehash);
     }
 
     function _addToken(

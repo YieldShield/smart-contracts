@@ -1157,7 +1157,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factoryInterface.bootstrapModeEnabled());
 
         vm.prank(governanceTimelock);
-        factoryInterface.setPoolImplementation(pinnedImplementation);
+        factoryInterface.assertPinnedPoolImplementation(pinnedImplementation);
         assertEq(factoryInterface.splitRiskPoolImplementation(), pinnedImplementation);
 
         address newRecipient = address(0xFEE);
@@ -1172,6 +1172,10 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             factory.splitRiskPoolImplementation().codehash,
             "initial pool implementation codehash should be pinned"
         );
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.assertPinnedPoolImplementation(user1);
 
         vm.prank(governanceTimelock);
         vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
@@ -1192,6 +1196,11 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.setPoolImplementation(address(newImplementation));
 
         address pinnedImplementation = factory.splitRiskPoolImplementation();
+        vm.prank(governanceTimelock);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit PoolImplementationPinChecked(pinnedImplementation, pinnedImplementation.codehash);
+        factory.assertPinnedPoolImplementation(pinnedImplementation);
+
         vm.prank(governanceTimelock);
         vm.expectEmit(true, false, false, true, address(factory));
         emit PoolImplementationPinChecked(pinnedImplementation, pinnedImplementation.codehash);

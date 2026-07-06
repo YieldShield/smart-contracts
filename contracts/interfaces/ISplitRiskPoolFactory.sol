@@ -96,6 +96,7 @@ interface ISplitRiskPoolFactory {
     function setMinimumCreationBondUsd(uint256 newMinUsd) external;
     function setMaxActivePools(uint256 newMaxActivePools) external;
     function setPoolImplementation(address newImplementation) external;
+    function assertPinnedPoolImplementation(address expectedImplementation) external;
     function removeToken(address token) external;
     function addToken(
         address token,
