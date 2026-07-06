@@ -473,6 +473,93 @@ contract CompositeOracleTest is Test {
         assertTrue(compositeOracle.supportsStrictProtectedPrice(address(vault)));
         assertEq(compositeOracle.getPriceWithStrictCircuitBreaker(address(vault)), 1e8);
     }
+
+    // ============ Single-Feed (Chainlink-native chain) Semantics ============
+    // On Chainlink-native deployments (e.g. Robinhood Chain, no Pyth backup) every token
+    // is registered via setTokenOracleFeed with a single feed and NO backup, so the
+    // dual-feed challenge machinery must stay idle and pricing must degrade gracefully.
+    // Related behaviors already covered elsewhere:
+    // - challengeForToken reverting for single-feed tokens: test_Challenge_RevertsWhenNotDualFeed
+    //   (ChallengeNotPossible with reason "Not a dual-feed token")
+    // - healthy single-feed getValueWithFallback returning a reliable value:
+    //   testGetValueWithFallback_SixDecimalToken
+
+    function testSingleFeed_DualFeedStatusReportsNoBackupAndNoChallenge() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        (
+            bool isDualFeed,
+            address primaryFeed,
+            address backupFeed,
+            bool isBackupActive,
+            bool isChallengePending,
+            uint256 challengeStartTime
+        ) = compositeOracle.getTokenDualFeedStatus(address(tokenA));
+
+        assertFalse(isDualFeed, "single-feed token must not report dual-feed mode");
+        assertEq(primaryFeed, address(mockOracle));
+        assertEq(backupFeed, address(0), "single-feed token must have no backup feed");
+        assertFalse(isBackupActive, "backup can never be active without a backup feed");
+        assertFalse(isChallengePending, "no challenge can be pending on a single-feed token");
+        assertEq(challengeStartTime, 0);
+    }
+
+    function testSingleFeed_IsTokenChallengeableReturnsFalse() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        assertFalse(
+            compositeOracle.isTokenChallengeable(address(tokenA)),
+            "single-feed token must never surface as challengeable"
+        );
+    }
+
+    function testSingleFeed_GetCurrentDeviationRevertsNotDualFeedToken() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.NotDualFeedToken.selector, address(tokenA)));
+        compositeOracle.getCurrentDeviation(address(tokenA));
+    }
+
+    function testSingleFeed_GetValueWithFallbackFailsClosedWhenFeedCircuitBreakerTrips() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+        mockOracle.setShouldRevertOnCircuitBreaker(true);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(tokenA), 10e18);
+
+        assertEq(value, 0, "single-feed token must fail closed when its only feed reverts");
+        assertFalse(isReliable);
+    }
+
+    function testSingleFeed_GetValueWithFallbackFailsClosedWhenOnlyFeedHardReverts() public {
+        // Simulates an inner feed that reverts outright (e.g. stale round or
+        // unregistered token on the wrapped Chainlink aggregator).
+        MockRevertingPriceFeed revertingFeed = new MockRevertingPriceFeed();
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(revertingFeed));
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(tokenA), 10e18);
+
+        assertEq(value, 0, "hard feed failure with no backup must yield zero value");
+        assertFalse(isReliable);
+    }
+
+    function testSingleFeed_GetValueWithFallbackFailsClosedOnZeroPrice() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+        mockOracle.setPrice(address(tokenA), 0);
+
+        (uint256 value, bool isReliable) = compositeOracle.getValueWithFallback(address(tokenA), 10e18);
+
+        assertEq(value, 0, "zero feed price with no backup must yield zero value");
+        assertFalse(isReliable);
+    }
+
+    function testSingleFeed_GetPriceAndAutoDetectedOracleType() public {
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
+
+        assertEq(compositeOracle.getPrice(address(tokenA)), 1e8);
+        // setTokenOracleFeed (without explicit type) auto-detects the type from the
+        // feed's description() — "Mock Oracle Feed" maps to "mock".
+        assertEq(compositeOracle.getOracleType(address(tokenA)), "mock", "type auto-detected from feed description");
+    }
 }
 
 contract MockFeedWithoutCircuitBreaker is IOracleFeed {
