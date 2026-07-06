@@ -529,6 +529,16 @@ contract ERC4626OracleFeedTest is Test {
         erc4626Feed.getPrice(address(vault));
     }
 
+    function test_IsPriceStale_FailsClosedWhenProtectedPriceReverts() public {
+        uint256 donation = erc4626Feed.minimumVaultSupply(address(vault));
+        underlyingAsset.mint(address(vault), donation);
+
+        (bool isStale, uint64 publishTime) = erc4626Feed.isPriceStale(address(vault));
+
+        assertTrue(isStale, "share-rate band breach should report stale");
+        assertEq(publishTime, uint64(block.timestamp), "underlying publish time remains diagnostic context");
+    }
+
     function test_GetPrice_ClampsInBandUpwardShareRateToReference() public {
         uint256 donation =
             (erc4626Feed.minimumVaultSupply(address(vault)) * (erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS() / 2))

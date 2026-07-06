@@ -460,10 +460,10 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         return "ERC4626 NAV Oracle Feed";
     }
 
-    /// @notice Check if the underlying price is stale for a vault
+    /// @notice Check whether a vault price is stale or fails the protected ERC4626 price path
     /// @dev Must remain staticcall-safe because CompositeOracle probes this helper via `staticcall`.
     /// @param vault The vault address
-    /// @return isStale True if the underlying price is stale
+    /// @return isStale True if the underlying price is stale or protected vault pricing fails
     /// @return publishTime The timestamp of the underlying price (0 if not available)
     function isPriceStale(address vault) external view returns (bool isStale, uint64 publishTime) {
         if (_isSequencerUnavailableForStaleness()) {
@@ -475,6 +475,11 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
 
         // Try to check underlying oracle staleness
         (isStale, publishTime) = _checkUnderlyingStaleness(config.underlying);
+        if (isStale) {
+            return (true, publishTime);
+        }
+
+        return _protectedPricePathStaleness(vault, publishTime);
     }
 
     /// @notice Get price with staleness information
@@ -651,6 +656,18 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
             revert InvalidUnderlyingPriceOracleDecimals(priceOracle);
         }
         priceDecimals = uint8(decodedDecimals);
+    }
+
+    function _protectedPricePathStaleness(address vault, uint64 publishTime)
+        internal
+        view
+        returns (bool isStale, uint64 observedPublishTime)
+    {
+        try this.getPrice(vault) returns (uint256 price) {
+            return (price == 0, publishTime);
+        } catch {
+            return (true, publishTime);
+        }
     }
 
     function _boundedAssetsPerShare(

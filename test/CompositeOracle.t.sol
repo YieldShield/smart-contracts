@@ -330,6 +330,11 @@ contract CompositeOracleTest is Test {
         assertFalse(isStaleFresh, "fresh underlying should stay fresh through composite");
         assertEq(freshPublishTime, uint64(block.timestamp));
 
+        underlyingAsset.mint(address(vault), minSupply);
+        (bool isStaleBandBreach, uint64 bandBreachPublishTime) = compositeOracle.isPriceStale(address(vault));
+        assertTrue(isStaleBandBreach, "ERC4626 protected-path failure should report stale through composite");
+        assertEq(bandBreachPublishTime, uint64(block.timestamp));
+
         staleOracle.setStale(address(underlyingAsset), true);
         staleOracle.setPublishTime(address(underlyingAsset), uint64(block.timestamp - 1 hours));
         (bool isStaleNow, uint64 publishTimeNow) = compositeOracle.isPriceStale(address(vault));
