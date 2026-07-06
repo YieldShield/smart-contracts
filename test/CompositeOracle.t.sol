@@ -13,6 +13,46 @@ import { ICompositeOracle } from "../contracts/interfaces/ICompositeOracle.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+contract FeeAccrualMarkerFeed is IOracleFeed {
+    uint256 public price = 1e8;
+    bool public feeAccrualReverts;
+
+    error FeeAccrualUnavailable(address token);
+
+    function setFeeAccrualReverts(bool enabled) external {
+        feeAccrualReverts = enabled;
+    }
+
+    function getPrice(address) external view returns (uint256) {
+        return price;
+    }
+
+    function getPriceUnsafe(address) external view returns (uint256) {
+        return price;
+    }
+
+    function getPriceForFeeAccrual(address token) external view returns (uint256) {
+        if (feeAccrualReverts) revert FeeAccrualUnavailable(token);
+        return price;
+    }
+
+    function supportsFeeAccrualPrice(address) external pure returns (bool) {
+        return true;
+    }
+
+    function supportsCircuitBreaker(address) external pure returns (bool) {
+        return true;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Fee Accrual Marker Feed";
+    }
+}
+
 contract CompositeOracleTest is Test {
     CompositeOracle public compositeOracle;
     MockOracle public mockOracle;
@@ -322,6 +362,8 @@ contract CompositeOracleTest is Test {
         underlyingAsset.approve(address(vault), minSupply);
         vault.deposit(minSupply, address(this));
         erc4626Feed.registerVault(address(vault), address(underlyingAsset));
+        assertTrue(erc4626Feed.supportsFeeAccrualPrice(address(vault)), "registered vault should expose fee marker");
+        assertFalse(erc4626Feed.supportsFeeAccrualPrice(address(tokenA)), "unregistered vault should not expose marker");
 
         compositeOracle.setTokenOracleFeedWithType(address(vault), address(erc4626Feed), "erc4626");
 
@@ -393,6 +435,23 @@ contract CompositeOracleTest is Test {
             )
         );
         compositeOracle.setTokenOracleFeedDual(address(vault), address(mockOracle), address(erc4626Feed));
+    }
+
+    function testSetTokenOracleFeedDual_UsesFeeAccrualMarkerInsteadOfLivePriceProbe() public {
+        FeeAccrualMarkerFeed primary = new FeeAccrualMarkerFeed();
+        FeeAccrualMarkerFeed backup = new FeeAccrualMarkerFeed();
+        primary.setFeeAccrualReverts(true);
+
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(primary), address(backup));
+
+        (bool isDualFeed, address primaryFeed, address backupFeed,,,) =
+            compositeOracle.getTokenDualFeedStatus(address(tokenA));
+        assertTrue(isDualFeed, "matching fee-accrual markers should allow dual feed setup");
+        assertEq(primaryFeed, address(primary));
+        assertEq(backupFeed, address(backup));
+
+        vm.expectRevert(abi.encodeWithSelector(FeeAccrualMarkerFeed.FeeAccrualUnavailable.selector, address(tokenA)));
+        compositeOracle.getPriceForFeeAccrual(address(tokenA));
     }
 
     function testStrictCircuitBreakerRequirement_AllowsERC4626WithStrictUnderlying() public {

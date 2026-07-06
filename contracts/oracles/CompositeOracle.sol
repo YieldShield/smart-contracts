@@ -1163,12 +1163,27 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
+    function _supportsFeeAccrualPrice(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) {
+            return false;
+        }
+
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeWithSignature("supportsFeeAccrualPrice(address)", token));
+
+        if (!success || data.length < 32) {
+            return false;
+        }
+
+        return abi.decode(data, (bool));
+    }
+
     function _validateFeeAccrualBasisCompatibility(address token, address primaryFeed, address backupFeed)
         internal
         view
     {
-        (bool primarySupportsFeeAccrual,) = _tryGetFeeAccrualPrice(primaryFeed, token);
-        (bool backupSupportsFeeAccrual,) = _tryGetFeeAccrualPrice(backupFeed, token);
+        bool primarySupportsFeeAccrual = _supportsFeeAccrualPrice(primaryFeed, token);
+        bool backupSupportsFeeAccrual = _supportsFeeAccrualPrice(backupFeed, token);
 
         if (primarySupportsFeeAccrual != backupSupportsFeeAccrual) {
             revert FeeAccrualBasisMismatch(token, primaryFeed, backupFeed);

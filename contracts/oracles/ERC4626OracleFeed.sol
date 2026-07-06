@@ -402,6 +402,13 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         return _getValidatedPrice(vault, true, false);
     }
 
+    /// @notice Whether this feed exposes the fee-accrual pricing selector for `vault`.
+    /// @dev This marker is intentionally non-pricing so dual-feed configuration does
+    ///      not depend on live vault or underlying-oracle liveness.
+    function supportsFeeAccrualPrice(address vault) external view returns (bool) {
+        return vaultConfigs[vault].underlying != address(0);
+    }
+
     /// @notice Whether this feed exposes protected `getPrice` and explicit unsafe pricing for `vault`.
     function supportsCircuitBreaker(address vault) external view returns (bool) {
         return vaultConfigs[vault].underlying != address(0);
