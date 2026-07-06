@@ -99,6 +99,16 @@ bootstrap Safe's quorum is the trust boundary. After tokens are distributed
 broadly enough that the bootstrap holder no longer controls quorum, normal
 governance dynamics apply.
 
+### ReentrancyGuard storage under disabled upgrades
+
+`ProtocolAccessControlUpgradeable` inherits OpenZeppelin's plain
+`ReentrancyGuard` storage rather than `ReentrancyGuardUpgradeable`. This is
+accepted for the current deployment model because pool and factory UUPS upgrade
+entrypoints are disabled on-chain, live logic is pinned by codehash, and storage
+layout checks gate changes in CI. If upgradeability is ever re-enabled for live
+proxies, this base must be migrated deliberately and checked with a storage
+layout diff before deployment.
+
 ### NFT secondary-market cooldown carryover
 
 The 24h `CLAIM_REWARDS_COOLDOWN` is keyed by tokenId, not owner — fee baselines
