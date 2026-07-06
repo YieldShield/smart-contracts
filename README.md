@@ -176,8 +176,11 @@ history while still pinning exact dependency revisions:
 - `lib/forge-std`
 - `lib/openzeppelin-contracts`
 - `lib/openzeppelin-contracts-upgradeable`
-- `lib/pyth-sdk-solidity`
 - `lib/solidity-bytes-utils`
+
+Pyth Solidity interfaces are consumed from the maintained
+`@pythnetwork/pyth-sdk-solidity` npm package instead of the archived
+`pyth-network/pyth-sdk-solidity` repository.
 
 After pulling changes, run:
 

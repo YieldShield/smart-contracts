@@ -29,7 +29,7 @@ contract PythEMAOracleFeedTest is Test {
 
     function _updatePriceFeed(bytes32 feedId, int64 price, uint64 conf, int32 expo, uint64 publishTime) internal {
         bytes memory updateData =
-            mockPyth.createPriceFeedUpdateData(feedId, price, conf, expo, price, conf, publishTime);
+            mockPyth.createPriceFeedUpdateData(feedId, price, conf, expo, price, conf, publishTime, 0);
 
         bytes[] memory updateDataArray = new bytes[](1);
         updateDataArray[0] = updateData;

@@ -1,3 +1,2 @@
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts
-@pythnetwork/pyth-sdk-solidity/=lib/pyth-sdk-solidity/
-  
+@pythnetwork/pyth-sdk-solidity/=node_modules/@pythnetwork/pyth-sdk-solidity/

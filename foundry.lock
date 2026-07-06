@@ -17,12 +17,6 @@
       "rev": "92a4de91362c695efcf80a219b51f0b6abec8315"
     }
   },
-  "lib/pyth-sdk-solidity": {
-    "tag": {
-      "name": "v2.2.0",
-      "rev": "11d6bcfc2e56885535a9a8e3c8417847cb20be14"
-    }
-  },
   "lib/solidity-bytes-utils": {
     "tag": {
       "name": "v0.8.2",

@@ -95,7 +95,8 @@ contract PythOracleTest is Test {
             expo,
             price, // emaPrice (same as price for simplicity)
             conf, // emaConf
-            publishTime
+            publishTime,
+            0
         );
 
         bytes[] memory updateDataArray = new bytes[](1);
@@ -454,7 +455,8 @@ contract PythOracleTest is Test {
             -8,
             newPrice, // emaPrice
             1e6, // emaConf
-            uint64(block.timestamp)
+            uint64(block.timestamp),
+            0
         );
 
         bytes[] memory updateDataArray = new bytes[](1);
@@ -480,7 +482,8 @@ contract PythOracleTest is Test {
             -8,
             1e8, // emaPrice
             1e6, // emaConf
-            uint64(block.timestamp)
+            uint64(block.timestamp),
+            0
         );
 
         bytes[] memory updateDataArray = new bytes[](1);
@@ -503,7 +506,7 @@ contract PythOracleTest is Test {
     function testUpdatePriceFeedsWithRefundRecipientKeepsRejectingCallerLive() public {
         vm.warp(block.timestamp + 10);
         bytes memory updateData =
-            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp));
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp), 0);
 
         bytes[] memory updateDataArray = new bytes[](1);
         updateDataArray[0] = updateData;
@@ -527,7 +530,7 @@ contract PythOracleTest is Test {
 
     function testUpdatePriceFeedsWithRefundRecipientRejectsZeroRecipient() public {
         bytes memory updateData =
-            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp));
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp), 0);
 
         bytes[] memory updateDataArray = new bytes[](1);
         updateDataArray[0] = updateData;
@@ -540,7 +543,7 @@ contract PythOracleTest is Test {
 
     function testUpdatePriceFeedsExactRejectsFeeMismatch() public {
         bytes memory updateData =
-            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp));
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 1e8, 1e6, -8, 1e8, 1e6, uint64(block.timestamp), 0);
 
         bytes[] memory updateDataArray = new bytes[](1);
         updateDataArray[0] = updateData;
@@ -554,7 +557,7 @@ contract PythOracleTest is Test {
     function testUpdatePriceFeedsIfNecessaryWithRefundRecipientUpdatesAndRefunds() public {
         vm.warp(block.timestamp + 10);
         bytes memory updateData =
-            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp));
+            mockPyth.createPriceFeedUpdateData(FEED_ID_1, 2e8, 1e6, -8, 2e8, 1e6, uint64(block.timestamp), 0);
 
         bytes[] memory updateDataArray = new bytes[](1);
         updateDataArray[0] = updateData;
@@ -583,7 +586,8 @@ contract PythOracleTest is Test {
             -8,
             1e8, // emaPrice
             1e6, // emaConf
-            uint64(block.timestamp)
+            uint64(block.timestamp),
+            0
         );
 
         bytes[] memory updateDataArray = new bytes[](1);
