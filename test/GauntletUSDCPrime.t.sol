@@ -10,6 +10,10 @@ import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract FeeAccrualAwareMockOracle is MockOracle {
+    function supportsFeeAccrualPrice(address) external pure returns (bool) {
+        return true;
+    }
+
     function getPriceForFeeAccrual(address token) external view returns (uint256) {
         return _rawPrice(token);
     }
