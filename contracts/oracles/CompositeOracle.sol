@@ -1531,6 +1531,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (_containsSubstring(descBytes, "ERC4626") || _containsSubstring(descBytes, "NAV")) {
             return "erc4626";
         }
+        // Robinhood stock wrapper descriptions also contain "Chainlink", so this
+        // check must run before the generic Chainlink match below.
+        if (_containsSubstring(descBytes, "Robinhood Stock")) {
+            return "chainlink-stock";
+        }
         if (_containsSubstring(descBytes, "Chainlink")) {
             return "chainlink";
         }
