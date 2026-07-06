@@ -159,6 +159,9 @@ Run both:
 make security
 ```
 
+CI blocks on Slither high-severity findings. Aderyn currently runs as a
+report-only artifact for manual triage.
+
 Security reports and follow-up notes are stored in the root audit files and
 under `docs_ok/security/`.
 

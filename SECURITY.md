@@ -55,6 +55,10 @@ make slither
 make aderyn
 ```
 
+In CI, Slither's dedicated high-severity job is the blocking static-analysis
+gate. Aderyn is uploaded as a report-only artifact for manual triage unless a
+separate Aderyn severity gate is intentionally added later.
+
 Run coverage when changing core accounting, pool, oracle, receipt NFT, or
 governance behavior:
 

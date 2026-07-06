@@ -291,6 +291,9 @@ jobs:
     name: Aderyn security report
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Aderyn is report-only today. Slither's dedicated --fail-high job is the
+    # blocking static-analysis severity gate; review this artifact manually
+    # unless/until Aderyn gets its own stable severity gate.
     continue-on-error: true
 
     steps:
