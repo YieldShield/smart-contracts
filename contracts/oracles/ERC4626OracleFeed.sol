@@ -527,6 +527,9 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         uint256 boundedAccountingAssetsPerShare =
             _boundedAssetsPerShare(vault, accountingAssetsPerShare, config, clampUpwardToReference);
         uint256 redeemableAssetsPerShare = _redeemableAssetsPerShare(vault, config.shareUnit);
+        _requireAssetsPerShareAboveReferenceFloor(
+            vault, redeemableAssetsPerShare, config.referenceAssetsPerShare, config.maxSharePriceDeviationBps
+        );
         uint256 assetsPerShare = redeemableAssetsPerShare < boundedAccountingAssetsPerShare
             ? redeemableAssetsPerShare
             : boundedAccountingAssetsPerShare;
@@ -580,6 +583,25 @@ contract ERC4626OracleFeed is IOracleFeed, SequencerUptimeGuard {
         uint256 maxAssetsPerShare = referenceAssetsPerShare + deviationAmount;
 
         if (assetsPerShare < minAssetsPerShare || assetsPerShare > maxAssetsPerShare) {
+            revert SharePriceDeviationTooHigh(vault, assetsPerShare, referenceAssetsPerShare, maxDeviationBps);
+        }
+    }
+
+    function _requireAssetsPerShareAboveReferenceFloor(
+        address vault,
+        uint256 assetsPerShare,
+        uint256 referenceAssetsPerShare,
+        uint256 maxDeviationBps
+    ) internal pure {
+        if (referenceAssetsPerShare == 0) {
+            revert SharePriceDeviationTooHigh(vault, assetsPerShare, referenceAssetsPerShare, maxDeviationBps);
+        }
+
+        uint256 deviationAmount = Math.mulDiv(referenceAssetsPerShare, maxDeviationBps, ConstantsLib.BASIS_POINT_SCALE);
+        uint256 minAssetsPerShare =
+            referenceAssetsPerShare > deviationAmount ? referenceAssetsPerShare - deviationAmount : 0;
+
+        if (assetsPerShare < minAssetsPerShare) {
             revert SharePriceDeviationTooHigh(vault, assetsPerShare, referenceAssetsPerShare, maxDeviationBps);
         }
     }

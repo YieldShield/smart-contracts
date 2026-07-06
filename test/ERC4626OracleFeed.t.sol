@@ -197,7 +197,7 @@ contract ERC4626OracleFeedTest is Test {
         assertEq(erc4626Feed.getPrice(address(feeVault)), 99_000_000, "oracle should price redeemable assets");
     }
 
-    function test_GetPrice_UsesAccountingShareRateForDeviationBandBeforeRedeemHaircut() public {
+    function test_GetPrice_RevertsWhenRedeemableShareRateFallsBelowReviewedBand() public {
         MockERC20 feeAsset = new MockERC20("Haircut Asset", "HAIR");
         MockERC4626WithRedeemFee feeVault =
             new MockERC4626WithRedeemFee(IERC20(address(feeAsset)), "Haircut Vault", "hVLT", 5_000);
@@ -207,7 +207,16 @@ contract ERC4626OracleFeedTest is Test {
 
         assertEq(feeVault.convertToAssets(1e18), 1e18, "accounting share price remains in band");
         assertEq(feeVault.previewRedeem(1e18), 0.5e18, "redeem preview reflects withdrawal haircut");
-        assertEq(erc4626Feed.getPrice(address(feeVault)), 50_000_000, "oracle returns conservative payout price");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC4626OracleFeed.SharePriceDeviationTooHigh.selector,
+                address(feeVault),
+                feeVault.previewRedeem(1e18),
+                1e18,
+                erc4626Feed.DEFAULT_MAX_SHARE_PRICE_DEVIATION_BPS()
+            )
+        );
+        erc4626Feed.getPrice(address(feeVault));
     }
 
     function test_SupportsStrictProtectedPriceRequiresSequencerFeedOnKnownL2() public {
