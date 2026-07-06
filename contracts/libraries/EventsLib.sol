@@ -22,10 +22,10 @@ library EventsLib {
     event PoolFeePaid(address indexed creator, uint256 amount);
     event ProtocolFeePaid(address indexed recipient, uint256 amount);
     event ShieldedAssetDeposited(
-        address indexed depositor, address indexed asset, uint256 amount, uint256 tokensIssued
+        address indexed depositor, address indexed asset, uint256 amount, uint256 receiptTokenId
     );
     event ProtectorAssetDeposited(
-        address indexed depositor, address indexed asset, uint256 amount, uint256 tokensIssued
+        address indexed depositor, address indexed asset, uint256 amount, uint256 receiptTokenId
     );
     event ShieldedAssetWithdrawn(address indexed user, uint256 assets, uint256 shares, uint256 coverageId);
     event ProtectorAssetWithdrawn(address indexed user, address indexed asset, uint256 assets, uint256 shares);
@@ -36,9 +36,10 @@ library EventsLib {
     event ShieldCoverageReleased(uint256 indexed coverageId);
     event FeesDistributed(uint256 poolFeeAmount, uint256 protocolFeeAmount, uint256 commissionAmount);
     event CommissionPaid(address indexed protectorAddress, uint256 amount);
-    event RewardsClaimed(address indexed shieldedAddress, uint256 amount, address indexed asset);
+    event RewardsClaimed(address indexed shieldedAddress, uint256 feesCharged, address indexed asset);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
     event ProtocolFeeRecipientUpdated(address oldRecipient, address newRecipient);
+    event PoolFeeRecipientUpdated(address oldRecipient, address newRecipient);
     event ParameterUpdated(string parameterName, uint256 newValue);
     event PoolConfigUpdated(
         uint256 shieldedMinDepositAmount,

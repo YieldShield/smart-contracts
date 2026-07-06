@@ -15,6 +15,7 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
+import { EventsLib } from "../contracts/libraries/EventsLib.sol";
 import { TokenWhitelistLib } from "../contracts/libraries/TokenWhitelistLib.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFactory.sol";
@@ -540,6 +541,8 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         address newRecipient = address(0xD00D);
 
         vm.prank(governance);
+        vm.expectEmit(false, false, false, true);
+        emit EventsLib.PoolFeeRecipientUpdated(poolCreator, newRecipient);
         pool.setPoolFeeRecipient(newRecipient);
 
         assertEq(pool.poolFeeRecipient(), newRecipient, "governance must be able to rotate fee recipient");

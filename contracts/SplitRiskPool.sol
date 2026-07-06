@@ -1454,10 +1454,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         address previous = poolFeeRecipient == address(0) ? POOL_CREATOR : poolFeeRecipient;
         poolFeeRecipient = newRecipient;
         emit EventsLib.ParameterUpdated("poolFeeRecipient", uint256(uint160(newRecipient)));
-        // Emit also the previous→current pair through the existing
-        // ProtocolFeeRecipientUpdated topic so monitoring tools that watch
-        // recipient changes pick this up.
-        emit EventsLib.ProtocolFeeRecipientUpdated(previous, newRecipient);
+        emit EventsLib.PoolFeeRecipientUpdated(previous, newRecipient);
     }
 
     /**
