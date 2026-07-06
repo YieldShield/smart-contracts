@@ -109,6 +109,16 @@ worth surfacing on any secondary-market UI: the displayed "claimable" amount
 will continue accruing, but the on-chain `lastClaimRewardsTime` for the
 tokenId persists across transfer.
 
+### Withdrawal ACL during governance-timelock rotations
+
+Pool withdrawal gating only applies while the configured access-control
+contract is owned by, or solely administered by, the pool's current governance
+timelock. During a timelock rotation, an ACL still controlled by the old
+timelock intentionally fails open for withdrawals so user funds are not trapped
+behind an obsolete authority. Operators that require uninterrupted withdrawal
+gating must transfer the ACL owner/admin to the replacement timelock before
+calling `acceptGovernanceTimelock` on the pool or factory-managed pool batch.
+
 ### Permissionless Pyth update messages
 
 `PythOracle.updatePriceFeeds` is intentionally permissionless — Pyth itself

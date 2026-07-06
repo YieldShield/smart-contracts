@@ -368,6 +368,52 @@ contract SplitRiskPoolFeeAccessControlTest is Test, TestTimelockHelper {
         assertGt(newTokenId, tokenId, "ACL should stop gating withdrawals after timelock loses authority");
     }
 
+    function testGovernanceInstalledAcl_FailsOpenAcrossTimelockRotationUntilAclOwnershipMoves() public {
+        AccessControlExample accessControl = new AccessControlExample(governance);
+
+        vm.startPrank(governance);
+        accessControl.setWhitelisted(protector, true);
+        accessControl.setWhitelisted(shielded, true);
+        pool.setAccessControl(address(accessControl));
+        vm.stopPrank();
+
+        vm.prank(protector);
+        pool.depositBackingAsset(address(backingToken), 10000e18, 0);
+
+        vm.prank(shielded);
+        uint256 tokenId = pool.depositShieldedAsset(address(shieldedToken), 1000e18, 0);
+
+        address replacementGovernance = address(_deployTestTimelock(address(this)));
+        vm.prank(governance);
+        pool.setGovernanceTimelock(replacementGovernance);
+        vm.prank(replacementGovernance);
+        pool.acceptGovernanceTimelock();
+
+        assertEq(pool.governanceTimelock(), replacementGovernance, "pool governance should rotate");
+        (, bool depositsGated, bool withdrawalsGated, bool governanceInstalled) = pool.getAccessControlStatus();
+        assertTrue(depositsGated, "ACL still gates deposits after timelock rotation");
+        assertFalse(withdrawalsGated, "ACL fails open for withdrawals until authority moves");
+        assertTrue(governanceInstalled, "governance install marker remains sticky");
+
+        vm.prank(governance);
+        accessControl.setWhitelisted(shielded, false);
+
+        vm.prank(shielded);
+        uint256 newTokenId = pool.partialWithdrawShielded(tokenId, 100e18, address(shieldedToken), 0);
+        assertGt(newTokenId, tokenId, "old-timelock ACL should not trap withdrawals after rotation");
+
+        vm.prank(governance);
+        accessControl.setOwner(replacementGovernance);
+        (, depositsGated, withdrawalsGated, governanceInstalled) = pool.getAccessControlStatus();
+        assertTrue(depositsGated, "ACL still gates deposits after authority move");
+        assertTrue(withdrawalsGated, "ACL resumes withdrawal gating after authority moves");
+        assertTrue(governanceInstalled, "governance install marker remains sticky after authority move");
+
+        vm.prank(shielded);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, shielded, "withdrawShielded"));
+        pool.partialWithdrawShielded(newTokenId, 50e18, address(shieldedToken), 0);
+    }
+
     function testSetAccessControl_CreatorCannotOverrideGovernanceAclBeforeLaunch() public {
         AccessControlExample governanceAccessControl = new AccessControlExample(governance);
         AccessControlExample creatorAccessControl = new AccessControlExample(governance);
