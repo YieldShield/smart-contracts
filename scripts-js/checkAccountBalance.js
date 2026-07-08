@@ -9,12 +9,41 @@ import { parse } from "toml";
 import { ethers } from "ethers";
 import { isValidKeystoreName } from "./foundryKeystore.js";
 
-const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
-
 // Load environment variables
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, "..", ".env") });
+
+const ENV_PLACEHOLDER_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/gu;
+
+function resolveRpcEndpoint(input, env = process.env) {
+    if (typeof input !== "string" || input.length === 0) {
+        return { url: null, missingVariables: [] };
+    }
+
+    const missingVariables = new Set();
+    const url = input.replace(
+        ENV_PLACEHOLDER_PATTERN,
+        (_placeholder, variableName) => {
+            const value = env[variableName];
+            if (!value) {
+                missingVariables.add(variableName);
+                return "";
+            }
+
+            return value;
+        },
+    );
+
+    if (missingVariables.size > 0) {
+        return {
+            url: null,
+            missingVariables: [...missingVariables],
+        };
+    }
+
+    return { url, missingVariables: [] };
+}
 
 function getKeystoreAddress(keystoreName) {
     if (!isValidKeystoreName(keystoreName)) {
@@ -57,35 +86,27 @@ async function getBalanceForEachNetwork(address) {
         // Extract rpc_endpoints from parsedToml
         const rpcEndpoints = parsedToml.rpc_endpoints;
 
-        // Replace placeholders in the rpc_endpoints section
-        function replaceENVAlchemyKey(input) {
-            if (input.includes("${ALCHEMY_API_KEY}")) {
-                if (!ALCHEMY_API_KEY) {
-                    return null;
-                }
-
-                return input.replace("${ALCHEMY_API_KEY}", ALCHEMY_API_KEY);
-            }
-
-            return input;
-        }
-
         console.log(await toString(address, { type: "terminal", small: true }));
         console.log(`\n📊 Address: ${address}`);
 
         for (const networkName in rpcEndpoints) {
-            const networkUrl = replaceENVAlchemyKey(rpcEndpoints[networkName]);
+            console.log(`\n--${networkName}-- 📡`);
+            const { url: networkUrl, missingVariables } = resolveRpcEndpoint(
+                rpcEndpoints[networkName],
+            );
             if (!networkUrl) {
-                console.log(`\n--${networkName}-- 📡`);
-                console.log(
-                    "   Skipping: set ALCHEMY_API_KEY in packages/foundry/.env to query this network",
-                );
+                const envList = missingVariables.join(", ");
+                const reason =
+                    envList.length > 0
+                        ? `set ${envList} in packages/foundry/.env to query this network`
+                        : "configure a non-empty RPC URL in foundry.toml";
+                console.log(`   Skipping: ${reason}`);
                 continue;
             }
-            console.log(`\n--${networkName}-- 📡`);
 
+            let provider;
             try {
-                const provider = new ethers.JsonRpcProvider(networkUrl);
+                provider = new ethers.JsonRpcProvider(networkUrl);
 
                 // Get balance and format it
                 const balance = await provider.getBalance(address);
@@ -100,6 +121,8 @@ async function getBalanceForEachNetwork(address) {
                 console.log(
                     `   ❌ Can't connect to network ${networkName}: ${e.message}`,
                 );
+            } finally {
+                provider?.destroy();
             }
         }
     } catch (error) {
@@ -147,4 +170,4 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
 }
 
-export { checkAccountBalance };
+export { checkAccountBalance, resolveRpcEndpoint };
