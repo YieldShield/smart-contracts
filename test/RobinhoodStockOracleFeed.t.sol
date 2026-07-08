@@ -72,9 +72,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     function test_getPrice_RevertsWhilePausedAndRecoversAfterUnpause() public {
         tsla.setOraclePaused(true);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla))
-        );
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         stockFeed.getPrice(address(tsla));
 
         tsla.setOraclePaused(false);
@@ -127,9 +125,7 @@ contract RobinhoodStockOracleFeedTest is Test {
         assertEq(stockFeed.getPriceUnsafe(address(tsla)), uint256(TSLA_PRICE));
 
         tsla.setOraclePaused(true);
-        vm.expectRevert(
-            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla))
-        );
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         stockFeed.getPriceUnsafe(address(tsla));
     }
 
@@ -157,13 +153,9 @@ contract RobinhoodStockOracleFeedTest is Test {
         tsla.setOraclePaused(true);
 
         // Mid-window: no readable price anywhere on the wrapper.
-        vm.expectRevert(
-            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla))
-        );
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         stockFeed.getPrice(address(tsla));
-        vm.expectRevert(
-            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla))
-        );
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         stockFeed.getPriceUnsafe(address(tsla));
         (bool isStale, uint256 updatedAt) = stockFeed.isPriceStale(address(tsla));
         assertTrue(isStale, "paused token must report stale mid-window");
@@ -197,9 +189,7 @@ contract RobinhoodStockOracleFeedTest is Test {
 
         // The pause guard propagates through the composite's protected price path.
         tsla.setOraclePaused(true);
-        vm.expectRevert(
-            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla))
-        );
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         composite.getPrice(address(tsla));
     }
 }

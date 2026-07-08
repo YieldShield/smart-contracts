@@ -133,6 +133,18 @@ Deploy a specific script:
 make deploy DEPLOY_SCRIPT=script/DeployYieldShield.s.sol RPC_URL=localhost
 ```
 
+Deploy to Robinhood testnet from the monorepo root:
+
+```sh
+ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
+```
+
+Or pass the keystore explicitly:
+
+```sh
+yarn deploy --network robinhoodTestnet --keystore test
+```
+
 Start a fork:
 
 ```sh
