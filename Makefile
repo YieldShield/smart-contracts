@@ -2,6 +2,7 @@
 
 DEPLOY_SCRIPT ?= script/Deploy.s.sol
 LOCALHOST_ANVIL_PRIVATE_KEY ?= 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+FORGE_SCRIPT_ARGS ?=
 
 # setup wallet for anvil
 setup-anvil-wallet:
@@ -22,7 +23,7 @@ deploy:
 	@if [ -z "$(ETH_KEYSTORE_ACCOUNT)" ]; then 		echo "Error: ETH_KEYSTORE_ACCOUNT is required"; 		exit 1; 	fi
 	@if [ "$(RPC_URL)" != "localhost" ] && [ "$(ETH_KEYSTORE_ACCOUNT)" = "scaffold-eth-default" ]; then 		echo "Error: scaffold-eth-default is reserved for localhost deployments only"; 		exit 1; 	fi
 	@if [ "$(RPC_URL)" != "localhost" ] && [ "$(DEPLOY_SCRIPT)" = "script/Deploy.s.sol" ]; then 		echo "Error: script/Deploy.s.sol is a localhost-only deployment entrypoint"; 		exit 1; 	fi
-	@if [ "$(RPC_URL)" = "localhost" ]; then 		if [ "$(ETH_KEYSTORE_ACCOUNT)" = "scaffold-eth-default" ]; then 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --private-key $(LOCALHOST_ANVIL_PRIVATE_KEY) --broadcast --legacy; 		else 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --legacy; 		fi 	else 		forge script "$(DEPLOY_SCRIPT)" --rpc-url "$(RPC_URL)" --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --gas-estimate-multiplier 200; 	fi
+	@if [ "$(RPC_URL)" = "localhost" ]; then 		if [ "$(ETH_KEYSTORE_ACCOUNT)" = "scaffold-eth-default" ]; then 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --private-key $(LOCALHOST_ANVIL_PRIVATE_KEY) --broadcast --legacy $(FORGE_SCRIPT_ARGS); 		else 			forge script "$(DEPLOY_SCRIPT)" --rpc-url localhost --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --legacy $(FORGE_SCRIPT_ARGS); 		fi 	else 		forge script "$(DEPLOY_SCRIPT)" --rpc-url "$(RPC_URL)" --account "$(ETH_KEYSTORE_ACCOUNT)" --broadcast --gas-estimate-multiplier 200 $(FORGE_SCRIPT_ARGS); 	fi
 
 # Deploy and generate ABIs
 deploy-and-generate-abis: deploy

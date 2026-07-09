@@ -145,6 +145,10 @@ are skipped, and the sequencer uptime feed is optional. Set
 `YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS=true` to rehearse the stricter
 production checks on chain `46630`.
 
+The relaxed testnet path also passes `--disable-code-size-limit` to Foundry so
+the current factory/pool monoliths do not make a successful testnet broadcast
+exit nonzero after execution.
+
 To create the demo assets, feeds, pools, and seed liquidity used for product-loop
 testing, add:
 

@@ -131,3 +131,19 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
         ],
     );
 });
+
+test("forgeScriptArgsForNetwork disables code size checks only for relaxed Robinhood testnet", async () => {
+    const { forgeScriptArgsForNetwork } = await import("../parseArgs.js");
+
+    assert.deepEqual(forgeScriptArgsForNetwork("robinhoodTestnet", {}), [
+        "--disable-code-size-limit",
+    ]);
+    assert.deepEqual(
+        forgeScriptArgsForNetwork("robinhoodTestnet", {
+            YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS: "true",
+        }),
+        [],
+    );
+    assert.deepEqual(forgeScriptArgsForNetwork("robinhood", {}), []);
+    assert.deepEqual(forgeScriptArgsForNetwork("base", {}), []);
+});

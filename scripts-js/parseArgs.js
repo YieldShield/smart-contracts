@@ -198,6 +198,14 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
     });
 }
 
+function forgeScriptArgsForNetwork(network, env = process.env) {
+    if (usesRelaxedRobinhoodTestnetGuards(network, env)) {
+        return ["--disable-code-size-limit"];
+    }
+
+    return [];
+}
+
 function printProductionEnvError(missingEnv) {
     console.log(
         "\n❌ Error: Missing production deployment environment values:",
@@ -396,18 +404,20 @@ The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost
         process.exit(1);
     }
 
-    const result = spawnSync(
-        "make",
-        [
-            `DEPLOY_SCRIPT=script/${fileName}`,
-            `RPC_URL=${network}`,
-            `ETH_KEYSTORE_ACCOUNT=${selectedKeystore}`,
-            "deploy-and-generate-abis",
-        ],
-        {
-            stdio: "inherit",
-        },
-    );
+    const makeArgs = [
+        `DEPLOY_SCRIPT=script/${fileName}`,
+        `RPC_URL=${network}`,
+        `ETH_KEYSTORE_ACCOUNT=${selectedKeystore}`,
+    ];
+    const forgeScriptArgs = forgeScriptArgsForNetwork(network, env);
+    if (forgeScriptArgs.length > 0) {
+        makeArgs.push(`FORGE_SCRIPT_ARGS=${forgeScriptArgs.join(" ")}`);
+    }
+    makeArgs.push("deploy-and-generate-abis");
+
+    const result = spawnSync("make", makeArgs, {
+        stdio: "inherit",
+    });
 
     process.exit(result.status ?? 1);
 }
@@ -418,6 +428,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 export {
     configuredKeystore,
+    forgeScriptArgsForNetwork,
     isLocalNetwork,
     keystoreEnvNames,
     missingProductionEnv,
