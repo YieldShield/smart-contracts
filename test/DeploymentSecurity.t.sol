@@ -30,6 +30,28 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         return this.onERC721Received.selector;
     }
 
+    function robinhoodTestnetDemoAssetsRequestedHarness() external view returns (bool) {
+        return _robinhoodTestnetDemoAssetsRequested();
+    }
+
+    function envFlagOrDefaultHarness(string memory envName, bool defaultValue) external view returns (bool) {
+        return _envFlagOrDefault(envName, defaultValue);
+    }
+
+    function defaultRobinhoodTestnetStockTokensHarness()
+        external
+        pure
+        returns (address tsla, address amzn, address pltr, address nflx, address amd)
+    {
+        return (
+            ROBINHOOD_TESTNET_TSLA_TOKEN,
+            ROBINHOOD_TESTNET_AMZN_TOKEN,
+            ROBINHOOD_TESTNET_PLTR_TOKEN,
+            ROBINHOOD_TESTNET_NFLX_TOKEN,
+            ROBINHOOD_TESTNET_AMD_TOKEN
+        );
+    }
+
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
             holder,
@@ -1374,6 +1396,32 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.getWhitelistedTokens().length, 10);
 
         vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
+    }
+
+    function test_ProductionProtocol_RobinhoodTestnetSeedDefaultsAndOptOutsArePinned() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        assertTrue(harness.envFlagOrDefaultHarness("YS_TEST_UNSET_20260709_ROBINHOOD_SEED_DEFAULT", true));
+        assertFalse(harness.envFlagOrDefaultHarness("YS_TEST_UNSET_20260709_ROBINHOOD_SEED_OFF", false));
+
+        vm.setEnv("YS_TEST_SET_20260709_ROBINHOOD_SEED_TRUE", "true");
+        assertTrue(harness.envFlagOrDefaultHarness("YS_TEST_SET_20260709_ROBINHOOD_SEED_TRUE", false));
+
+        vm.setEnv("YS_TEST_SET_20260709_ROBINHOOD_SEED_FALSE", "false");
+        assertFalse(harness.envFlagOrDefaultHarness("YS_TEST_SET_20260709_ROBINHOOD_SEED_FALSE", true));
+    }
+
+    function test_ProductionProtocol_RobinhoodTestnetFaucetTokenDefaultsArePinned() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+
+        (address tsla, address amzn, address pltr, address nflx, address amd) =
+            harness.defaultRobinhoodTestnetStockTokensHarness();
+
+        assertEq(tsla, 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E);
+        assertEq(amzn, 0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02);
+        assertEq(pltr, 0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0);
+        assertEq(nflx, 0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93);
+        assertEq(amd, 0x71178BAc73cBeb415514eB542a8995b82669778d);
     }
 
     function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {

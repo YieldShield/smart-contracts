@@ -114,6 +114,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     uint256 internal constant DEFAULT_CHAINLINK_MAX_PRICE_AGE = 86_400;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;
+    address internal constant ROBINHOOD_TESTNET_TSLA_TOKEN = 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E;
+    address internal constant ROBINHOOD_TESTNET_AMZN_TOKEN = 0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02;
+    address internal constant ROBINHOOD_TESTNET_PLTR_TOKEN = 0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0;
+    address internal constant ROBINHOOD_TESTNET_NFLX_TOKEN = 0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93;
+    address internal constant ROBINHOOD_TESTNET_AMD_TOKEN = 0x71178BAc73cBeb415514eB542a8995b82669778d;
     bytes4 private constant GET_THRESHOLD_SELECTOR = bytes4(keccak256("getThreshold()"));
     bytes4 private constant GET_OWNERS_SELECTOR = bytes4(keccak256("getOwners()"));
     bytes4 private constant VERSION_SELECTOR = bytes4(keccak256("VERSION()"));
@@ -691,11 +696,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     }
 
     function _robinhoodTestnetDemoAssetsRequested() internal view returns (bool) {
-        return _envFlag(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS);
+        return _envFlagOrDefault(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS, _isRobinhoodTestnet());
     }
 
     function _envFlag(string memory envName) internal view returns (bool) {
-        string memory rawValue = vm.envOr(envName, string("false"));
+        return _envFlagOrDefault(envName, false);
+    }
+
+    function _envFlagOrDefault(string memory envName, bool defaultValue) internal view returns (bool) {
+        string memory rawValue = vm.envOr(envName, defaultValue ? string("true") : string("false"));
         bytes32 valueHash = keccak256(bytes(rawValue));
         return valueHash == keccak256(bytes("true")) || valueHash == keccak256(bytes("TRUE"))
             || valueHash == keccak256(bytes("True")) || valueHash == keccak256(bytes("1"))
@@ -751,15 +760,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         assets.spy = address(new MockRobinhoodStockToken("Robinhood Test SPY", "SPY"));
         assets.qqq = address(new MockRobinhoodStockToken("Robinhood Test QQQ", "QQQ"));
         (assets.tsla, assets.tslaExternal) =
-            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_TSLA_TOKEN, "Robinhood Test TSLA", "TSLA");
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_TSLA_TOKEN, ROBINHOOD_TESTNET_TSLA_TOKEN, "Tesla", "TSLA");
         (assets.amzn, assets.amznExternal) =
-            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMZN_TOKEN, "Robinhood Test AMZN", "AMZN");
-        (assets.pltr, assets.pltrExternal) =
-            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_PLTR_TOKEN, "Robinhood Test PLTR", "PLTR");
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMZN_TOKEN, ROBINHOOD_TESTNET_AMZN_TOKEN, "Amazon", "AMZN");
+        (assets.pltr, assets.pltrExternal) = _robinhoodDemoStockToken(
+            ENV_ROBINHOOD_TESTNET_PLTR_TOKEN, ROBINHOOD_TESTNET_PLTR_TOKEN, "Palantir", "PLTR"
+        );
         (assets.nflx, assets.nflxExternal) =
-            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_NFLX_TOKEN, "Robinhood Test NFLX", "NFLX");
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_NFLX_TOKEN, ROBINHOOD_TESTNET_NFLX_TOKEN, "Netflix", "NFLX");
         (assets.amd, assets.amdExternal) =
-            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMD_TOKEN, "Robinhood Test AMD", "AMD");
+            _robinhoodDemoStockToken(ENV_ROBINHOOD_TESTNET_AMD_TOKEN, ROBINHOOD_TESTNET_AMD_TOKEN, "AMD", "AMD");
 
         deployments.push(Deployment("RobinhoodTestUSDG", assets.usdg));
         deployments.push(Deployment("RobinhoodTestWETH", assets.weth));
@@ -784,11 +794,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("AMD:", assets.amd);
     }
 
-    function _robinhoodDemoStockToken(string memory envName, string memory name, string memory symbol)
-        internal
-        returns (address token, bool externalToken)
-    {
+    function _robinhoodDemoStockToken(
+        string memory envName,
+        address defaultRobinhoodTestnetToken,
+        string memory name,
+        string memory symbol
+    ) internal returns (address token, bool externalToken) {
         token = vm.envOr(envName, address(0));
+        if (token == address(0) && _isRobinhoodTestnet() && defaultRobinhoodTestnetToken.code.length != 0) {
+            token = defaultRobinhoodTestnetToken;
+        }
         if (token != address(0)) {
             _requireProductionContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
             return (token, true);
