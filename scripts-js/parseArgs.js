@@ -17,6 +17,7 @@ config();
 const LOCAL_DEPLOY_SCRIPT = "Deploy.s.sol";
 const PRODUCTION_DEPLOY_SCRIPT = "DeployYieldShieldProduction.s.sol";
 const DEFAULT_NETWORK = "localhost";
+const ROBINHOOD_TESTNET_NETWORK = "robinhoodTestnet";
 const ROBINHOOD_NETWORKS = new Set(["robinhood", "robinhoodTestnet"]);
 const REQUIRED_PRODUCTION_ENV = [
     "YS_PRODUCTION_BOOTSTRAP_HOLDER",
@@ -154,8 +155,19 @@ function envFlag(value) {
     return ["1", "true", "yes"].includes(String(value || "").toLowerCase());
 }
 
+function usesRelaxedRobinhoodTestnetGuards(network, env = process.env) {
+    return (
+        network === ROBINHOOD_TESTNET_NETWORK &&
+        !envFlag(env.YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS)
+    );
+}
+
 function missingProductionEnv({ fileName, network }, env = process.env) {
     if (isLocalNetwork(network) || fileName !== PRODUCTION_DEPLOY_SCRIPT) {
+        return [];
+    }
+
+    if (usesRelaxedRobinhoodTestnetGuards(network, env)) {
         return [];
     }
 
@@ -412,6 +424,7 @@ export {
     networkEnvPrefix,
     parseCliArgs,
     resolveDeployScript,
+    usesRelaxedRobinhoodTestnetGuards,
     validateDeployScriptFileName,
     validateNetworkExists,
 };

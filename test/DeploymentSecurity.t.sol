@@ -23,6 +23,8 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bytes32 internal expectedPoolImplementationCodehash;
     bytes32 internal expectedPythOracleCodehash;
     bytes32 internal expectedChainlinkOracleCodehash;
+    bool internal strictProductionGuardsOverrideSet;
+    bool internal strictProductionGuardsOverride;
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         return this.onERC721Received.selector;
@@ -316,6 +318,44 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         _requireMandatoryProductionCodehash(bytes32("PoolImplementation"), poolImplementationAddr, envName);
     }
 
+    function requireProductionChainlinkOracleCodehashHarness(address chainlinkOracleAddr, string memory envName)
+        external
+        view
+    {
+        _requireMandatoryProductionCodehash(bytes32("ChainlinkOracleFeed"), chainlinkOracleAddr, envName);
+    }
+
+    function deployGovernanceWithRelaxedTestnetGuardsHarness()
+        external
+        returns (YSToken ysToken, TimelockController timelock, YSGovernor governor, address bootstrapHolder)
+    {
+        deployer = address(this);
+        address ysTokenAddr;
+        address timelockAddr;
+        address governorAddr;
+        (ysTokenAddr, timelockAddr, governorAddr, bootstrapHolder) = deployGovernance();
+        ysToken = YSToken(ysTokenAddr);
+        timelock = TimelockController(payable(timelockAddr));
+        governor = YSGovernor(payable(governorAddr));
+    }
+
+    function requiresStrictProductionGuardsHarness() external view returns (bool) {
+        return _requiresStrictProductionGuards();
+    }
+
+    function setStrictProductionGuardsOverrideHarness(bool value) external {
+        strictProductionGuardsOverrideSet = true;
+        strictProductionGuardsOverride = value;
+    }
+
+    function _requiresStrictProductionGuards() internal view override returns (bool) {
+        if (strictProductionGuardsOverrideSet) {
+            return strictProductionGuardsOverride;
+        }
+
+        return super._requiresStrictProductionGuards();
+    }
+
     function _readMasterCopy(address holder) internal view returns (address singleton) {
         (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("masterCopy()"));
         if (success && data.length >= 32) {
@@ -485,7 +525,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     string internal constant ENV_FACTORY_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH";
     string internal constant ENV_POOL_IMPLEMENTATION_CODEHASH = "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH";
     string internal constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
+    string internal constant ENV_CHAINLINK_ORACLE_CODEHASH = "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH";
     uint256 internal constant TIMELOCK_DELAY = 2 days;
+    uint256 internal constant ROBINHOOD_MAINNET_CHAIN_ID = 4_663;
+    uint256 internal constant ROBINHOOD_TESTNET_CHAIN_ID = 46_630;
 
     address internal deployer = address(this);
     address internal bootstrapHolder = address(0xB0057);
@@ -1639,6 +1682,70 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         harness.requireProductionPoolImplementationCodehashHarness(address(poolImplementation), missingEnvName);
+    }
+
+    function test_RobinhoodTestnetRelaxedDeploy_DefaultsBootstrapHolderToDeployer() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setStrictProductionGuardsOverrideHarness(false);
+
+        (YSToken ysToken, TimelockController timelock,, address testnetBootstrapHolder) =
+            harness.deployGovernanceWithRelaxedTestnetGuardsHarness();
+
+        assertEq(testnetBootstrapHolder, address(harness));
+        assertEq(ysToken.balanceOf(testnetBootstrapHolder), ysToken.INITIAL_SUPPLY());
+        assertEq(ysToken.delegates(testnetBootstrapHolder), testnetBootstrapHolder);
+        assertFalse(timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), testnetBootstrapHolder));
+        _assertSoleSelfAdmin(timelock);
+    }
+
+    function test_RobinhoodTestnetRelaxedDeploy_SkipsManualProtocolCodehashPins() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setStrictProductionGuardsOverrideHarness(false);
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        string memory missingEnvName = "YS_TEST_REQUIRED_CHAINLINK_ORACLE_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        assertFalse(harness.requiresStrictProductionGuardsHarness());
+        harness.requireProductionChainlinkOracleCodehashHarness(address(chainlinkOracleFeed), missingEnvName);
+    }
+
+    function test_RobinhoodMainnetStillRequiresManualProtocolCodehashPins() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        string memory missingEnvName = "YS_TEST_REQUIRED_CHAINLINK_ORACLE_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        assertTrue(harness.requiresStrictProductionGuardsHarness());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashRequired.selector,
+                bytes32("ChainlinkOracleFeed"),
+                missingEnvName
+            )
+        );
+        harness.requireProductionChainlinkOracleCodehashHarness(address(chainlinkOracleFeed), missingEnvName);
+    }
+
+    function test_RobinhoodTestnetStrictModeRequiresManualProtocolCodehashPins() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setStrictProductionGuardsOverrideHarness(true);
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        string memory missingEnvName = "YS_TEST_REQUIRED_CHAINLINK_ORACLE_CODEHASH";
+        vm.setEnv(missingEnvName, vm.toString(bytes32(0)));
+
+        assertTrue(harness.requiresStrictProductionGuardsHarness());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolCodehashRequired.selector,
+                bytes32("ChainlinkOracleFeed"),
+                missingEnvName
+            )
+        );
+        harness.requireProductionChainlinkOracleCodehashHarness(address(chainlinkOracleFeed), missingEnvName);
     }
 
     function test_ProductionProtocol_ValidationRejectsUnexpectedPythOracleBytecode() public {

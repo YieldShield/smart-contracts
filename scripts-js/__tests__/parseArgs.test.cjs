@@ -79,20 +79,37 @@ test("configuredKeystore prefers network-specific env defaults", async () => {
     );
 });
 
-test("missingProductionEnv allows Robinhood sequencer opt-out for testnet", async () => {
-    const { missingProductionEnv } = await import("../parseArgs.js");
+test("missingProductionEnv relaxes production pins for Robinhood testnet by default", async () => {
+    const { missingProductionEnv, usesRelaxedRobinhoodTestnetGuards } =
+        await import("../parseArgs.js");
+
+    assert.equal(
+        usesRelaxedRobinhoodTestnetGuards("robinhoodTestnet", {}),
+        true,
+    );
+    assert.deepEqual(
+        missingProductionEnv(
+            {
+                fileName: "DeployYieldShieldProduction.s.sol",
+                network: "robinhoodTestnet",
+            },
+            {},
+        ),
+        [],
+    );
+});
+
+test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", async () => {
+    const { missingProductionEnv, usesRelaxedRobinhoodTestnetGuards } =
+        await import("../parseArgs.js");
     const env = {
-        YS_PRODUCTION_BOOTSTRAP_HOLDER: "0xholder",
-        YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: "0xcodehash",
-        YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON: "0xsingleton",
-        YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD: "2",
-        YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH: "0xowners",
-        YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH: "0xfactory",
-        YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: "0xpool",
-        YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH: "0xchainlink",
-        YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED: "true",
+        YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS: "true",
     };
 
+    assert.equal(
+        usesRelaxedRobinhoodTestnetGuards("robinhoodTestnet", env),
+        false,
+    );
     assert.deepEqual(
         missingProductionEnv(
             {
@@ -101,6 +118,16 @@ test("missingProductionEnv allows Robinhood sequencer opt-out for testnet", asyn
             },
             env,
         ),
-        [],
+        [
+            "YS_PRODUCTION_BOOTSTRAP_HOLDER",
+            "YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH",
+            "YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON",
+            "YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD",
+            "YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH",
+            "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
+            "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
+            "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH",
+            "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED or YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED=true",
+        ],
     );
 });

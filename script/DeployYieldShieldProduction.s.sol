@@ -149,6 +149,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS =
+        "YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS";
     string private constant ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS = "YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS";
     string private constant ENV_ROBINHOOD_TESTNET_TEST_WALLET = "YS_ROBINHOOD_TESTNET_TEST_WALLET";
     string private constant ENV_ROBINHOOD_TESTNET_TSLA_TOKEN = "YS_ROBINHOOD_TESTNET_TSLA_TOKEN";
@@ -209,12 +211,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
-        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
-        if (_usesChainlinkNativeOracle()) {
-            _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
-        } else {
-            _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+        if (_requiresStrictProductionGuards()) {
+            _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+            _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
+            if (_usesChainlinkNativeOracle()) {
+                _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
+            } else {
+                _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+            }
         }
         _requireRobinhoodTestnetDemoAssetsAllowed();
 
@@ -251,9 +255,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
-        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+        if (_requiresStrictProductionGuards()) {
+            _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+            _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
+            _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
+        }
         _finalizeProductionProtocolBootstrap(
             ProtocolDeployment({
                 factoryAddr: factoryAddr,
@@ -288,9 +294,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
-        _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
-        _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
+        if (_requiresStrictProductionGuards()) {
+            _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
+            _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
+            _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
+        }
         _finalizeProductionProtocolBootstrap(
             ProtocolDeployment({
                 factoryAddr: factoryAddr,
@@ -374,24 +382,29 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         if (timelockDelay < MIN_PRODUCTION_TIMELOCK_DELAY) {
             revert ProductionTimelockTooShort(timelockDelay, MIN_PRODUCTION_TIMELOCK_DELAY);
         }
-        bootstrapHolder = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER");
-        bytes32 expectedBootstrapHolderCodehash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH");
-        address expectedBootstrapHolderSingleton = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON");
-        uint256 expectedBootstrapHolderThreshold = vm.envUint("YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD");
-        bytes32 expectedBootstrapHolderOwnersHash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH");
-        address expectedBootstrapHolderGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_GUARD, address(0));
-        address expectedBootstrapHolderFallbackHandler = vm.envOr(ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER, address(0));
-        address expectedBootstrapHolderModuleGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_MODULE_GUARD, address(0));
-        _validateProductionBootstrapHolder(
-            bootstrapHolder,
-            expectedBootstrapHolderCodehash,
-            expectedBootstrapHolderSingleton,
-            expectedBootstrapHolderThreshold,
-            expectedBootstrapHolderOwnersHash,
-            expectedBootstrapHolderGuard,
-            expectedBootstrapHolderFallbackHandler,
-            expectedBootstrapHolderModuleGuard
-        );
+        if (_requiresStrictProductionGuards()) {
+            bootstrapHolder = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER");
+            bytes32 expectedBootstrapHolderCodehash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH");
+            address expectedBootstrapHolderSingleton = vm.envAddress("YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON");
+            uint256 expectedBootstrapHolderThreshold = vm.envUint("YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD");
+            bytes32 expectedBootstrapHolderOwnersHash = vm.envBytes32("YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH");
+            address expectedBootstrapHolderGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_GUARD, address(0));
+            address expectedBootstrapHolderFallbackHandler = vm.envOr(ENV_BOOTSTRAP_HOLDER_FALLBACK_HANDLER, address(0));
+            address expectedBootstrapHolderModuleGuard = vm.envOr(ENV_BOOTSTRAP_HOLDER_MODULE_GUARD, address(0));
+            _validateProductionBootstrapHolder(
+                bootstrapHolder,
+                expectedBootstrapHolderCodehash,
+                expectedBootstrapHolderSingleton,
+                expectedBootstrapHolderThreshold,
+                expectedBootstrapHolderOwnersHash,
+                expectedBootstrapHolderGuard,
+                expectedBootstrapHolderFallbackHandler,
+                expectedBootstrapHolderModuleGuard
+            );
+        } else {
+            bootstrapHolder = vm.envOr("YS_PRODUCTION_BOOTSTRAP_HOLDER", deployer);
+            console.log("Robinhood testnet relaxed bootstrap holder:", bootstrapHolder);
+        }
 
         address[] memory emptyAccounts = new address[](0);
         TimelockController timelock = TimelockController(
@@ -639,8 +652,16 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         return block.chainid == ROBINHOOD_MAINNET_CHAIN_ID || block.chainid == ROBINHOOD_TESTNET_CHAIN_ID;
     }
 
+    function _isRobinhoodTestnet() internal view returns (bool) {
+        return block.chainid == ROBINHOOD_TESTNET_CHAIN_ID;
+    }
+
     function _usesChainlinkNativeOracle() internal view returns (bool) {
         return _isRobinhoodChain();
+    }
+
+    function _requiresStrictProductionGuards() internal view virtual returns (bool) {
+        return !_isRobinhoodTestnet() || _envFlag(ENV_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS);
     }
 
     function _configureRobinhoodSequencerFeeds(
@@ -658,7 +679,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             return;
         }
 
-        bool allowMissingSequencerFeed = _envFlag(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED);
+        bool allowMissingSequencerFeed =
+            !_requiresStrictProductionGuards() || _envFlag(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED);
         if (!allowMissingSequencerFeed) {
             revert ProductionRobinhoodSequencerFeedRequired(block.chainid, envName);
         }
@@ -1246,6 +1268,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         view
     {
         _requireProductionContract(name, contractAddress);
+        if (!_requiresStrictProductionGuards()) {
+            return;
+        }
         _requireProductionCodehash(name, contractAddress, _readRequiredProductionCodehash(name, envName));
     }
 

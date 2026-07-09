@@ -139,6 +139,19 @@ Deploy to Robinhood testnet from the monorepo root:
 ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
 ```
 
+Robinhood testnet defaults to relaxed guardrails: if `YS_PRODUCTION_BOOTSTRAP_HOLDER`
+is unset, the deployer receives the initial YS supply, production Safe/codehash pins
+are skipped, and the sequencer uptime feed is optional. Set
+`YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS=true` to rehearse the stricter
+production checks on chain `46630`.
+
+To create the demo assets, feeds, pools, and seed liquidity used for product-loop
+testing, add:
+
+```sh
+YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS=true ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
+```
+
 Or pass the keystore explicitly:
 
 ```sh
