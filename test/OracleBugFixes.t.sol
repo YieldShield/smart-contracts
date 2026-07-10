@@ -167,12 +167,12 @@ contract OracleBugFixesTest is Test, FactoryProxyTestBase {
 
         assertEq(
             harness.getPythAddress(PythConfig.ARBITRUM_MAINNET_CHAIN_ID),
-            0xff1a0f4744e8582DF1aE09D5611b887B6a12925C,
+            0xe15357fB7ab31E091583b9c4b4135BB2f176f38e,
             "Arbitrum mainnet Pyth address should match official docs"
         );
         assertEq(
             harness.getPythAddress(PythConfig.ARBITRUM_SEPOLIA_CHAIN_ID),
-            0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF,
+            0x0B73614636C855Bf23F342F307FB981A3e47f42B,
             "Arbitrum Sepolia Pyth address should match official docs"
         );
     }

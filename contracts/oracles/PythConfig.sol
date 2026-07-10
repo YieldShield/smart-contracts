@@ -14,13 +14,13 @@ library PythConfig {
 
     /// @notice Pyth contract address on Arbitrum Sepolia
     /// @dev Get the latest address from: https://docs.pyth.network/price-feeds/contract-addresses/evm
-    /// @dev Official Arbitrum Sepolia address: 0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF
+    /// @dev Official upgraded Arbitrum Sepolia address: 0x0B73614636C855Bf23F342F307FB981A3e47f42B
     /// @dev This contract accepts Pyth update format (PNAU) from Hermes API
-    address public constant PYTH_ARBITRUM_SEPOLIA = 0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF;
+    address public constant PYTH_ARBITRUM_SEPOLIA = 0x0B73614636C855Bf23F342F307FB981A3e47f42B;
 
     /// @notice Pyth contract address on Arbitrum mainnet
     /// @dev Get the latest address from: https://docs.pyth.network/price-feeds/contract-addresses/evm
-    address public constant PYTH_ARBITRUM_MAINNET = 0xff1a0f4744e8582DF1aE09D5611b887B6a12925C;
+    address public constant PYTH_ARBITRUM_MAINNET = 0xe15357fB7ab31E091583b9c4b4135BB2f176f38e;
 
     /// @notice Default max Pyth price age on Arbitrum Sepolia
     uint256 public constant DEFAULT_ARBITRUM_SEPOLIA_MAX_PRICE_AGE = 3600;

@@ -26,6 +26,94 @@ const DEFAULT_KEYSTORE_ACCOUNT = "scaffold-eth-default";
 const KEYSTORE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
 const DEFAULT_EVENT_SCAN_CHUNK_SIZE = 50_000;
+const LEGACY_PYTH_HERMES_URL = "https://hermes.pyth.network";
+const UPGRADED_PYTH_HERMES_URL = "https://pyth.dourolabs.app/hermes";
+const LEGACY_ARBITRUM_PYTH_ADDRESSES = new Set([
+    "0xff1a0f4744e8582df1ae09d5611b887b6a12925c",
+    "0x4374e5a8b9c22271e9eb878a2aa31de97df15daf",
+]);
+const UPGRADED_ARBITRUM_PYTH_ADDRESSES = new Set([
+    "0xe15357fb7ab31e091583b9c4b4135bb2f176f38e",
+    "0x0b73614636c855bf23f342f307fb981a3e47f42b",
+]);
+
+function normalizeHermesUrl(value) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        return null;
+    }
+
+    const parsed = new URL(value.trim());
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/u, "");
+    return parsed.toString().replace(/\/$/u, "");
+}
+
+function resolveHermesConnection({ pythAddress, apiKey, hermesUrl }) {
+    if (!ethers.isAddress(pythAddress)) {
+        throw new Error(
+            `Invalid on-chain Pyth contract address: ${pythAddress}`,
+        );
+    }
+
+    const normalizedApiKey = typeof apiKey === "string" ? apiKey.trim() : "";
+    if (normalizedApiKey.length === 0) {
+        throw new Error(
+            "PYTH_API_KEY is required for authenticated Pyth Hermes updates",
+        );
+    }
+
+    const normalizedPythAddress = pythAddress.toLowerCase();
+    const isLegacy = LEGACY_ARBITRUM_PYTH_ADDRESSES.has(normalizedPythAddress);
+    const isUpgraded = UPGRADED_ARBITRUM_PYTH_ADDRESSES.has(
+        normalizedPythAddress,
+    );
+    const explicitHermesUrl = normalizeHermesUrl(hermesUrl);
+    const normalizedLegacyUrl = normalizeHermesUrl(LEGACY_PYTH_HERMES_URL);
+    const normalizedUpgradedUrl = normalizeHermesUrl(UPGRADED_PYTH_HERMES_URL);
+
+    if (isLegacy && explicitHermesUrl === normalizedUpgradedUrl) {
+        throw new Error(
+            "The upgraded Douro Hermes endpoint is incompatible with the configured legacy Pyth contract",
+        );
+    }
+    if (isUpgraded && explicitHermesUrl === normalizedLegacyUrl) {
+        throw new Error(
+            "The legacy Hermes endpoint is incompatible with the configured upgraded Pyth contract",
+        );
+    }
+    if (!isLegacy && !isUpgraded && !explicitHermesUrl) {
+        throw new Error(
+            `PYTH_HERMES_URL is required for unrecognized Pyth contract ${pythAddress}`,
+        );
+    }
+
+    return {
+        apiKey: normalizedApiKey,
+        hermesUrl:
+            explicitHermesUrl ||
+            (isUpgraded ? normalizedUpgradedUrl : normalizedLegacyUrl),
+        pythGeneration: isUpgraded
+            ? "upgraded"
+            : isLegacy
+              ? "legacy"
+              : "operator-specified",
+    };
+}
+
+async function createHermesClient({ hermesUrl, apiKey, HermesClientClass }) {
+    let Client = HermesClientClass;
+    if (!Client) {
+        ({ HermesClient: Client } = await import("@pythnetwork/hermes-client"));
+    }
+
+    return new Client(hermesUrl, {
+        accessToken: apiKey,
+        priceFeedRequestConfig: {
+            binary: true,
+        },
+    });
+}
 
 /**
  * Get Oracle address from the deployment file for the active chain
@@ -416,9 +504,6 @@ async function verifyPythTokenFreshness({
     return { staleTokens: optionalFailures };
 }
 
-// Pyth Hermes endpoint for Arbitrum Sepolia (testnet)
-const PYTH_HERMES_URL = "https://hermes.pyth.network/";
-
 /**
  * List available keystores
  */
@@ -557,18 +642,13 @@ async function unlockKeystore(keystoreName) {
  * Fetches separate updates for each feed ID to ensure correct format for updatePriceFeeds()
  * The contract expects an array where each element is a separate update for each feed
  */
-async function fetchPriceUpdateData(priceIds, hermesUrl = PYTH_HERMES_URL) {
+async function fetchPriceUpdateData(priceIds, hermesConnection) {
+    const { hermesUrl } = hermesConnection;
     console.log(`Connecting to Pyth Hermes: ${hermesUrl}`);
     console.log(`Fetching price updates for ${priceIds.length} feed(s)...`);
 
     try {
-        // Create Hermes client connection with binary option enabled
-        const { HermesClient } = await import("@pythnetwork/hermes-client");
-        const client = new HermesClient(hermesUrl, {
-            priceFeedRequestConfig: {
-                binary: true,
-            },
-        });
+        const client = await createHermesClient(hermesConnection);
 
         // Ensure price feed IDs are in the correct format (remove 0x prefix for API)
         const priceFeedIds = priceIds.map((id) => {
@@ -645,19 +725,12 @@ async function fetchPriceUpdateData(priceIds, hermesUrl = PYTH_HERMES_URL) {
     }
 }
 
-async function fetchPriceUpdateDataBestEffort(
-    priceIds,
-    hermesUrl = PYTH_HERMES_URL,
-) {
+async function fetchPriceUpdateDataBestEffort(priceIds, hermesConnection) {
+    const { hermesUrl } = hermesConnection;
     console.log(`Connecting to Pyth Hermes: ${hermesUrl}`);
     console.log(`Fetching price updates for ${priceIds.length} feed(s)...`);
 
-    const { HermesClient } = await import("@pythnetwork/hermes-client");
-    const client = new HermesClient(hermesUrl, {
-        priceFeedRequestConfig: {
-            binary: true,
-        },
-    });
+    const client = await createHermesClient(hermesConnection);
 
     const priceFeedIds = priceIds.map((id) => {
         const hexId = id.startsWith("0x") ? id.slice(2) : id;
@@ -899,6 +972,7 @@ async function main() {
     const oracleAbi = [
         "function updatePriceFeeds(bytes[] calldata priceUpdateData) external payable",
         "function getUpdateFee(bytes[] calldata priceUpdateData) external view returns (uint256 fee)",
+        "function pyth() external view returns (address)",
         "function isPriceStale(address) external view returns (bool,uint64)",
         "function isTokenSupported(address) external view returns (bool)",
         "function tokenToPriceFeedId(address) external view returns (bytes32)",
@@ -951,9 +1025,18 @@ async function main() {
         oracleAbi,
         provider,
     );
+    const pythAddress = await oracleContract.pyth();
+    const hermesConnection = resolveHermesConnection({
+        pythAddress,
+        apiKey: process.env.PYTH_API_KEY,
+        hermesUrl: process.env.PYTH_HERMES_URL,
+    });
 
     console.log("=== Updating Pyth Price Feeds ===");
     console.log("Oracle:", oracleAddress);
+    console.log("Pyth contract:", pythAddress);
+    console.log("Pyth generation:", hermesConnection.pythGeneration);
+    console.log("Hermes endpoint:", hermesConnection.hermesUrl);
     if (factoryAddress) {
         console.log("Factory:", factoryAddress);
     }
@@ -1037,7 +1120,7 @@ async function main() {
     try {
         const { updates, failures } = await fetchPriceUpdateDataBestEffort(
             priceIds,
-            PYTH_HERMES_URL,
+            hermesConnection,
         );
         failures.forEach((failure) => {
             console.warn(
@@ -1113,12 +1196,14 @@ if (require.main === module) {
 module.exports = {
     classifyConfiguredTokenRefreshes,
     collectTokenCandidates,
+    createHermesClient,
     discoverConfiguredPythTokens,
     fetchPriceUpdateData,
     fetchPriceUpdateDataBestEffort,
     getFactoryAddress,
     parseCliArgs,
     queryPythTokenEvents,
+    resolveHermesConnection,
     shouldRequireAllPriceUpdates,
     updatePriceFeeds,
     verifyPythTokenFreshness,

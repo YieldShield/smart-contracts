@@ -3,13 +3,20 @@ const { test } = require("node:test");
 const {
     classifyConfiguredTokenRefreshes,
     discoverConfiguredPythTokens,
+    fetchPriceUpdateData,
+    fetchPriceUpdateDataBestEffort,
     parseCliArgs,
+    resolveHermesConnection,
     shouldRequireAllPriceUpdates,
     verifyPythTokenFreshness,
 } = require("../update-pyth-prices.cjs");
 
 const ZERO_HASH =
     "0x0000000000000000000000000000000000000000000000000000000000000000";
+const LEGACY_ARBITRUM_PYTH = "0xff1a0f4744e8582DF1aE09D5611b887B6a12925C";
+const UPGRADED_ARBITRUM_PYTH = "0xe15357fB7ab31E091583b9c4b4135BB2f176f38e";
+const TEST_FEED_ID =
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function makeOracleMock({
     configured = {},
@@ -54,6 +61,120 @@ function makeFactoryMock(tokens) {
         },
     };
 }
+
+test("resolveHermesConnection selects the authenticated endpoint for the Pyth generation", () => {
+    assert.deepEqual(
+        resolveHermesConnection({
+            pythAddress: LEGACY_ARBITRUM_PYTH,
+            apiKey: "legacy-key",
+        }),
+        {
+            apiKey: "legacy-key",
+            hermesUrl: "https://hermes.pyth.network",
+            pythGeneration: "legacy",
+        },
+    );
+    assert.deepEqual(
+        resolveHermesConnection({
+            pythAddress: UPGRADED_ARBITRUM_PYTH,
+            apiKey: "upgraded-key",
+        }),
+        {
+            apiKey: "upgraded-key",
+            hermesUrl: "https://pyth.dourolabs.app/hermes",
+            pythGeneration: "upgraded",
+        },
+    );
+});
+
+test("resolveHermesConnection rejects missing auth and incompatible official overrides", () => {
+    assert.throws(
+        () =>
+            resolveHermesConnection({
+                pythAddress: LEGACY_ARBITRUM_PYTH,
+                apiKey: " ",
+            }),
+        /PYTH_API_KEY is required/u,
+    );
+    assert.throws(
+        () =>
+            resolveHermesConnection({
+                pythAddress: LEGACY_ARBITRUM_PYTH,
+                apiKey: "key",
+                hermesUrl: "https://pyth.dourolabs.app/hermes/",
+            }),
+        /incompatible with the configured legacy Pyth contract/u,
+    );
+    assert.throws(
+        () =>
+            resolveHermesConnection({
+                pythAddress: UPGRADED_ARBITRUM_PYTH,
+                apiKey: "key",
+                hermesUrl: "https://hermes.pyth.network/",
+            }),
+        /incompatible with the configured upgraded Pyth contract/u,
+    );
+});
+
+test("resolveHermesConnection accepts an explicitly compatible provider override", () => {
+    assert.deepEqual(
+        resolveHermesConnection({
+            pythAddress: UPGRADED_ARBITRUM_PYTH,
+            apiKey: " provider-key ",
+            hermesUrl: "https://prices.example.test/hermes/",
+        }),
+        {
+            apiKey: "provider-key",
+            hermesUrl: "https://prices.example.test/hermes",
+            pythGeneration: "upgraded",
+        },
+    );
+});
+
+test("both Pyth fetch paths pass the API key to HermesClient", async () => {
+    const constructedClients = [];
+    class HermesClientMock {
+        constructor(endpoint, options) {
+            constructedClients.push({ endpoint, options });
+        }
+
+        async getLatestPriceUpdates() {
+            return { binary: { data: ["abcd"] } };
+        }
+    }
+    const connection = {
+        apiKey: "secret-api-key",
+        hermesUrl: "https://prices.example.test/hermes",
+        HermesClientClass: HermesClientMock,
+    };
+
+    assert.deepEqual(await fetchPriceUpdateData([TEST_FEED_ID], connection), [
+        "0xabcd",
+    ]);
+    assert.deepEqual(
+        await fetchPriceUpdateDataBestEffort([TEST_FEED_ID], connection),
+        {
+            updates: [{ feedId: TEST_FEED_ID, update: "0xabcd" }],
+            failures: [],
+        },
+    );
+    assert.deepEqual(constructedClients, [
+        {
+            endpoint: connection.hermesUrl,
+            options: {
+                accessToken: connection.apiKey,
+                priceFeedRequestConfig: { binary: true },
+            },
+        },
+        {
+            endpoint: connection.hermesUrl,
+            options: {
+                accessToken: connection.apiKey,
+                priceFeedRequestConfig: { binary: true },
+            },
+        },
+    ]);
+});
 
 test("parseCliArgs rejects conflicting strict and allow-partial flags", () => {
     assert.throws(
