@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import { createHash, randomBytes } from "crypto";
 import { config } from "dotenv";
 import { join, dirname } from "path";
 import { readFileSync, existsSync } from "fs";
@@ -305,6 +306,63 @@ function formatRobinhoodProductionDeploymentMode(mode) {
     ].join("\n");
 }
 
+function isValidDeploymentGenerationId(generationId) {
+    return (
+        typeof generationId === "string" &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/u.test(generationId)
+    );
+}
+
+function deploymentConfigurationDigest(
+    { fileName, network },
+    env = process.env,
+) {
+    const configuration = Object.keys(env)
+        .filter(
+            (key) => key.startsWith("YS_") && !key.startsWith("YS_DEPLOYMENT_"),
+        )
+        .sort()
+        .map((key) => [key, String(env[key])]);
+    const canonical = JSON.stringify({ configuration, fileName, network });
+    return `0x${createHash("sha256").update(canonical).digest("hex")}`;
+}
+
+function resolveDeploymentGeneration(
+    { fileName, network },
+    env = process.env,
+    { now = Date.now, randomHex = () => randomBytes(8).toString("hex") } = {},
+) {
+    if (fileName !== PRODUCTION_DEPLOY_SCRIPT || isLocalNetwork(network)) {
+        return null;
+    }
+
+    const recovery = envFlag(env.YS_DEPLOYMENT_RECOVERY);
+    const providedGenerationId = hasNonBlankEnvValue(env.YS_DEPLOYMENT_ID)
+        ? env.YS_DEPLOYMENT_ID.trim()
+        : null;
+    if (recovery && !providedGenerationId) {
+        throw new Error(
+            "YS_DEPLOYMENT_RECOVERY=true requires the original YS_DEPLOYMENT_ID.",
+        );
+    }
+
+    const generationId = providedGenerationId || `gen-${now()}-${randomHex()}`;
+    if (!isValidDeploymentGenerationId(generationId)) {
+        throw new Error(
+            "YS_DEPLOYMENT_ID must be 8-128 characters using letters, numbers, dots, underscores, or hyphens, and cannot start with a dot.",
+        );
+    }
+
+    return {
+        configurationDigest: deploymentConfigurationDigest(
+            { fileName, network },
+            env,
+        ),
+        generationId,
+        recovery,
+    };
+}
+
 function requiresDeploymentTargetSizeCheck({ fileName, network }) {
     return (
         fileName === PRODUCTION_DEPLOY_SCRIPT && ROBINHOOD_NETWORKS.has(network)
@@ -443,6 +501,24 @@ async function main(rawArgs = process.argv.slice(2), env = process.env) {
         console.log(formatRobinhoodProductionDeploymentMode(deploymentMode));
     }
 
+    let deploymentGeneration;
+    try {
+        deploymentGeneration = resolveDeploymentGeneration(
+            { fileName, network },
+            env,
+        );
+    } catch (error) {
+        console.log(`\n❌ Error: ${error.message}`);
+        process.exit(1);
+    }
+    if (deploymentGeneration) {
+        console.log(
+            `\n🧬 Deployment generation: ${deploymentGeneration.generationId}${
+                deploymentGeneration.recovery ? " (recovery)" : ""
+            }`,
+        );
+    }
+
     const { keystoreName: configuredKeystoreName, source: keystoreSource } =
         configuredKeystore(parsedArgs, env);
 
@@ -547,12 +623,26 @@ The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost
         `ETH_KEYSTORE_ACCOUNT=${selectedKeystore}`,
     ];
     const forgeScriptArgs = forgeScriptArgsForNetwork(network, env);
+    if (deploymentGeneration?.recovery) {
+        forgeScriptArgs.push("--resume");
+    }
     if (forgeScriptArgs.length > 0) {
         makeArgs.push(`FORGE_SCRIPT_ARGS=${forgeScriptArgs.join(" ")}`);
     }
     makeArgs.push("deploy-and-generate-abis");
 
+    const childEnv = deploymentGeneration
+        ? {
+              ...process.env,
+              ...env,
+              YS_DEPLOYMENT_CONFIGURATION_DIGEST:
+                  deploymentGeneration.configurationDigest,
+              YS_DEPLOYMENT_ID: deploymentGeneration.generationId,
+              YS_PRODUCTION_DEPLOYMENT_CANDIDATE: "true",
+          }
+        : process.env;
     const result = spawnSync("make", makeArgs, {
+        env: childEnv,
         stdio: "inherit",
     });
 
@@ -565,6 +655,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 export {
     configuredKeystore,
+    deploymentConfigurationDigest,
     forgeScriptArgsForNetwork,
     hasNonBlankEnvValue,
     isLocalNetwork,
@@ -572,8 +663,10 @@ export {
     missingProductionEnv,
     networkEnvPrefix,
     parseCliArgs,
+    resolveDeploymentGeneration,
     resolveDeployScript,
     requiresDeploymentTargetSizeCheck,
+    isValidDeploymentGenerationId,
     formatRobinhoodProductionDeploymentMode,
     robinhoodProductionDeploymentMode,
     usesRelaxedRobinhoodTestnetGuards,

@@ -7,6 +7,8 @@ import { Vm } from "forge-std/Vm.sol";
 contract ScaffoldETHDeploy is Script {
     error DeployerHasNoBalance();
     error InvalidPrivateKey(string);
+    error InvalidDeploymentGenerationId(string generationId);
+    error DeploymentConfigurationDigestRequired();
 
     event AnvilSetBalance(address account, uint256 amount);
     event FailedAnvilRequest();
@@ -61,6 +63,12 @@ contract ScaffoldETHDeploy is Script {
 
     function _deploymentPath() internal view returns (string memory) {
         return string.concat(vm.projectRoot(), "/deployments/", vm.toString(block.chainid), ".json");
+    }
+
+    function _deploymentCandidatePath(string memory generationId) internal view returns (string memory) {
+        return string.concat(
+            vm.projectRoot(), "/deployments/.candidates/", vm.toString(block.chainid), "/", generationId, ".json"
+        );
     }
 
     function _readDeploymentRecord() internal view returns (bool found, string memory content, uint256 modifiedAt) {
@@ -120,15 +128,32 @@ contract ScaffoldETHDeploy is Script {
 
     function exportDeployments() internal {
         root = vm.projectRoot();
-        path = string.concat(root, "/deployments/");
         string memory chainIdStr = vm.toString(block.chainid);
-        path = string.concat(path, string.concat(chainIdStr, ".json"));
+        bool generationScoped = _usesGenerationScopedDeploymentExport();
+        string memory generationId;
+        string memory configurationDigest;
+        if (generationScoped) {
+            generationId = _deploymentGenerationId();
+            if (!_isValidDeploymentGenerationId(generationId)) {
+                revert InvalidDeploymentGenerationId(generationId);
+            }
+            configurationDigest = _deploymentConfigurationDigest();
+            if (bytes(configurationDigest).length == 0) {
+                revert DeploymentConfigurationDigestRequired();
+            }
+            path = _deploymentCandidatePath(generationId);
+            vm.createDir(string.concat(root, "/deployments/.candidates/", chainIdStr), true);
+        } else {
+            path = _deploymentPath();
+        }
 
         string memory jsonObjectKey = string.concat("deployment-export-", chainIdStr, "-", vm.toString(gasleft()));
 
-        (bool foundExisting, string memory existingJson) = _readDeploymentFile();
-        if (foundExisting) {
-            _serializeExistingDeployments(jsonObjectKey, existingJson);
+        if (!generationScoped) {
+            (bool foundExisting, string memory existingJson) = _readDeploymentFile();
+            if (foundExisting) {
+                _serializeExistingDeployments(jsonObjectKey, existingJson);
+            }
         }
         _serializeCurrentDeployments(jsonObjectKey);
 
@@ -140,10 +165,51 @@ contract ScaffoldETHDeploy is Script {
             chainName = _fallbackChainName(block.chainid);
         }
         string memory jsonWrite = vm.serializeString(jsonObjectKey, "networkName", chainName);
+        if (generationScoped) {
+            jsonWrite = vm.serializeString(jsonObjectKey, "schemaVersion", "2");
+            jsonWrite = vm.serializeString(jsonObjectKey, "status", "candidate");
+            jsonWrite = vm.serializeString(jsonObjectKey, "deploymentId", generationId);
+            jsonWrite = vm.serializeString(jsonObjectKey, "chainId", chainIdStr);
+            jsonWrite = vm.serializeString(jsonObjectKey, "deployer", vm.toString(deployer));
+            jsonWrite = vm.serializeString(jsonObjectKey, "configurationDigest", configurationDigest);
+            jsonWrite = vm.serializeString(jsonObjectKey, "recovery", _deploymentRecovery() ? "true" : "false");
+        }
         for (uint256 i = 0; i < deploymentMetadata.length; i++) {
             jsonWrite = vm.serializeString(jsonObjectKey, deploymentMetadata[i].key, deploymentMetadata[i].value);
         }
         vm.writeFile(path, jsonWrite);
+    }
+
+    function _usesGenerationScopedDeploymentExport() internal view virtual returns (bool) {
+        return vm.envOr("YS_PRODUCTION_DEPLOYMENT_CANDIDATE", false);
+    }
+
+    function _deploymentGenerationId() internal view virtual returns (string memory) {
+        return vm.envOr("YS_DEPLOYMENT_ID", string(""));
+    }
+
+    function _deploymentConfigurationDigest() internal view virtual returns (string memory) {
+        return vm.envOr("YS_DEPLOYMENT_CONFIGURATION_DIGEST", string(""));
+    }
+
+    function _deploymentRecovery() internal view virtual returns (bool) {
+        return vm.envOr("YS_DEPLOYMENT_RECOVERY", false);
+    }
+
+    function _isValidDeploymentGenerationId(string memory generationId) internal pure returns (bool) {
+        bytes memory raw = bytes(generationId);
+        if (raw.length < 8 || raw.length > 128 || raw[0] == 0x2e) {
+            return false;
+        }
+        for (uint256 i = 0; i < raw.length; i++) {
+            bytes1 char = raw[i];
+            bool valid = (char >= 0x30 && char <= 0x39) || (char >= 0x41 && char <= 0x5a)
+                || (char >= 0x61 && char <= 0x7a) || char == 0x2d || char == 0x2e || char == 0x5f;
+            if (!valid) {
+                return false;
+            }
+        }
+        return true;
     }
 
     function _setDeploymentMetadata(string memory key, string memory value) internal {

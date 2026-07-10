@@ -186,6 +186,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_POOL_IMPLEMENTATION = "factory.poolImplementation";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED = "robinhoodSequencerUptimeFeed";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE = "robinhoodSequencerUptimeFeedSource";
+    string private constant METADATA_ROBINHOOD_DEMO_ASSETS_ENABLED = "robinhoodDemoAssetsEnabled";
+    string private constant METADATA_PRODUCTION_GUARD_MODE = "productionGuardMode";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -230,6 +232,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _snapshotProductionDeploymentMode();
         if (_requiresStrictProductionGuards()) {
             _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
             _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
@@ -274,6 +277,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _snapshotProductionDeploymentMode();
         if (_requiresStrictProductionGuards()) {
             _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
             _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
@@ -295,6 +299,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             deployer
         );
 
+        deployments.push(Deployment("YSToken", address(YSGovernor(payable(governorAddr)).token())));
+        deployments.push(Deployment("TimelockController", timelockAddr));
+        deployments.push(Deployment("YSGovernor", governorAddr));
         deployments.push(Deployment("PythOracle", pythOracleAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
         deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
@@ -315,6 +322,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address governorAddr
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
+        _snapshotProductionDeploymentMode();
         if (_requiresStrictProductionGuards()) {
             _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
             _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
@@ -336,6 +344,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             deployer
         );
 
+        deployments.push(Deployment("YSToken", address(YSGovernor(payable(governorAddr)).token())));
+        deployments.push(Deployment("TimelockController", timelockAddr));
+        deployments.push(Deployment("YSGovernor", governorAddr));
         deployments.push(Deployment("ChainlinkOracleFeed", chainlinkOracleFeedAddr));
         deployments.push(Deployment("USMarketSessionGate", marketSessionGateAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
@@ -775,6 +786,12 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
     function _robinhoodTestnetDemoAssetsRequested() internal view virtual returns (bool) {
         return _envFlagOrDefault(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS, false);
+    }
+
+    function _snapshotProductionDeploymentMode() internal {
+        bool demoAssetsEnabled = _isRobinhoodTestnet() && _robinhoodTestnetDemoAssetsRequested();
+        _setDeploymentMetadata(METADATA_ROBINHOOD_DEMO_ASSETS_ENABLED, demoAssetsEnabled ? "true" : "false");
+        _setDeploymentMetadata(METADATA_PRODUCTION_GUARD_MODE, _requiresStrictProductionGuards() ? "strict" : "relaxed");
     }
 
     function _envFlag(string memory envName) internal view returns (bool) {

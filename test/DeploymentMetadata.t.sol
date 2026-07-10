@@ -5,6 +5,11 @@ import { Test } from "forge-std/Test.sol";
 import { ScaffoldETHDeploy } from "../script/DeployHelpers.s.sol";
 
 contract DeployHelpersHarness is ScaffoldETHDeploy {
+    bool internal generationScopedOverride;
+    bool internal deploymentRecoveryOverride;
+    string internal generationIdOverride;
+    string internal configurationDigestOverride;
+
     function addDeployment(string memory name, address addr) external {
         deployments.push(Deployment(name, addr));
     }
@@ -15,6 +20,38 @@ contract DeployHelpersHarness is ScaffoldETHDeploy {
 
     function setDeploymentMetadataHarness(string memory key, string memory value) external {
         _setDeploymentMetadata(key, value);
+    }
+
+    function setGenerationScopedExportHarness(
+        bool enabled,
+        string memory generationId,
+        string memory configurationDigest,
+        bool recovery
+    ) external {
+        generationScopedOverride = enabled;
+        generationIdOverride = generationId;
+        configurationDigestOverride = configurationDigest;
+        deploymentRecoveryOverride = recovery;
+    }
+
+    function deploymentCandidatePathHarness(string memory generationId) external view returns (string memory) {
+        return _deploymentCandidatePath(generationId);
+    }
+
+    function _usesGenerationScopedDeploymentExport() internal view override returns (bool) {
+        return generationScopedOverride;
+    }
+
+    function _deploymentGenerationId() internal view override returns (string memory) {
+        return generationIdOverride;
+    }
+
+    function _deploymentConfigurationDigest() internal view override returns (string memory) {
+        return configurationDigestOverride;
+    }
+
+    function _deploymentRecovery() internal view override returns (bool) {
+        return deploymentRecoveryOverride;
     }
 
     function deploymentPath() external view returns (string memory) {
@@ -67,6 +104,7 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant EMPTY_EXPORT_TEST_CHAIN_ID = 777_777_783;
     uint256 internal constant CORE_CONTRACT_EXPORT_TEST_CHAIN_ID = 777_777_786;
     uint256 internal constant METADATA_EXPORT_TEST_CHAIN_ID = 777_777_787;
+    uint256 internal constant GENERATION_EXPORT_TEST_CHAIN_ID = 777_777_788;
     uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_900;
 
     function test_exportDeployments_RecordsSequencerFeedProvenanceMetadata() public {
@@ -91,6 +129,41 @@ contract DeploymentMetadataTest is Test {
             "https://docs.example/verified-feed"
         );
 
+        _removeDeploymentFileIfPresent(deploymentPath);
+    }
+
+    function test_exportDeployments_GenerationCandidateDoesNotMergeActiveManifest() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(GENERATION_EXPORT_TEST_CHAIN_ID);
+        address staleFactory = address(0x1111);
+        address currentFactory = address(0x2222);
+        string memory existingJson = "existing-generation-active";
+        vm.serializeString(existingJson, vm.toString(staleFactory), "SplitRiskPoolFactory");
+        existingJson = vm.serializeString(existingJson, "networkName", "old-network");
+        vm.writeJson(existingJson, deploymentPath);
+
+        string memory generationId = "gen-test-00000001";
+        string memory digest = vm.toString(bytes32(uint256(1234)));
+        deployHelpers.setGenerationScopedExportHarness(true, generationId, digest, true);
+        deployHelpers.addDeployment("SplitRiskPoolFactory", currentFactory);
+        deployHelpers.setDeploymentMetadataHarness("robinhoodDemoAssetsEnabled", "false");
+        deployHelpers.exportDeploymentsHarness();
+
+        string memory candidatePath = deployHelpers.deploymentCandidatePathHarness(generationId);
+        string memory candidate = vm.readFile(candidatePath);
+        assertEq(vm.parseJsonString(candidate, ".deploymentId"), generationId);
+        assertEq(vm.parseJsonString(candidate, ".configurationDigest"), digest);
+        assertEq(vm.parseJsonString(candidate, ".status"), "candidate");
+        assertEq(vm.parseJsonString(candidate, ".recovery"), "true");
+        assertEq(vm.parseJsonString(candidate, ".robinhoodDemoAssetsEnabled"), "false");
+        assertEq(vm.parseJsonString(candidate, string.concat(".", vm.toString(currentFactory))), "SplitRiskPoolFactory");
+        assertFalse(vm.keyExistsJson(candidate, string.concat(".", vm.toString(staleFactory))));
+
+        string memory active = vm.readFile(deploymentPath);
+        assertEq(vm.parseJsonString(active, string.concat(".", vm.toString(staleFactory))), "SplitRiskPoolFactory");
+        assertFalse(vm.keyExistsJson(active, string.concat(".", vm.toString(currentFactory))));
+
+        vm.removeFile(candidatePath);
         _removeDeploymentFileIfPresent(deploymentPath);
     }
 

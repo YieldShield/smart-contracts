@@ -1,2 +1,4 @@
 # Ignore 31337 deployments
 31337.json
+# Failed and pre-broadcast generation candidates are local forensic artifacts.
+.candidates/

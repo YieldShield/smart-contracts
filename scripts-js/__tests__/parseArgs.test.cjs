@@ -338,3 +338,71 @@ test("deployment target size preflight is scoped to Robinhood production deploys
         false,
     );
 });
+
+test("production deployment generations are deterministic for injected entropy", async () => {
+    const { resolveDeploymentGeneration } = await import("../parseArgs.js");
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "robinhoodTestnet",
+    };
+    const env = {
+        YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS: "true",
+        YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: `0x${"12".repeat(32)}`,
+    };
+
+    const generation = resolveDeploymentGeneration(request, env, {
+        now: () => 1_725_000_000_000,
+        randomHex: () => "1234567890abcdef",
+    });
+    assert.equal(generation.generationId, "gen-1725000000000-1234567890abcdef");
+    assert.match(generation.configurationDigest, /^0x[0-9a-f]{64}$/u);
+    assert.equal(generation.recovery, false);
+    assert.equal(
+        resolveDeploymentGeneration(request, {
+            ...env,
+            YS_DEPLOYMENT_ID: generation.generationId,
+        }).configurationDigest,
+        generation.configurationDigest,
+    );
+});
+
+test("deployment recovery requires and reuses the original generation ID", async () => {
+    const { resolveDeploymentGeneration } = await import("../parseArgs.js");
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "robinhood",
+    };
+
+    assert.throws(
+        () =>
+            resolveDeploymentGeneration(request, {
+                YS_DEPLOYMENT_RECOVERY: "true",
+            }),
+        /requires the original YS_DEPLOYMENT_ID/u,
+    );
+    const recovery = resolveDeploymentGeneration(request, {
+        YS_DEPLOYMENT_ID: "gen-recovery-0001",
+        YS_DEPLOYMENT_RECOVERY: "true",
+    });
+    assert.equal(recovery.generationId, "gen-recovery-0001");
+    assert.equal(recovery.recovery, true);
+    assert.match(recovery.configurationDigest, /^0x[0-9a-f]{64}$/u);
+});
+
+test("deployment generation IDs reject path traversal", async () => {
+    const { isValidDeploymentGenerationId, resolveDeploymentGeneration } =
+        await import("../parseArgs.js");
+    assert.equal(isValidDeploymentGenerationId("gen-valid-0001"), true);
+    assert.equal(isValidDeploymentGenerationId("../escape"), false);
+    assert.throws(
+        () =>
+            resolveDeploymentGeneration(
+                {
+                    fileName: "DeployYieldShieldProduction.s.sol",
+                    network: "robinhoodTestnet",
+                },
+                { YS_DEPLOYMENT_ID: "../escape" },
+            ),
+        /must be 8-128 characters/u,
+    );
+});
