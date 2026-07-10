@@ -11,6 +11,7 @@ import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.so
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
+import { ConfigurableTokenFaucet } from "../contracts/mocks/ConfigurableTokenFaucet.sol";
 import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggregator.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
@@ -119,6 +120,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     address internal constant ROBINHOOD_TESTNET_PLTR_TOKEN = 0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0;
     address internal constant ROBINHOOD_TESTNET_NFLX_TOKEN = 0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93;
     address internal constant ROBINHOOD_TESTNET_AMD_TOKEN = 0x71178BAc73cBeb415514eB542a8995b82669778d;
+    uint256 internal constant ROBINHOOD_DEMO_FAUCET_USDG_DRIP = 10_000e6;
+    uint256 internal constant ROBINHOOD_DEMO_FAUCET_WETH_DRIP = 10e18;
+    uint256 internal constant ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP = 25e18;
+    uint256 internal constant ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER = 1_000;
     bytes4 private constant GET_THRESHOLD_SELECTOR = bytes4(keccak256("getThreshold()"));
     bytes4 private constant GET_OWNERS_SELECTOR = bytes4(keccak256("getOwners()"));
     bytes4 private constant VERSION_SELECTOR = bytes4(keccak256("VERSION()"));
@@ -747,6 +752,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address stockOracleFeed = _deployRobinhoodStockOracleFeed(d.chainlinkOracleFeedAddr);
         _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr, stockOracleFeed);
         _mintRobinhoodDemoBalances(assets);
+        _deployRobinhoodDemoAssetFaucet(assets);
         RobinhoodDemoPools memory pools = _createRobinhoodDemoPools(factory, assets);
         _seedRobinhoodDemoLiquidity(assets, pools);
 
@@ -965,6 +971,44 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             return;
         }
         _mintRobinhoodDemoAsset(token, to, amount);
+    }
+
+    function _deployRobinhoodDemoAssetFaucet(RobinhoodDemoAssets memory assets) internal returns (address faucetAddr) {
+        ConfigurableTokenFaucet faucet = new ConfigurableTokenFaucet(deployer);
+        faucetAddr = address(faucet);
+
+        address[] memory faucetTokens = new address[](5);
+        uint256[] memory dripAmounts = new uint256[](5);
+        faucetTokens[0] = assets.usdg;
+        faucetTokens[1] = assets.weth;
+        faucetTokens[2] = assets.sgov;
+        faucetTokens[3] = assets.spy;
+        faucetTokens[4] = assets.qqq;
+        dripAmounts[0] = ROBINHOOD_DEMO_FAUCET_USDG_DRIP;
+        dripAmounts[1] = ROBINHOOD_DEMO_FAUCET_WETH_DRIP;
+        dripAmounts[2] = ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP;
+        dripAmounts[3] = ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP;
+        dripAmounts[4] = ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP;
+        faucet.setTokens(faucetTokens, dripAmounts);
+
+        _mintRobinhoodDemoAsset(
+            assets.usdg, faucetAddr, ROBINHOOD_DEMO_FAUCET_USDG_DRIP * ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER
+        );
+        _mintRobinhoodDemoAsset(
+            assets.weth, faucetAddr, ROBINHOOD_DEMO_FAUCET_WETH_DRIP * ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER
+        );
+        _mintRobinhoodDemoAsset(
+            assets.sgov, faucetAddr, ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP * ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER
+        );
+        _mintRobinhoodDemoAsset(
+            assets.spy, faucetAddr, ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP * ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER
+        );
+        _mintRobinhoodDemoAsset(
+            assets.qqq, faucetAddr, ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP * ROBINHOOD_DEMO_FAUCET_REFILL_MULTIPLIER
+        );
+
+        deployments.push(Deployment("RobinhoodDemoAssetFaucet", faucetAddr));
+        console.log("RobinhoodDemoAssetFaucet:", faucetAddr);
     }
 
     function _createRobinhoodDemoPools(SplitRiskPoolFactory factory, RobinhoodDemoAssets memory assets)

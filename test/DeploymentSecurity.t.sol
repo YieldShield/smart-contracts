@@ -14,6 +14,8 @@ import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { ConfigurableTokenFaucet } from "../contracts/mocks/ConfigurableTokenFaucet.sol";
+import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { DeployYieldShieldProduction } from "../script/DeployYieldShieldProduction.s.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
@@ -50,6 +52,17 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
             ROBINHOOD_TESTNET_NFLX_TOKEN,
             ROBINHOOD_TESTNET_AMD_TOKEN
         );
+    }
+
+    function currentDeploymentAddressHarness(string memory deploymentName) external view returns (address) {
+        bytes32 deploymentNameHash = keccak256(bytes(deploymentName));
+        for (uint256 i = deployments.length; i > 0; i--) {
+            Deployment memory deployment = deployments[i - 1];
+            if (keccak256(bytes(deployment.name)) == deploymentNameHash) {
+                return deployment.addr;
+            }
+        }
+        return address(0);
     }
 
     function validateProductionBootstrapHolder(address holder) external view {
@@ -555,10 +568,6 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     address internal deployer = address(this);
     address internal bootstrapHolder = address(0xB0057);
     address internal dummyPyth = address(0x1234);
-
-    function setUp() public {
-        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
-    }
 
     function _proxyImplementation(address proxy) internal view returns (address implementation) {
         implementation = address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT))));
@@ -1366,6 +1375,16 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.authorizedCallerCount(), 0);
 
+        address faucetAddr = harness.currentDeploymentAddressHarness("RobinhoodDemoAssetFaucet");
+        assertTrue(faucetAddr != address(0));
+        ConfigurableTokenFaucet faucet = ConfigurableTokenFaucet(faucetAddr);
+        assertEq(faucet.owner(), address(harness));
+        assertEq(faucet.getAllTokens().length, 5);
+        assertEq(faucet.dripAmount(harness.currentDeploymentAddressHarness("RobinhoodTestUSDG")), 10_000e6);
+        assertEq(faucet.dripAmount(harness.currentDeploymentAddressHarness("RobinhoodTestWETH")), 10e18);
+        assertEq(faucet.dripAmount(harness.currentDeploymentAddressHarness("RobinhoodTestSGOV")), 25e18);
+        assertFalse(faucet.enabledTokens(harness.currentDeploymentAddressHarness("RobinhoodTestTSLA")));
+
         harness.finalizeProductionChainlinkProtocolBootstrapHarness(
             address(factory),
             _proxyImplementation(address(factory)),
@@ -1394,8 +1413,42 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);
+    }
 
-        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
+    function test_ConfigurableTokenFaucet_UsesPerTokenDripAmountsAndCooldowns() public {
+        MockERC20Decimals usdg = new MockERC20Decimals("Robinhood Test USDG", "USDG", 6);
+        MockERC20Decimals weth = new MockERC20Decimals("Robinhood Test WETH", "WETH", 18);
+        ConfigurableTokenFaucet faucet = new ConfigurableTokenFaucet(address(this));
+
+        address[] memory tokens = new address[](2);
+        uint256[] memory dripAmounts = new uint256[](2);
+        tokens[0] = address(usdg);
+        tokens[1] = address(weth);
+        dripAmounts[0] = 10_000e6;
+        dripAmounts[1] = 10e18;
+        faucet.setTokens(tokens, dripAmounts);
+
+        usdg.mint(address(faucet), 100_000e6);
+        weth.mint(address(faucet), 100e18);
+
+        address recipient = address(0xBEEF);
+        (bool canDrip, uint256 nextDripTime) = faucet.canDrip(address(usdg), recipient);
+        assertTrue(canDrip);
+        assertEq(nextDripTime, 0);
+
+        faucet.drip(address(usdg), recipient);
+        assertEq(usdg.balanceOf(recipient), 10_000e6);
+        (canDrip, nextDripTime) = faucet.canDrip(address(usdg), recipient);
+        assertFalse(canDrip);
+        assertGt(nextDripTime, block.timestamp);
+
+        vm.expectRevert(bytes("ConfigurableTokenFaucet: drip unavailable"));
+        faucet.drip(address(usdg), recipient);
+
+        address batchRecipient = address(0xCAFE);
+        faucet.dripAll(batchRecipient);
+        assertEq(usdg.balanceOf(batchRecipient), 10_000e6);
+        assertEq(weth.balanceOf(batchRecipient), 10e18);
     }
 
     function test_ProductionProtocol_RobinhoodTestnetSeedDefaultsAndOptOutsArePinned() public {
