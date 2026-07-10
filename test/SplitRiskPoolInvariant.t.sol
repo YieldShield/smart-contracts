@@ -216,6 +216,13 @@ contract SplitRiskPoolHandler is Test {
         // Check if there's enough protector capacity
         uint256 totalProt = pool.totalProtectorTokens();
         uint256 depositValueUsd = _toUsd(address(shieldedToken), amount);
+        // The production deposit path rejects positive token amounts whose USD
+        // value truncates to zero. Treat that as an unreachable modeled action,
+        // especially after repeated fuzzed price drops drive the oracle to 1.
+        if (depositValueUsd == 0) {
+            _skip(this.depositShielded.selector);
+            return;
+        }
         uint256 collateralValueUsd = _ceilDiv(depositValueUsd * pool.COLLATERAL_RATIO(), 1e4);
         uint256 requiredCollateral = _ceilDiv(collateralValueUsd * 1e18, oracle.getPrice(address(backingToken)));
         uint256 requiredTotalProtectorUsd =
@@ -1107,6 +1114,23 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
     function _assertNoUnexpectedReverts(bytes4 selector, string memory label) internal view {
         (,,, uint256 unexpectedReverts) = handler.callMetrics(selector);
         assertEq(unexpectedReverts, 0, string.concat(label, " had modeled-valid reverts"));
+    }
+
+    function test_handlerSkipsShieldDepositWhenUsdValueRoundsToZero() public {
+        for (uint256 i = 0; i < 32; i++) {
+            handler.dropPrice(5_000);
+        }
+        assertEq(oracle.getPrice(address(shieldedToken)), 1, "precondition: fuzzed price reaches one");
+
+        (, uint256 skipsBefore, uint256 successesBefore, uint256 revertsBefore) =
+            handler.callMetrics(SplitRiskPoolHandler.depositShielded.selector);
+        handler.depositShielded(0, 0);
+        (, uint256 skipsAfter, uint256 successesAfter, uint256 revertsAfter) =
+            handler.callMetrics(SplitRiskPoolHandler.depositShielded.selector);
+
+        assertEq(skipsAfter, skipsBefore + 1, "zero-USD deposit should be a modeled skip");
+        assertEq(successesAfter, successesBefore, "zero-USD deposit must not execute");
+        assertEq(revertsAfter, revertsBefore, "zero-USD deposit must not count as an unexpected revert");
     }
 
     // ============ Post-Run Summary ============
