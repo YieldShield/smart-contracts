@@ -285,7 +285,7 @@ remain separate rather than being folded into their parent fixes.
 | M-05    | `6b2438f`                                                                                  |
 | M-06    | `2b4c878`                                                                                  |
 | L-01    | `57bd257`                                                                                  |
-| L-02    | `ba86627`                                                                                  |
+| L-02    | `ba86627`, with coverage-instrumentation isolation in `0c0d6d6`                            |
 | L-03    | `05ed188`, with broad-seed precondition corrections in `c7c9971`, `342934d`, and `fc77e5e` |
 | L-04    | `727c6e0`                                                                                  |
 | L-05    | `53b1072`, with atomic manifest metadata integration in `56ef91d`                          |
@@ -298,7 +298,7 @@ remain separate rather than being folded into their parent fixes.
 
 Final local verification on July 10, 2026:
 
-- Solidity and JavaScript formatting passed; all 82 script tests passed, including
+- Solidity and JavaScript formatting passed; all 83 script tests passed, including
   16 generation-safe manifest finalizer tests and 17 deployment-preflight tests.
 - `foundry.lock` matched all four submodule revisions.
 - The full offline Foundry build, storage-layout snapshots, and full offline test suite
@@ -308,6 +308,10 @@ Final local verification on July 10, 2026:
   suite passed again with fresh seeds. The first pushed CI campaign exposed one more
   modeled-validity gap after repeated oracle price drops; `fc77e5e` added an explicit
   zero-USD deposit regression and the fresh broad campaign passed afterward.
+- Instrumented coverage excludes only `FactoryLinearScanGas.t.sol`, because coverage
+  probes invalidate its gas measurements. The normal Foundry gate still runs the
+  suite and enforces the 15M hard-cap benchmarks; a workflow policy test locks this
+  separation in place.
 - Production guardian tests proved that the configured nonzero guardian is distinct
   from the timelock, survives finalization and recovery, can pause immediately, and
   cannot unpause or change the calendar. Active manifest promotion independently
