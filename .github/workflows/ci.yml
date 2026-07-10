@@ -75,6 +75,11 @@ jobs:
       - name: Run tests
         run: forge test
 
+      - name: Run strict path-effective invariant profile
+        env:
+          FOUNDRY_PROFILE: invariant-strict
+        run: forge test --match-contract SplitRiskPoolInvariantTest
+
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high
 

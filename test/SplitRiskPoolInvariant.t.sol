@@ -54,11 +54,24 @@ contract SplitRiskPoolHandler is Test {
     uint256 public calls_dropBackingPrice;
     uint256 public calls_increaseBackingPrice;
 
+    struct CallMetrics {
+        uint256 attempts;
+        uint256 preconditionSkips;
+        uint256 successes;
+        uint256 unexpectedReverts;
+    }
+
+    mapping(bytes4 => CallMetrics) public callMetrics;
+    bool public rewardPerShareEverDecreased;
+    bool public tvlLimitViolatedByDeposit;
+    uint256 public highestRewardPerShareObserved;
+
     // Pool config
     uint256 public shieldedMinDepositAmount;
     uint256 public shieldedMaxDepositAmount;
     uint256 public backingMinDepositAmount;
     uint256 public backingMaxDepositAmount;
+    uint256 internal constant MAX_FUZZ_PRICE = 1_000_000e8;
 
     constructor(
         SplitRiskPool _pool,
@@ -90,6 +103,36 @@ contract SplitRiskPoolHandler is Test {
             protectors.push(prot);
             shieldeds.push(sh);
         }
+
+        highestRewardPerShareObserved = pool.rewardPerShareAccumulated();
+    }
+
+    modifier tracksRewardPerShare() {
+        uint256 beforeValue = pool.rewardPerShareAccumulated();
+        _;
+        uint256 afterValue = pool.rewardPerShareAccumulated();
+        if (afterValue < beforeValue) {
+            rewardPerShareEverDecreased = true;
+        }
+        if (afterValue > highestRewardPerShareObserved) {
+            highestRewardPerShareObserved = afterValue;
+        }
+    }
+
+    function _attempt(bytes4 selector) internal {
+        callMetrics[selector].attempts++;
+    }
+
+    function _skip(bytes4 selector) internal {
+        callMetrics[selector].preconditionSkips++;
+    }
+
+    function _success(bytes4 selector) internal {
+        callMetrics[selector].successes++;
+    }
+
+    function _unexpectedRevert(bytes4 selector) internal {
+        callMetrics[selector].unexpectedReverts++;
     }
 
     /// @notice Get actor addresses for external funding
@@ -101,65 +144,120 @@ contract SplitRiskPoolHandler is Test {
         return shieldeds[i % shieldeds.length];
     }
 
-    function _toUsd(uint256 amount) internal pure returns (uint256) {
-        return (amount * 1e8) / 1e18;
+    function _toUsd(address token, uint256 amount) internal view returns (uint256) {
+        return (amount * oracle.getPrice(token)) / 1e18;
+    }
+
+    function _ceilDiv(uint256 numerator, uint256 denominator) internal pure returns (uint256) {
+        return numerator == 0 ? 0 : (numerator - 1) / denominator + 1;
+    }
+
+    function _recordPostDepositTvl() internal {
+        (uint256 shieldedBal, uint256 protectorBal) = pool.getPoolBalances();
+        (,,,, uint256 maxTVLUsd,,,,,) = pool.poolConfig();
+        uint256 currentTvlUsd =
+            _toUsd(address(shieldedToken), shieldedBal) + _toUsd(address(backingToken), protectorBal);
+        if (currentTvlUsd > maxTVLUsd) {
+            tvlLimitViolatedByDeposit = true;
+        }
     }
 
     // ============ Handler Functions ============
 
     /// @notice Deposit as protector
-    function depositProtector(uint256 actorSeed, uint256 amount) external {
+    function depositProtector(uint256 actorSeed, uint256 amount) external tracksRewardPerShare {
+        _attempt(this.depositProtector.selector);
         address actor = protectors[actorSeed % protectors.length];
         amount = bound(amount, backingMinDepositAmount + 1, backingMaxDepositAmount);
 
         uint256 balance = backingToken.balanceOf(actor);
-        if (balance < amount) return;
+        if (balance < amount) {
+            _skip(this.depositProtector.selector);
+            return;
+        }
 
         // Check TVL limit
         (uint256 shieldedBal, uint256 protectorBal) = pool.getPoolBalances();
         (,,,, uint256 maxTVLUsd,,,,,) = pool.poolConfig();
-        if (_toUsd(shieldedBal) + _toUsd(protectorBal + amount) > maxTVLUsd) return;
+        if (
+            _toUsd(address(shieldedToken), shieldedBal) + _toUsd(address(backingToken), protectorBal + amount)
+                > maxTVLUsd
+        ) {
+            _skip(this.depositProtector.selector);
+            return;
+        }
 
         vm.prank(actor);
         try pool.depositBackingAsset(address(backingToken), amount, 0) returns (uint256 tokenId) {
             protectorTokenIds[actor].push(tokenId);
             ghost_totalProtectorDeposits += amount;
             calls_depositProtector++;
-        } catch { }
+            _recordPostDepositTvl();
+            _success(this.depositProtector.selector);
+        } catch {
+            _unexpectedRevert(this.depositProtector.selector);
+        }
     }
 
     /// @notice Deposit as shielded
-    function depositShielded(uint256 actorSeed, uint256 amount) external {
+    function depositShielded(uint256 actorSeed, uint256 amount) external tracksRewardPerShare {
+        _attempt(this.depositShielded.selector);
         address actor = shieldeds[actorSeed % shieldeds.length];
         amount = bound(amount, shieldedMinDepositAmount + 1, shieldedMaxDepositAmount);
 
         uint256 balance = shieldedToken.balanceOf(actor);
-        if (balance < amount) return;
+        if (balance < amount) {
+            _skip(this.depositShielded.selector);
+            return;
+        }
 
         // Check if there's enough protector capacity
         uint256 totalProt = pool.totalProtectorTokens();
-        uint256 totalSh = pool.totalShieldedTokens();
-        uint256 requiredCollateral = ((totalSh + amount) * pool.COLLATERAL_RATIO()) / 1e4;
-        if (requiredCollateral > totalProt) return;
+        uint256 depositValueUsd = _toUsd(address(shieldedToken), amount);
+        uint256 collateralValueUsd = _ceilDiv(depositValueUsd * pool.COLLATERAL_RATIO(), 1e4);
+        uint256 requiredCollateral = _ceilDiv(collateralValueUsd * 1e18, oracle.getPrice(address(backingToken)));
+        uint256 requiredTotalProtectorUsd =
+            _ceilDiv((pool.totalValueAtDeposit() + depositValueUsd) * pool.COLLATERAL_RATIO(), 1e4);
+        if (
+            requiredTotalProtectorUsd > _toUsd(address(backingToken), totalProt)
+                || pool.totalShieldCollateralAmount() + requiredCollateral > totalProt
+        ) {
+            _skip(this.depositShielded.selector);
+            return;
+        }
 
         // Check TVL limit
         (uint256 shieldedBal, uint256 protectorBal) = pool.getPoolBalances();
         (,,,, uint256 maxTVLUsd,,,,,) = pool.poolConfig();
-        if (_toUsd(shieldedBal + amount) + _toUsd(protectorBal) > maxTVLUsd) return;
+        if (
+            _toUsd(address(shieldedToken), shieldedBal + amount) + _toUsd(address(backingToken), protectorBal)
+                > maxTVLUsd
+        ) {
+            _skip(this.depositShielded.selector);
+            return;
+        }
 
         vm.prank(actor);
         try pool.depositShieldedAsset(address(shieldedToken), amount, 0) returns (uint256 tokenId) {
             shieldedTokenIds[actor].push(tokenId);
             ghost_totalShieldedDeposits += amount;
             calls_depositShielded++;
-        } catch { }
+            _recordPostDepositTvl();
+            _success(this.depositShielded.selector);
+        } catch {
+            _unexpectedRevert(this.depositShielded.selector);
+        }
     }
 
     /// @notice Withdraw as protector (requires unlock)
-    function withdrawProtector(uint256 actorSeed, uint256 tokenIdSeed, uint256 amount) external {
+    function withdrawProtector(uint256 actorSeed, uint256 tokenIdSeed, uint256 amount) external tracksRewardPerShare {
+        _attempt(this.withdrawProtector.selector);
         address actor = protectors[actorSeed % protectors.length];
         uint256[] storage tokenIds = protectorTokenIds[actor];
-        if (tokenIds.length == 0) return;
+        if (tokenIds.length == 0) {
+            _skip(this.withdrawProtector.selector);
+            return;
+        }
 
         uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
 
@@ -168,17 +266,23 @@ contract SplitRiskPoolHandler is Test {
         try protectorNFT.getPosition(tokenId) returns (IProtectorReceiptNFT.ProtectorPosition memory p) {
             pos = p;
         } catch {
+            _removeTokenId(tokenIds, tokenId);
+            _skip(this.withdrawProtector.selector);
             return;
         }
 
         uint256 positionAmount = pool.getProtectorPositionAmount(tokenId);
-        if (positionAmount == 0) return;
+        if (positionAmount == 0) {
+            _skip(this.withdrawProtector.selector);
+            return;
+        }
 
         // Start unlock if not started
         if (pos.unlockRequestTime == 0) {
             vm.prank(actor);
             try pool.startUnlockProcess(tokenId) { }
             catch {
+                _unexpectedRevert(this.withdrawProtector.selector);
                 return;
             }
 
@@ -194,20 +298,40 @@ contract SplitRiskPoolHandler is Test {
         uint256 available = pool.getAvailableForWithdrawal(tokenId);
         amount = bound(amount, 1, available > 0 ? available : 1);
         if (amount > positionAmount) amount = positionAmount;
-        if (amount == 0) return;
+        if (amount < positionAmount && positionAmount - amount < backingMinDepositAmount) {
+            if (available < positionAmount) {
+                _skip(this.withdrawProtector.selector);
+                return;
+            }
+            amount = positionAmount;
+        }
+        if (amount == 0) {
+            _skip(this.withdrawProtector.selector);
+            return;
+        }
 
         vm.prank(actor);
         try pool.protectorWithdraw(tokenId, amount, address(backingToken), 0) {
             ghost_totalProtectorWithdrawals += amount;
             calls_withdrawProtector++;
-        } catch { }
+            _success(this.withdrawProtector.selector);
+            if (pool.getProtectorPositionAmount(tokenId) == 0) {
+                _removeTokenId(tokenIds, tokenId);
+            }
+        } catch {
+            _unexpectedRevert(this.withdrawProtector.selector);
+        }
     }
 
     /// @notice Withdraw as shielded
-    function withdrawShielded(uint256 actorSeed, uint256 tokenIdSeed) external {
+    function withdrawShielded(uint256 actorSeed, uint256 tokenIdSeed) external tracksRewardPerShare {
+        _attempt(this.withdrawShielded.selector);
         address actor = shieldeds[actorSeed % shieldeds.length];
         uint256[] storage tokenIds = shieldedTokenIds[actor];
-        if (tokenIds.length == 0) return;
+        if (tokenIds.length == 0) {
+            _skip(this.withdrawShielded.selector);
+            return;
+        }
 
         uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
 
@@ -216,50 +340,64 @@ contract SplitRiskPoolHandler is Test {
         try shieldNFT.getPosition(tokenId) returns (IShieldReceiptNFT.ShieldPosition memory p) {
             pos = p;
         } catch {
+            _removeTokenId(tokenIds, tokenId);
+            _skip(this.withdrawShielded.selector);
             return;
         }
 
-        if (pos.amount == 0) return;
+        if (pos.amount == 0) {
+            _skip(this.withdrawShielded.selector);
+            return;
+        }
 
         vm.prank(actor);
         try pool.shieldedWithdraw(tokenId, address(shieldedToken), 0) {
             ghost_totalShieldedWithdrawals += pos.amount;
             calls_withdrawShielded++;
-
-            // Remove token ID from array
-            for (uint256 i = 0; i < tokenIds.length; i++) {
-                if (tokenIds[i] == tokenId) {
-                    tokenIds[i] = tokenIds[tokenIds.length - 1];
-                    tokenIds.pop();
-                    break;
-                }
-            }
-        } catch { }
+            _success(this.withdrawShielded.selector);
+            _removeTokenId(tokenIds, tokenId);
+        } catch {
+            _unexpectedRevert(this.withdrawShielded.selector);
+        }
     }
 
     /// @notice Claim commission as protector
-    function claimCommission(uint256 actorSeed, uint256 tokenIdSeed) external {
+    function claimCommission(uint256 actorSeed, uint256 tokenIdSeed) external tracksRewardPerShare {
+        _attempt(this.claimCommission.selector);
         address actor = protectors[actorSeed % protectors.length];
         uint256[] storage tokenIds = protectorTokenIds[actor];
-        if (tokenIds.length == 0) return;
+        if (tokenIds.length == 0) {
+            _skip(this.claimCommission.selector);
+            return;
+        }
 
         uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
 
         uint256 claimable = pool.getClaimableCommission(tokenId);
-        if (claimable == 0) return;
+        if (claimable == 0) {
+            _skip(this.claimCommission.selector);
+            return;
+        }
 
         vm.prank(actor);
         try pool.claimCommission(tokenId) {
             ghost_totalCommissionsClaimed += claimable;
             calls_claimCommission++;
-        } catch { }
+            _success(this.claimCommission.selector);
+        } catch {
+            _unexpectedRevert(this.claimCommission.selector);
+        }
     }
 
     /// @notice Claim rewards to trigger fee accumulation
-    function claimRewards(uint256 actorSeed, uint256 tokenIdSeed) external {
+    function claimRewards(uint256 actorSeed, uint256 tokenIdSeed) external tracksRewardPerShare {
+        _attempt(this.claimRewards.selector);
         address actor = shieldeds[actorSeed % shieldeds.length];
         uint256[] storage tokenIds = shieldedTokenIds[actor];
-        if (tokenIds.length == 0) return;
+        if (tokenIds.length == 0) {
+            _skip(this.claimRewards.selector);
+            return;
+        }
 
         uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
 
@@ -272,14 +410,21 @@ contract SplitRiskPoolHandler is Test {
         vm.prank(actor);
         try pool.claimRewards(tokenId) {
             calls_claimRewards++;
-        } catch { }
+            _success(this.claimRewards.selector);
+        } catch {
+            _unexpectedRevert(this.claimRewards.selector);
+        }
     }
 
     /// @notice Withdraw as shielded via cross-asset path (backing token)
-    function withdrawShieldedCrossAsset(uint256 actorSeed, uint256 tokenIdSeed) external {
+    function withdrawShieldedCrossAsset(uint256 actorSeed, uint256 tokenIdSeed) external tracksRewardPerShare {
+        _attempt(this.withdrawShieldedCrossAsset.selector);
         address actor = shieldeds[actorSeed % shieldeds.length];
         uint256[] storage tokenIds = shieldedTokenIds[actor];
-        if (tokenIds.length == 0) return;
+        if (tokenIds.length == 0) {
+            _skip(this.withdrawShieldedCrossAsset.selector);
+            return;
+        }
 
         uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
 
@@ -288,10 +433,15 @@ contract SplitRiskPoolHandler is Test {
         try shieldNFT.getPosition(tokenId) returns (IShieldReceiptNFT.ShieldPosition memory p) {
             pos = p;
         } catch {
+            _removeTokenId(tokenIds, tokenId);
+            _skip(this.withdrawShieldedCrossAsset.selector);
             return;
         }
 
-        if (pos.amount == 0) return;
+        if (pos.amount == 0) {
+            _skip(this.withdrawShieldedCrossAsset.selector);
+            return;
+        }
 
         // Warp past minimumPoolTime (cross-asset requires it)
         (,,,,, uint256 minimumPoolTime,,,,) = pool.poolConfig();
@@ -303,22 +453,21 @@ contract SplitRiskPoolHandler is Test {
         try pool.shieldedWithdraw(tokenId, address(backingToken), 0) {
             ghost_totalCrossAssetWithdrawals += pos.amount;
             calls_withdrawShieldedCrossAsset++;
-
-            // Remove token ID from array
-            for (uint256 i = 0; i < tokenIds.length; i++) {
-                if (tokenIds[i] == tokenId) {
-                    tokenIds[i] = tokenIds[tokenIds.length - 1];
-                    tokenIds.pop();
-                    break;
-                }
-            }
-        } catch { }
+            _success(this.withdrawShieldedCrossAsset.selector);
+            _removeTokenId(tokenIds, tokenId);
+        } catch {
+            _unexpectedRevert(this.withdrawShieldedCrossAsset.selector);
+        }
     }
 
     /// @notice Drop the shielded token price (simulates adverse market move)
-    function dropPrice(uint256 dropBps) external {
+    function dropPrice(uint256 dropBps) external tracksRewardPerShare {
+        _attempt(this.dropPrice.selector);
         dropBps = bound(dropBps, 0, 5000); // 0% to 50% drop
-        if (dropBps == 0) return;
+        if (dropBps == 0) {
+            _skip(this.dropPrice.selector);
+            return;
+        }
 
         uint256 currentPrice = oracle.getPrice(address(shieldedToken));
         uint256 newPrice = currentPrice - (currentPrice * dropBps) / 1e4;
@@ -326,25 +475,40 @@ contract SplitRiskPoolHandler is Test {
 
         oracle.setPrice(address(shieldedToken), newPrice);
         calls_dropPrice++;
+        _success(this.dropPrice.selector);
     }
 
     /// @notice Simulate yield by changing oracle price
     /// @dev Must be called by test contract owner since oracle is owned by test
-    function generateYield(uint256 yieldBps) external {
+    function generateYield(uint256 yieldBps) external tracksRewardPerShare {
+        _attempt(this.generateYield.selector);
         yieldBps = bound(yieldBps, 0, 5000); // 0% to 50%
-        if (yieldBps == 0) return;
+        if (yieldBps == 0) {
+            _skip(this.generateYield.selector);
+            return;
+        }
 
         uint256 currentPrice = oracle.getPrice(address(shieldedToken));
+        if (currentPrice >= MAX_FUZZ_PRICE) {
+            _skip(this.generateYield.selector);
+            return;
+        }
         uint256 newPrice = currentPrice + (currentPrice * yieldBps) / 1e4;
+        if (newPrice > MAX_FUZZ_PRICE) newPrice = MAX_FUZZ_PRICE;
 
         oracle.setPrice(address(shieldedToken), newPrice);
         calls_generateYield++;
+        _success(this.generateYield.selector);
     }
 
     /// @notice Drop the backing token price to fuzz collateral cap accounting under FX movement
-    function dropBackingPrice(uint256 dropBps) external {
+    function dropBackingPrice(uint256 dropBps) external tracksRewardPerShare {
+        _attempt(this.dropBackingPrice.selector);
         dropBps = bound(dropBps, 0, 5000);
-        if (dropBps == 0) return;
+        if (dropBps == 0) {
+            _skip(this.dropBackingPrice.selector);
+            return;
+        }
 
         uint256 currentPrice = oracle.getPrice(address(backingToken));
         uint256 newPrice = currentPrice - (currentPrice * dropBps) / 1e4;
@@ -352,24 +516,51 @@ contract SplitRiskPoolHandler is Test {
 
         oracle.setPrice(address(backingToken), newPrice);
         calls_dropBackingPrice++;
+        _success(this.dropBackingPrice.selector);
     }
 
     /// @notice Increase the backing token price to fuzz collateral release under favorable movement
-    function increaseBackingPrice(uint256 increaseBps) external {
+    function increaseBackingPrice(uint256 increaseBps) external tracksRewardPerShare {
+        _attempt(this.increaseBackingPrice.selector);
         increaseBps = bound(increaseBps, 0, 5000);
-        if (increaseBps == 0) return;
+        if (increaseBps == 0) {
+            _skip(this.increaseBackingPrice.selector);
+            return;
+        }
 
         uint256 currentPrice = oracle.getPrice(address(backingToken));
+        if (currentPrice >= MAX_FUZZ_PRICE) {
+            _skip(this.increaseBackingPrice.selector);
+            return;
+        }
         uint256 newPrice = currentPrice + (currentPrice * increaseBps) / 1e4;
+        if (newPrice > MAX_FUZZ_PRICE) newPrice = MAX_FUZZ_PRICE;
 
         oracle.setPrice(address(backingToken), newPrice);
         calls_increaseBackingPrice++;
+        _success(this.increaseBackingPrice.selector);
     }
 
     /// @notice Warp time forward
-    function warpTime(uint256 seconds_) external {
+    function warpTime(uint256 seconds_) external tracksRewardPerShare {
+        _attempt(this.warpTime.selector);
         seconds_ = bound(seconds_, 0, 30 days);
         vm.warp(block.timestamp + seconds_);
+        _success(this.warpTime.selector);
+    }
+
+    function _removeTokenId(uint256[] storage tokenIds, uint256 tokenId) internal {
+        uint256 length = tokenIds.length;
+        for (uint256 i = 0; i < length;) {
+            if (tokenIds[i] == tokenId) {
+                tokenIds[i] = tokenIds[length - 1];
+                tokenIds.pop();
+                return;
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     // ============ View Functions ============
@@ -456,6 +647,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
         // Fund the handler's actors from the test contract
         _fundHandlerActors();
+        _seedReachableHandlerPaths();
 
         // Target handler for invariant testing
         targetContract(address(handler));
@@ -504,18 +696,49 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         }
     }
 
+    /// @dev Deterministically establish live receipts and exercise every economically
+    ///      important handler family once before random dispatch begins. Coverage
+    ///      assertions still track subsequent random attempts, skips, and failures.
+    function _seedReachableHandlerPaths() internal {
+        handler.depositProtector(0, 1_000_000e18);
+        handler.depositProtector(1, 1_000_000e18);
+        handler.depositShielded(0, 100_000e18);
+        handler.depositShielded(1, 100_000e18);
+        handler.depositShielded(2, 100_000e18);
+        handler.generateYield(1_000);
+        handler.claimRewards(0, 0);
+        handler.claimCommission(0, 0);
+        handler.withdrawShielded(0, 0);
+        handler.withdrawShieldedCrossAsset(1, 0);
+        handler.withdrawProtector(1, 0, 100_000e18);
+
+        assertGt(handler.calls_depositProtector(), 0, "seed protector deposit must execute");
+        assertGt(handler.calls_depositShielded(), 0, "seed shield deposit must execute");
+        assertGt(handler.calls_claimRewards(), 0, "seed reward claim must execute");
+        assertGt(handler.calls_claimCommission(), 0, "seed commission claim must execute");
+        assertGt(handler.calls_withdrawShielded(), 0, "seed same-asset exit must execute");
+        assertGt(handler.calls_withdrawShieldedCrossAsset(), 0, "seed cross-asset exit must execute");
+        assertGt(handler.calls_withdrawProtector(), 0, "seed protector exit must execute");
+    }
+
     function test_handlerPriceMutationsUpdateOracle() public {
         uint256 initialPrice = oracle.getPrice(address(shieldedToken));
+        uint256 initialYieldCalls = handler.calls_generateYield();
+        uint256 initialDropCalls = handler.calls_dropPrice();
 
         handler.generateYield(1000);
         uint256 higherPrice = oracle.getPrice(address(shieldedToken));
         assertGt(higherPrice, initialPrice, "generateYield should increase the mock price");
-        assertEq(handler.calls_generateYield(), 1, "generateYield counter should track successful mutation");
+        assertEq(
+            handler.calls_generateYield(),
+            initialYieldCalls + 1,
+            "generateYield counter should track successful mutation"
+        );
 
         handler.dropPrice(1000);
         uint256 lowerPrice = oracle.getPrice(address(shieldedToken));
         assertLt(lowerPrice, higherPrice, "dropPrice should decrease the mock price");
-        assertEq(handler.calls_dropPrice(), 1, "dropPrice counter should track successful mutation");
+        assertEq(handler.calls_dropPrice(), initialDropCalls + 1, "dropPrice counter should track successful mutation");
     }
 
     // ============ Invariant 1: Pool Balance Solvency ============
@@ -708,11 +931,14 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     // ============ Invariant 7: Reward Per Share Monotonicity ============
 
-    /// @notice Reward per share accumulator should never decrease
-    /// @dev This is tracked implicitly - we verify it's non-negative
-    function invariant_rewardPerShareNonNegative() public view {
-        uint256 rewardPerShare = pool.rewardPerShareAccumulated();
-        assertGe(rewardPerShare, 0, "Reward per share should be non-negative");
+    /// @notice Reward per share accumulator must not decrease across handler transitions
+    function invariant_rewardPerShareMonotonic() public view {
+        assertFalse(handler.rewardPerShareEverDecreased(), "reward per share decreased during a handler transition");
+        assertGe(
+            handler.highestRewardPerShareObserved(),
+            pool.rewardPerShareAccumulated(),
+            "handler must observe the current reward per share"
+        );
     }
 
     // ============ Invariant 8: No Orphaned Commissions ============
@@ -760,12 +986,10 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     // ============ Invariant 10: TVL Limit Respected ============
 
-    /// @notice Total pool value should never exceed max TVL
-    function invariant_tvlLimitRespected() public view {
-        (uint256 shieldedBal, uint256 protectorBal) = pool.getPoolBalances();
-        (,,,, uint256 maxTVLUsd,,,,,) = pool.poolConfig();
-
-        assertLe((shieldedBal * 1e8) / 1e18 + (protectorBal * 1e8) / 1e18, maxTVLUsd, "TVL should not exceed limit");
+    /// @notice No successful deposit may leave the pool above its TVL limit at execution time
+    /// @dev Later oracle appreciation may legitimately move current TVL above the deposit cap.
+    function invariant_depositsRespectTvlLimit() public view {
+        assertFalse(handler.tvlLimitViolatedByDeposit(), "a successful deposit exceeded the contemporaneous TVL cap");
     }
 
     // ============ Invariant 11: Double Withdrawal Prevention ============
@@ -818,6 +1042,38 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         );
     }
 
+    // ============ Post-Run Coverage ============
+
+    function afterInvariant() public view {
+        _assertHandlerCoverage(SplitRiskPoolHandler.depositProtector.selector, 1, "protector deposits");
+        _assertHandlerCoverage(SplitRiskPoolHandler.depositShielded.selector, 1, "shield deposits");
+        _assertHandlerCoverage(SplitRiskPoolHandler.withdrawProtector.selector, 1, "protector exits");
+        _assertHandlerCoverage(SplitRiskPoolHandler.withdrawShielded.selector, 1, "same-asset exits");
+        _assertHandlerCoverage(SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector, 1, "cross-asset exits");
+        _assertHandlerCoverage(SplitRiskPoolHandler.claimRewards.selector, 1, "reward claims");
+        _assertHandlerCoverage(SplitRiskPoolHandler.claimCommission.selector, 1, "commission claims");
+        _assertHandlerCoverage(SplitRiskPoolHandler.generateYield.selector, 1, "positive price movement");
+
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.depositProtector.selector, "protector deposits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.depositShielded.selector, "shield deposits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.withdrawProtector.selector, "protector exits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.withdrawShielded.selector, "same-asset exits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector, "cross-asset exits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.claimRewards.selector, "reward claims");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.claimCommission.selector, "commission claims");
+    }
+
+    function _assertHandlerCoverage(bytes4 selector, uint256 minimumSuccesses, string memory label) internal view {
+        (uint256 attempts,, uint256 successes,) = handler.callMetrics(selector);
+        assertGt(attempts, 0, string.concat(label, " were never attempted"));
+        assertGe(successes, minimumSuccesses, string.concat(label, " did not reach the success path"));
+    }
+
+    function _assertNoUnexpectedReverts(bytes4 selector, string memory label) internal view {
+        (,,, uint256 unexpectedReverts) = handler.callMetrics(selector);
+        assertEq(unexpectedReverts, 0, string.concat(label, " had modeled-valid reverts"));
+    }
+
     // ============ Post-Run Summary ============
 
     /// @notice Helper to check handler call statistics after test run
@@ -832,6 +1088,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         console2.log("withdrawShieldedCrossAsset:", handler.calls_withdrawShieldedCrossAsset());
         console2.log("dropPrice:", handler.calls_dropPrice());
         console2.log("generateYield:", handler.calls_generateYield());
+        console2.log("unexpected handler reverts are asserted in afterInvariant");
         console2.log("");
         console2.log("Ghost Variables:");
         console2.log("totalProtectorDeposits:", handler.ghost_totalProtectorDeposits());
