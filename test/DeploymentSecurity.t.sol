@@ -17,6 +17,7 @@ import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ConfigurableTokenFaucet } from "../contracts/mocks/ConfigurableTokenFaucet.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
+import { MockSequencerUptimeFeed } from "../contracts/mocks/MockSequencerUptimeFeed.sol";
 import { DeployYieldShieldProduction } from "../script/DeployYieldShieldProduction.s.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 import { MockPyth } from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
@@ -28,6 +29,10 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bytes32 internal expectedChainlinkOracleCodehash;
     bool internal strictProductionGuardsOverrideSet;
     bool internal strictProductionGuardsOverride;
+    bool internal robinhoodSequencerConfigOverrideSet;
+    address internal robinhoodSequencerFeedOverride;
+    string internal robinhoodSequencerFeedSourceOverride;
+    bool internal robinhoodMissingSequencerExceptionOverride;
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         return this.onERC721Received.selector;
@@ -39,6 +44,26 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
     function envFlagOrDefaultHarness(string memory envName, bool defaultValue) external view returns (bool) {
         return _envFlagOrDefault(envName, defaultValue);
+    }
+
+    function deployAndConfigureRobinhoodSequencerFeedsHarness()
+        external
+        returns (ChainlinkOracleFeed chainlinkOracleFeed, ERC4626OracleFeed erc4626OracleFeed)
+    {
+        chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
+        _configureRobinhoodSequencerFeeds(chainlinkOracleFeed, erc4626OracleFeed);
+    }
+
+    function deploymentMetadataValueHarness(string memory key) external view returns (bool found, string memory value) {
+        return _deploymentMetadataValue(key);
+    }
+
+    function setRobinhoodSequencerConfigHarness(address feed, string memory source, bool allowMissing) external {
+        robinhoodSequencerConfigOverrideSet = true;
+        robinhoodSequencerFeedOverride = feed;
+        robinhoodSequencerFeedSourceOverride = source;
+        robinhoodMissingSequencerExceptionOverride = allowMissing;
     }
 
     function defaultRobinhoodTestnetStockTokensHarness()
@@ -403,6 +428,27 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         }
 
         return super._requiresStrictProductionGuards();
+    }
+
+    function _robinhoodSequencerFeed(bool isTestnet) internal view override returns (address) {
+        if (robinhoodSequencerConfigOverrideSet) {
+            return robinhoodSequencerFeedOverride;
+        }
+        return super._robinhoodSequencerFeed(isTestnet);
+    }
+
+    function _robinhoodSequencerFeedSource(bool isTestnet) internal view override returns (string memory) {
+        if (robinhoodSequencerConfigOverrideSet) {
+            return robinhoodSequencerFeedSourceOverride;
+        }
+        return super._robinhoodSequencerFeedSource(isTestnet);
+    }
+
+    function _robinhoodMissingSequencerFeedExceptionRequested() internal view override returns (bool) {
+        if (robinhoodSequencerConfigOverrideSet) {
+            return robinhoodMissingSequencerExceptionOverride;
+        }
+        return super._robinhoodMissingSequencerFeedExceptionRequested();
     }
 
     function _readMasterCopy(address holder) internal view returns (address singleton) {
@@ -1872,6 +1918,118 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             )
         );
         harness.requireProductionChainlinkOracleCodehashHarness(address(chainlinkOracleFeed), missingEnvName);
+    }
+
+    function test_RobinhoodMainnet_MissingSequencerExceptionCannotDisableGuard() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setRobinhoodSequencerConfigHarness(address(0), "https://docs.example/verified-feed", true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodSequencerFeedRequired.selector,
+                ROBINHOOD_MAINNET_CHAIN_ID,
+                "YS_ROBINHOOD_SEQUENCER_FEED"
+            )
+        );
+        harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+    }
+
+    function test_RobinhoodMainnet_RequiresNonblankSequencerFeedSource() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        MockSequencerUptimeFeed sequencerFeed = new MockSequencerUptimeFeed();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setRobinhoodSequencerConfigHarness(address(sequencerFeed), " \t\n", false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodSequencerFeedSourceRequired.selector,
+                ROBINHOOD_MAINNET_CHAIN_ID,
+                "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE"
+            )
+        );
+        harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+    }
+
+    function test_RobinhoodMainnet_RejectsCodelessSequencerFeed() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        address codelessFeed = address(0xDEAD);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setRobinhoodSequencerConfigHarness(codelessFeed, "https://docs.example/verified-feed", false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodSequencerFeedInvalid.selector, codelessFeed
+            )
+        );
+        harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+    }
+
+    function test_RobinhoodMainnet_RejectsCodeBearingNonSequencerContract() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        CodeButNotPyth nonSequencerContract = new CodeButNotPyth();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setRobinhoodSequencerConfigHarness(
+            address(nonSequencerContract), "https://docs.example/verified-feed", false
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ChainlinkOracleFeed.InvalidFeedAddress.selector, address(nonSequencerContract))
+        );
+        harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+    }
+
+    function test_RobinhoodMainnet_ProbesAndRecordsSequencerFeedProvenance() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        MockSequencerUptimeFeed sequencerFeed = new MockSequencerUptimeFeed();
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setRobinhoodSequencerConfigHarness(address(sequencerFeed), "https://docs.example/verified-feed", true);
+
+        (ChainlinkOracleFeed chainlinkOracleFeed, ERC4626OracleFeed erc4626OracleFeed) =
+            harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+
+        assertEq(address(chainlinkOracleFeed.sequencerUptimeFeed()), address(sequencerFeed));
+        assertEq(address(erc4626OracleFeed.sequencerUptimeFeed()), address(sequencerFeed));
+        assertTrue(chainlinkOracleFeed.sequencerUptimeFeedRequired());
+        assertTrue(erc4626OracleFeed.sequencerUptimeFeedRequired());
+        (bool feedFound, string memory feedValue) =
+            harness.deploymentMetadataValueHarness("robinhoodSequencerUptimeFeed");
+        (bool sourceFound, string memory sourceValue) =
+            harness.deploymentMetadataValueHarness("robinhoodSequencerUptimeFeedSource");
+        assertTrue(feedFound);
+        assertTrue(sourceFound);
+        assertEq(feedValue, vm.toString(address(sequencerFeed)));
+        assertEq(sourceValue, "https://docs.example/verified-feed");
+    }
+
+    function test_RobinhoodTestnet_StrictModeMayUseExplicitMissingSequencerException() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setStrictProductionGuardsOverrideHarness(true);
+        harness.setRobinhoodSequencerConfigHarness(address(0), "", true);
+
+        (ChainlinkOracleFeed chainlinkOracleFeed, ERC4626OracleFeed erc4626OracleFeed) =
+            harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+
+        assertFalse(chainlinkOracleFeed.sequencerUptimeFeedRequired());
+        assertFalse(erc4626OracleFeed.sequencerUptimeFeedRequired());
+        (, string memory sourceValue) = harness.deploymentMetadataValueHarness("robinhoodSequencerUptimeFeedSource");
+        assertEq(sourceValue, "robinhood-testnet-explicit-exception");
+    }
+
+    function test_RobinhoodTestnet_RelaxedModeMayOmitSequencerFeed() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setStrictProductionGuardsOverrideHarness(false);
+        harness.setRobinhoodSequencerConfigHarness(address(0), "", false);
+
+        (ChainlinkOracleFeed chainlinkOracleFeed, ERC4626OracleFeed erc4626OracleFeed) =
+            harness.deployAndConfigureRobinhoodSequencerFeedsHarness();
+
+        assertFalse(chainlinkOracleFeed.sequencerUptimeFeedRequired());
+        assertFalse(erc4626OracleFeed.sequencerUptimeFeedRequired());
+        (, string memory sourceValue) = harness.deploymentMetadataValueHarness("robinhoodSequencerUptimeFeedSource");
+        assertEq(sourceValue, "robinhood-testnet-relaxed-guards");
     }
 
     function test_ProductionProtocol_ValidationRejectsUnexpectedPythOracleBytecode() public {

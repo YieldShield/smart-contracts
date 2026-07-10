@@ -160,7 +160,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_CHAINLINK_ORACLE_CODEHASH = "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH";
     string private constant ENV_CHAINLINK_MAX_PRICE_AGE = "YS_PRODUCTION_CHAINLINK_MAX_PRICE_AGE";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE = "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
+    string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE";
     string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS =
         "YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS";
@@ -182,6 +184,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_FACTORY_GOVERNANCE_TIMELOCK = "factory.governanceTimelock";
     bytes32 private constant FIELD_FACTORY_IMPLEMENTATION = "factory.proxyImplementation";
     bytes32 private constant FIELD_POOL_IMPLEMENTATION = "factory.poolImplementation";
+    string private constant METADATA_ROBINHOOD_SEQUENCER_FEED = "robinhoodSequencerUptimeFeed";
+    string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE = "robinhoodSequencerUptimeFeedSource";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -220,6 +224,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionRobinhoodTestnetDemoAssetsMissing(address factory);
     error ProductionRobinhoodTestnetDemoAssetsUnsupported(uint256 chainId);
     error ProductionRobinhoodSequencerFeedRequired(uint256 chainId, string envName);
+    error ProductionRobinhoodSequencerFeedSourceRequired(uint256 chainId, string envName);
+    error ProductionRobinhoodSequencerFeedInvalid(address feed);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
 
     function run() external ScaffoldEthDeployerRunner {
@@ -703,26 +709,68 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         ChainlinkOracleFeed chainlinkOracleFeed,
         ERC4626OracleFeed erc4626OracleFeed
     ) internal {
-        string memory envName = block.chainid == ROBINHOOD_TESTNET_CHAIN_ID
-            ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED
-            : ENV_ROBINHOOD_SEQUENCER_FEED;
-        address sequencerFeed = vm.envOr(envName, address(0));
+        bool isTestnet = _isRobinhoodTestnet();
+        string memory envName = isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED : ENV_ROBINHOOD_SEQUENCER_FEED;
+        string memory sourceEnvName =
+            isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE : ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE;
+        address sequencerFeed = _robinhoodSequencerFeed(isTestnet);
         if (sequencerFeed != address(0)) {
+            string memory source = _robinhoodSequencerFeedSource(isTestnet);
+            if (!isTestnet && !_hasNonWhitespace(source)) {
+                revert ProductionRobinhoodSequencerFeedSourceRequired(block.chainid, sourceEnvName);
+            }
+            if (sequencerFeed.code.length == 0) {
+                revert ProductionRobinhoodSequencerFeedInvalid(sequencerFeed);
+            }
             chainlinkOracleFeed.setSequencerUptimeFeed(sequencerFeed);
             erc4626OracleFeed.setSequencerUptimeFeed(sequencerFeed);
+            _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED, vm.toString(sequencerFeed));
+            _setDeploymentMetadata(
+                METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE,
+                _hasNonWhitespace(source) ? source : "operator-supplied-testnet-feed"
+            );
             console.log("Sequencer uptime feed set:", sequencerFeed);
             return;
         }
 
-        bool allowMissingSequencerFeed =
-            !_requiresStrictProductionGuards() || _envFlag(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED);
+        bool explicitTestnetException = _robinhoodMissingSequencerFeedExceptionRequested();
+        bool allowMissingSequencerFeed = isTestnet && (!_requiresStrictProductionGuards() || explicitTestnetException);
         if (!allowMissingSequencerFeed) {
             revert ProductionRobinhoodSequencerFeedRequired(block.chainid, envName);
         }
 
         chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
         erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
+        _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED, vm.toString(address(0)));
+        _setDeploymentMetadata(
+            METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE,
+            explicitTestnetException ? "robinhood-testnet-explicit-exception" : "robinhood-testnet-relaxed-guards"
+        );
         console.log("Sequencer uptime requirement explicitly disabled for Robinhood deployment");
+    }
+
+    function _robinhoodSequencerFeed(bool isTestnet) internal view virtual returns (address) {
+        return vm.envOr(isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED : ENV_ROBINHOOD_SEQUENCER_FEED, address(0));
+    }
+
+    function _robinhoodSequencerFeedSource(bool isTestnet) internal view virtual returns (string memory) {
+        return vm.envOr(
+            isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE : ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE, string("")
+        );
+    }
+
+    function _robinhoodMissingSequencerFeedExceptionRequested() internal view virtual returns (bool) {
+        return _envFlag(ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED);
+    }
+
+    function _hasNonWhitespace(string memory value) internal pure returns (bool) {
+        bytes memory raw = bytes(value);
+        for (uint256 i = 0; i < raw.length; i++) {
+            if (uint8(raw[i]) > 0x20) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function _robinhoodTestnetDemoAssetsRequested() internal view returns (bool) {

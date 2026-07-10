@@ -159,6 +159,10 @@ function envFlag(value) {
     return ["1", "true", "yes"].includes(String(value || "").toLowerCase());
 }
 
+function hasNonBlankEnvValue(value) {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
 function usesRelaxedRobinhoodTestnetGuards(network, env = process.env) {
     return (
         network === ROBINHOOD_TESTNET_NETWORK &&
@@ -178,17 +182,23 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
     const missing = [...REQUIRED_PRODUCTION_ENV];
     if (ROBINHOOD_NETWORKS.has(network)) {
         missing.push(...REQUIRED_ROBINHOOD_ENV);
-        const sequencerEnvName =
-            network === "robinhoodTestnet"
-                ? "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED"
-                : "YS_ROBINHOOD_SEQUENCER_FEED";
-        if (
-            !env[sequencerEnvName] &&
-            !envFlag(env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED)
-        ) {
-            missing.push(
-                `${sequencerEnvName} or YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED=true`,
-            );
+        if (network === ROBINHOOD_TESTNET_NETWORK) {
+            const sequencerEnvName = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
+            if (
+                !hasNonBlankEnvValue(env[sequencerEnvName]) &&
+                !envFlag(env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED)
+            ) {
+                missing.push(
+                    `${sequencerEnvName} or YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED=true`,
+                );
+            }
+        } else {
+            if (!hasNonBlankEnvValue(env.YS_ROBINHOOD_SEQUENCER_FEED)) {
+                missing.push("YS_ROBINHOOD_SEQUENCER_FEED");
+            }
+            if (!hasNonBlankEnvValue(env.YS_ROBINHOOD_SEQUENCER_FEED_SOURCE)) {
+                missing.push("YS_ROBINHOOD_SEQUENCER_FEED_SOURCE");
+            }
         }
     } else {
         missing.push(...REQUIRED_PYTH_ENV);
@@ -198,7 +208,7 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
         if (name.includes(" or ")) {
             return true;
         }
-        return !env[name];
+        return !hasNonBlankEnvValue(env[name]);
     });
 }
 
@@ -463,6 +473,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 export {
     configuredKeystore,
     forgeScriptArgsForNetwork,
+    hasNonBlankEnvValue,
     isLocalNetwork,
     keystoreEnvNames,
     missingProductionEnv,

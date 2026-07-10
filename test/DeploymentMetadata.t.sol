@@ -13,6 +13,10 @@ contract DeployHelpersHarness is ScaffoldETHDeploy {
         exportDeployments();
     }
 
+    function setDeploymentMetadataHarness(string memory key, string memory value) external {
+        _setDeploymentMetadata(key, value);
+    }
+
     function deploymentPath() external view returns (string memory) {
         return _deploymentPath();
     }
@@ -62,7 +66,33 @@ contract DeploymentMetadataTest is Test {
     uint256 internal constant FRESHEST_RESOLUTION_TEST_CHAIN_ID = 777_777_782;
     uint256 internal constant EMPTY_EXPORT_TEST_CHAIN_ID = 777_777_783;
     uint256 internal constant CORE_CONTRACT_EXPORT_TEST_CHAIN_ID = 777_777_786;
+    uint256 internal constant METADATA_EXPORT_TEST_CHAIN_ID = 777_777_787;
     uint256 internal constant EXACT_MATCH_TEST_CHAIN_ID = 777_777_900;
+
+    function test_exportDeployments_RecordsSequencerFeedProvenanceMetadata() public {
+        (DeployHelpersHarness deployHelpers, string memory deploymentPath) =
+            _newDeployHelpers(METADATA_EXPORT_TEST_CHAIN_ID);
+        deployHelpers.setDeploymentMetadataHarness(
+            "robinhoodSequencerUptimeFeed", "0x0000000000000000000000000000000000001234"
+        );
+        deployHelpers.setDeploymentMetadataHarness(
+            "robinhoodSequencerUptimeFeedSource", "https://docs.example/verified-feed"
+        );
+
+        deployHelpers.exportDeploymentsHarness();
+
+        string memory exportedJson = vm.readFile(deploymentPath);
+        assertEq(
+            vm.parseJsonString(exportedJson, ".robinhoodSequencerUptimeFeed"),
+            "0x0000000000000000000000000000000000001234"
+        );
+        assertEq(
+            vm.parseJsonString(exportedJson, ".robinhoodSequencerUptimeFeedSource"),
+            "https://docs.example/verified-feed"
+        );
+
+        _removeDeploymentFileIfPresent(deploymentPath);
+    }
 
     function test_exportDeployments_PreservesExistingEntriesNotSupersededByCurrentRun() public {
         (DeployHelpersHarness deployHelpers, string memory deploymentPath) = _newDeployHelpers(PRESERVE_TEST_CHAIN_ID);

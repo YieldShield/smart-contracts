@@ -16,9 +16,15 @@ contract ScaffoldETHDeploy is Script {
         address addr;
     }
 
+    struct DeploymentMetadata {
+        string key;
+        string value;
+    }
+
     string root;
     string path;
     Deployment[] public deployments;
+    DeploymentMetadata[] internal deploymentMetadata;
     uint256 constant ANVIL_BASE_BALANCE = 10000 ether;
 
     /// @notice The deployer address for every run
@@ -134,7 +140,31 @@ contract ScaffoldETHDeploy is Script {
             chainName = _fallbackChainName(block.chainid);
         }
         string memory jsonWrite = vm.serializeString(jsonObjectKey, "networkName", chainName);
+        for (uint256 i = 0; i < deploymentMetadata.length; i++) {
+            jsonWrite = vm.serializeString(jsonObjectKey, deploymentMetadata[i].key, deploymentMetadata[i].value);
+        }
         vm.writeFile(path, jsonWrite);
+    }
+
+    function _setDeploymentMetadata(string memory key, string memory value) internal {
+        bytes32 keyHash = keccak256(bytes(key));
+        for (uint256 i = 0; i < deploymentMetadata.length; i++) {
+            if (keccak256(bytes(deploymentMetadata[i].key)) == keyHash) {
+                deploymentMetadata[i].value = value;
+                return;
+            }
+        }
+        deploymentMetadata.push(DeploymentMetadata({ key: key, value: value }));
+    }
+
+    function _deploymentMetadataValue(string memory key) internal view returns (bool found, string memory value) {
+        bytes32 keyHash = keccak256(bytes(key));
+        for (uint256 i = deploymentMetadata.length; i > 0; i--) {
+            if (keccak256(bytes(deploymentMetadata[i - 1].key)) == keyHash) {
+                return (true, deploymentMetadata[i - 1].value);
+            }
+        }
+        return (false, "");
     }
 
     function _serializeExistingDeployments(string memory jsonObjectKey, string memory existingJson) internal {

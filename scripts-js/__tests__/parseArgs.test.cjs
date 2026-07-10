@@ -132,6 +132,79 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
     );
 });
 
+test("missingProductionEnv limits the missing-sequencer exception to Robinhood testnet", async () => {
+    const { missingProductionEnv } = await import("../parseArgs.js");
+    const productionEnv = {
+        YS_PRODUCTION_BOOTSTRAP_HOLDER:
+            "0x0000000000000000000000000000000000000001",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: `0x${"11".repeat(32)}`,
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON:
+            "0x0000000000000000000000000000000000000002",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD: "2",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH: `0x${"22".repeat(32)}`,
+        YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH: `0x${"33".repeat(32)}`,
+        YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: `0x${"44".repeat(32)}`,
+        YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH: `0x${"55".repeat(32)}`,
+        YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED: "true",
+    };
+    const productionDeploy = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+    };
+
+    assert.deepEqual(
+        missingProductionEnv(
+            { ...productionDeploy, network: "robinhoodTestnet" },
+            {
+                ...productionEnv,
+                YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS: "true",
+            },
+        ),
+        [],
+    );
+    assert.deepEqual(
+        missingProductionEnv(
+            { ...productionDeploy, network: "robinhood" },
+            productionEnv,
+        ),
+        ["YS_ROBINHOOD_SEQUENCER_FEED", "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE"],
+    );
+});
+
+test("missingProductionEnv requires nonblank mainnet sequencer provenance", async () => {
+    const { missingProductionEnv } = await import("../parseArgs.js");
+    const env = {
+        YS_PRODUCTION_BOOTSTRAP_HOLDER:
+            "0x0000000000000000000000000000000000000001",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: `0x${"11".repeat(32)}`,
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON:
+            "0x0000000000000000000000000000000000000002",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD: "2",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH: `0x${"22".repeat(32)}`,
+        YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH: `0x${"33".repeat(32)}`,
+        YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: `0x${"44".repeat(32)}`,
+        YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH: `0x${"55".repeat(32)}`,
+        YS_ROBINHOOD_SEQUENCER_FEED:
+            "0x0000000000000000000000000000000000000003",
+        YS_ROBINHOOD_SEQUENCER_FEED_SOURCE: "   ",
+    };
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "robinhood",
+    };
+
+    assert.deepEqual(missingProductionEnv(request, env), [
+        "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE",
+    ]);
+    assert.deepEqual(
+        missingProductionEnv(request, {
+            ...env,
+            YS_ROBINHOOD_SEQUENCER_FEED_SOURCE:
+                "https://docs.example/sequencer-feed",
+        }),
+        [],
+    );
+});
+
 test("forgeScriptArgsForNetwork applies the runner override to both Robinhood networks", async () => {
     const { forgeScriptArgsForNetwork } = await import("../parseArgs.js");
 
