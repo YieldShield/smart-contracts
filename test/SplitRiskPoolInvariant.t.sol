@@ -279,6 +279,16 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
+        // Expired share-epoch positions may still expose residual backing through
+        // getProtectorPositionAmount, but protectorWithdraw applies only to the
+        // active epoch. Availability is the public path-aware discriminator, so
+        // check it before attempting to start an unlock on an ineligible receipt.
+        uint256 available = pool.getAvailableForWithdrawal(tokenId);
+        if (available == 0) {
+            _skip(this.withdrawProtector.selector);
+            return;
+        }
+
         // Start or renew the unlock when no active request exists. Long random
         // time warps can expire an earlier request while the position remains live.
         if (
@@ -300,11 +310,6 @@ contract SplitRiskPoolHandler is Test {
             vm.warp(pos.unlockRequestTime);
         }
 
-        uint256 available = pool.getAvailableForWithdrawal(tokenId);
-        if (available == 0) {
-            _skip(this.withdrawProtector.selector);
-            return;
-        }
         amount = bound(amount, 1, available);
         if (amount > positionAmount) amount = positionAmount;
         if (_protectorWithdrawalLeavesDust(tokenId, amount, positionAmount)) {
