@@ -1,4 +1,9 @@
 import { spawnSync } from "child_process";
+import {
+    TRACKED_SIZE_BUDGETS,
+    classifySizeRows,
+    shouldFailSizeCheck,
+} from "./contract-size-policy.js";
 
 const RUNTIME_LIMIT = Number.parseInt(
     process.env.FOUNDRY_RUNTIME_SIZE_LIMIT || "24576",
@@ -13,18 +18,6 @@ const WARNING_MARGIN = Number.parseInt(
     10,
 );
 const REPORT_ONLY = process.env.CONTRACT_SIZE_REPORT_ONLY === "true";
-const ACCEPTED_SIZE_EXCEPTIONS = {
-    SplitRiskPool: {
-        runtimeLimit: 43_000,
-        initcodeLimit: INITCODE_LIMIT,
-        reason: "tracked monolith pending module split",
-    },
-    SplitRiskPoolFactory: {
-        runtimeLimit: 41_000,
-        initcodeLimit: INITCODE_LIMIT,
-        reason: "tracked monolith pending module split",
-    },
-};
 const SIZE_LIMIT_ERROR_MARKERS = [
     "some contracts exceed the runtime size limit",
     "some contracts exceed the initcode size limit",
@@ -93,28 +86,6 @@ function formatRow(row) {
     return `${row.contract}: runtime ${row.runtimeSize} B (margin ${row.runtimeMargin} B), initcode ${row.initcodeSize} B (margin ${row.initcodeMargin} B)`;
 }
 
-function getAcceptedSizeException(row) {
-    return ACCEPTED_SIZE_EXCEPTIONS[row.contract];
-}
-
-function isWithinAcceptedSizeException(row) {
-    const exception = getAcceptedSizeException(row);
-    if (!exception) return false;
-
-    return (
-        row.runtimeSize <= exception.runtimeLimit &&
-        row.initcodeSize <= exception.initcodeLimit
-    );
-}
-
-function exceedsEffectiveLimit(row) {
-    const exception = getAcceptedSizeException(row);
-    const runtimeLimit = exception?.runtimeLimit ?? RUNTIME_LIMIT;
-    const initcodeLimit = exception?.initcodeLimit ?? INITCODE_LIMIT;
-
-    return row.runtimeSize > runtimeLimit || row.initcodeSize > initcodeLimit;
-}
-
 function isSizeLimitOnlyFailure(result) {
     const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
     // forge prints "Compiler run successful!" with no warnings, but
@@ -170,14 +141,12 @@ if (deployableRows.length === 0) {
     process.exit(1);
 }
 
-const violations = deployableRows.filter((row) => exceedsEffectiveLimit(row));
-
-const acceptedExceptionRows = deployableRows.filter(
-    (row) =>
-        (row.runtimeSize > RUNTIME_LIMIT ||
-            row.initcodeSize > INITCODE_LIMIT) &&
-        isWithinAcceptedSizeException(row),
-);
+const classification = classifySizeRows(deployableRows, {
+    runtimeLimit: RUNTIME_LIMIT,
+    initcodeLimit: INITCODE_LIMIT,
+});
+const { standardViolations, trackedBudgetRows, trackedBudgetViolations } =
+    classification;
 
 const nearLimitRows = deployableRows
     .filter(
@@ -192,30 +161,43 @@ if (nearLimitRows.length > 0) {
     }
 }
 
-if (acceptedExceptionRows.length > 0) {
-    console.warn("Accepted contract size exceptions under tracked ceilings:");
-    for (const row of acceptedExceptionRows) {
-        const exception = getAcceptedSizeException(row);
+if (trackedBudgetRows.length > 0) {
+    console.warn("Tracked Robinhood contract-size budgets:");
+    for (const row of trackedBudgetRows) {
+        const budget = TRACKED_SIZE_BUDGETS[row.contract];
         console.warn(
-            `- ${formatRow(row)}; accepted ceiling runtime ${exception.runtimeLimit} B, initcode ${exception.initcodeLimit} B (${exception.reason})`,
+            `- ${formatRow(row)}; hard ceiling runtime ${budget.runtimeLimit} B, initcode ${budget.initcodeLimit} B (${budget.reason})`,
         );
     }
 }
 
-if (violations.length > 0) {
+if (standardViolations.length > 0) {
     const logViolation = REPORT_ONLY ? console.warn : console.error;
     const suffix = REPORT_ONLY ? " (report-only)" : "";
-    logViolation(`Contract size limit violations detected${suffix}:`);
-    for (const row of violations) {
+    logViolation(`Standard contract size limit violations detected${suffix}:`);
+    for (const row of standardViolations) {
         logViolation(`- ${formatRow(row)}`);
     }
-    if (REPORT_ONLY) {
-        console.log(
-            `Checked ${deployableRows.length} deployable contracts from a clean build. Size violations are reported above.`,
+}
+
+if (trackedBudgetViolations.length > 0) {
+    console.error("Tracked contract-size budget violations detected:");
+    for (const row of trackedBudgetViolations) {
+        const budget = TRACKED_SIZE_BUDGETS[row.contract];
+        console.error(
+            `- ${formatRow(row)}; hard ceiling runtime ${budget.runtimeLimit} B, initcode ${budget.initcodeLimit} B`,
         );
-    } else {
-        process.exit(1);
     }
+}
+
+if (shouldFailSizeCheck(classification, { reportOnly: REPORT_ONLY })) {
+    process.exit(1);
+}
+
+if (standardViolations.length > 0) {
+    console.log(
+        `Checked ${deployableRows.length} deployable contracts from a clean build. Standard-limit violations are report-only; tracked budgets passed.`,
+    );
 } else {
     console.log(
         `Checked ${deployableRows.length} deployable contracts from a clean build. No size limit violations detected.`,
