@@ -1014,6 +1014,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         if (probeReceived != nominalAmount) {
             revert ErrorsLib.IncompatibleShieldedTokenForCrossAssetWithdrawal(SHIELDED_TOKEN);
         }
+        // The probe is pool-owned and this path is entered only from a
+        // nonReentrant external function. A malicious token callback cannot
+        // re-enter the pool while the round-trip balances are being compared.
+        // slither-disable-next-line reentrancy-balance
         probe.returnToken(SHIELDED_TOKEN, probeReceived);
         uint256 afterBal = IERC20(SHIELDED_TOKEN).balanceOf(address(this));
         uint256 probeBalanceFinal = IERC20(SHIELDED_TOKEN).balanceOf(address(probe));
@@ -1915,6 +1919,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         protectorShareEpochs[tokenId] = protectorShareEpoch;
         rewardDebt[tokenId] = Math.mulDiv(rewardPerShareAccumulated, sharesMinted, ConstantsLib.REWARD_PRECISION);
 
+        // The deposit entrypoint is nonReentrant and all receipt/accounting
+        // state is committed before the ERC721 receiver callback.
+        // slither-disable-next-line reentrancy-balance
         uint256 mintedTokenId = IProtectorReceiptNFT(protectorReceiptNFT).mint(msg.sender, received);
         require(mintedTokenId == tokenId, "protector tokenId mismatch");
 
@@ -2001,6 +2008,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         tokenId = IShieldReceiptNFT(shieldReceiptNFT).nextTokenId();
         feeValueBaselineUsd[tokenId] = _getShieldedFeeBaselineValue(received);
 
+        // The deposit entrypoint is nonReentrant and all receipt/accounting
+        // state is committed before the ERC721 receiver callback.
+        // slither-disable-next-line reentrancy-balance
         uint256 mintedTokenId =
             IShieldReceiptNFT(shieldReceiptNFT).mint(msg.sender, received, valueAtDeposit, collateralAmount);
         require(mintedTokenId == tokenId, "shield tokenId mismatch");

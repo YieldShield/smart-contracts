@@ -16,6 +16,7 @@ import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract PartialWithdrawReceiver is IERC721Receiver {
     SplitRiskPool public immutable pool;
@@ -55,6 +56,70 @@ contract PartialWithdrawReceiver is IERC721Receiver {
         require(pool.totalShieldCollateralAmount() == expectedTotalShieldCollateralAmount, "stale collateral total");
         require(pool.feeValueBaselineUsd(tokenId) == expectedFeeBaselineUsd, "stale fee baseline");
         observedCallback = true;
+        return IERC721Receiver.onERC721Received.selector;
+    }
+}
+
+contract DepositMintCallbackReceiver is IERC721Receiver {
+    enum DepositKind {
+        None,
+        Backing,
+        Shielded
+    }
+
+    SplitRiskPool public immutable pool;
+    IERC20 public immutable backingToken;
+    IERC20 public immutable shieldedToken;
+
+    DepositKind private depositKind;
+    uint256 private expectedTotal;
+    bool public callbackAttempted;
+    bool public callbackStateConsistent;
+    bool public reentrySucceeded;
+    bytes4 public reentryRevertSelector;
+
+    constructor(SplitRiskPool pool_, IERC20 backingToken_, IERC20 shieldedToken_) {
+        pool = pool_;
+        backingToken = backingToken_;
+        shieldedToken = shieldedToken_;
+    }
+
+    function depositBacking(uint256 amount) external returns (uint256) {
+        depositKind = DepositKind.Backing;
+        expectedTotal = pool.totalProtectorTokens() + amount;
+        backingToken.approve(address(pool), amount);
+        return pool.depositBackingAsset(address(backingToken), amount, 0);
+    }
+
+    function depositShielded(uint256 amount) external returns (uint256) {
+        depositKind = DepositKind.Shielded;
+        expectedTotal = pool.totalShieldedTokens() + amount;
+        shieldedToken.approve(address(pool), amount);
+        return pool.depositShieldedAsset(address(shieldedToken), amount, 0);
+    }
+
+    function onERC721Received(address, address, uint256 tokenId, bytes calldata) external returns (bytes4) {
+        callbackAttempted = true;
+        bytes memory callData;
+
+        if (depositKind == DepositKind.Backing) {
+            callbackStateConsistent = pool.totalProtectorTokens() == expectedTotal && pool.protectorShares(tokenId) != 0;
+            callData = abi.encodeCall(SplitRiskPool.depositBackingAsset, (address(backingToken), 1, 0));
+        } else {
+            callbackStateConsistent =
+                pool.totalShieldedTokens() == expectedTotal && pool.feeValueBaselineUsd(tokenId) != 0;
+            callData = abi.encodeCall(SplitRiskPool.depositShieldedAsset, (address(shieldedToken), 1, 0));
+        }
+
+        bytes memory result;
+        (reentrySucceeded, result) = address(pool).call(callData);
+        if (!reentrySucceeded && result.length >= 4) {
+            bytes4 selector;
+            assembly ("memory-safe") {
+                selector := mload(add(result, 0x20))
+            }
+            reentryRevertSelector = selector;
+        }
         return IERC721Receiver.onERC721Received.selector;
     }
 }
@@ -476,6 +541,44 @@ contract SplitRiskPoolAccountingTest is Test, TestTimelockHelper {
         _assertTotalShieldedTokensConsistent();
         _assertTotalValueAtDepositConsistent();
         _assertTotalShieldCollateralAmountConsistent();
+    }
+
+    function test_depositBacking_RejectsSafeMintCallbackReentrancyAfterCommittingState() public {
+        DepositMintCallbackReceiver receiver =
+            new DepositMintCallbackReceiver(pool, IERC20(address(backingToken)), IERC20(address(shieldedToken)));
+        vm.prank(protector);
+        backingToken.transfer(address(receiver), 100e18);
+
+        uint256 tokenId = receiver.depositBacking(100e18);
+
+        assertTrue(receiver.callbackAttempted(), "protector mint callback not observed");
+        assertTrue(receiver.callbackStateConsistent(), "protector state was stale during callback");
+        assertFalse(receiver.reentrySucceeded(), "protector callback re-entered deposit");
+        assertEq(
+            receiver.reentryRevertSelector(),
+            ReentrancyGuard.ReentrancyGuardReentrantCall.selector,
+            "unexpected protector callback failure"
+        );
+        assertEq(protectorNFT.ownerOf(tokenId), address(receiver));
+    }
+
+    function test_depositShielded_RejectsSafeMintCallbackReentrancyAfterCommittingState() public {
+        DepositMintCallbackReceiver receiver =
+            new DepositMintCallbackReceiver(pool, IERC20(address(backingToken)), IERC20(address(shieldedToken)));
+        vm.prank(shielded1);
+        shieldedToken.transfer(address(receiver), 100e18);
+
+        uint256 tokenId = receiver.depositShielded(100e18);
+
+        assertTrue(receiver.callbackAttempted(), "shield mint callback not observed");
+        assertTrue(receiver.callbackStateConsistent(), "shield state was stale during callback");
+        assertFalse(receiver.reentrySucceeded(), "shield callback re-entered deposit");
+        assertEq(
+            receiver.reentryRevertSelector(),
+            ReentrancyGuard.ReentrancyGuardReentrantCall.selector,
+            "unexpected shield callback failure"
+        );
+        assertEq(shieldNFT.ownerOf(tokenId), address(receiver));
     }
 
     // ============ Test: Multiple Claims ============
