@@ -7,7 +7,7 @@ current protocol contracts. The core accounting, oracle fail-closed behavior,
 upgrade freeze, governance ownership, and storage-layout defenses remain materially
 stronger than in the earlier review snapshots.
 
-The review confirmed **six Medium findings**, **six Low findings**, and **four
+The review confirmed **six Medium findings**, **seven Low findings**, and **four
 Informational inconsistencies**. The most important open issue is an economic edge
 case specific to 24/5 Robinhood stock-token price discovery: a transferable token can
 be deposited during a still-fresh off-hours oracle window after public information has
@@ -27,7 +27,7 @@ Three verification defects were fixed as part of this review:
 The inaccurate model attribution in the two July 4 review documents was also
 corrected. Their July 4 dates are historically correct and were not renamed.
 
-### Finding count
+### Finding count at the reviewed baseline
 
 | Severity      | Open | Fixed in this delivery |
 | ------------- | ---: | ---------------------: |
@@ -344,12 +344,12 @@ The workflow uses tags such as `actions/checkout@v6` and `actions/setup-node@v6`
 than immutable commit SHAs. GitHub recommends pinning third-party actions to full SHAs
 for the strongest supply-chain boundary. Dependabot can still update those pins.
 
-### I-04 — The first July 4 report's stated unique count does not match its IDs
+### I-04 — Resolved: the first July 4 report's stated unique count did not match its IDs
 
-`DESIGN_REVIEW_2026_07_04.md` says 18 unique findings and gives a severity total of
-1 High + 6 Medium + 11 Low/Informational, but the visible IDs enumerate 17 items
-(1 + 6 + 10). This is a report-accounting inconsistency, not a missing current-code
-finding. The finding IDs, rather than the footer count, were used for this recheck.
+The report previously said 18 unique findings and listed 11 Informational items, but
+its visible IDs enumerate 17 items: 1 Medium, 6 Low, and 10 Informational. The table
+and footer now match those IDs. This was a report-accounting inconsistency, not a
+missing current-code finding; no finding IDs or historical commits were rewritten.
 
 ## Resolved during this review
 
