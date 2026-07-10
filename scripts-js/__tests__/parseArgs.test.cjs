@@ -132,7 +132,7 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
     );
 });
 
-test("forgeScriptArgsForNetwork disables code size checks only for relaxed Robinhood testnet", async () => {
+test("forgeScriptArgsForNetwork applies the runner override to both Robinhood networks", async () => {
     const { forgeScriptArgsForNetwork } = await import("../parseArgs.js");
 
     assert.deepEqual(forgeScriptArgsForNetwork("robinhoodTestnet", {}), [
@@ -142,8 +142,44 @@ test("forgeScriptArgsForNetwork disables code size checks only for relaxed Robin
         forgeScriptArgsForNetwork("robinhoodTestnet", {
             YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS: "true",
         }),
-        [],
+        ["--disable-code-size-limit"],
     );
-    assert.deepEqual(forgeScriptArgsForNetwork("robinhood", {}), []);
+    assert.deepEqual(forgeScriptArgsForNetwork("robinhood", {}), [
+        "--disable-code-size-limit",
+    ]);
     assert.deepEqual(forgeScriptArgsForNetwork("base", {}), []);
+});
+
+test("deployment target size preflight is scoped to Robinhood production deploys", async () => {
+    const { requiresDeploymentTargetSizeCheck } =
+        await import("../parseArgs.js");
+
+    assert.equal(
+        requiresDeploymentTargetSizeCheck({
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: "robinhoodTestnet",
+        }),
+        true,
+    );
+    assert.equal(
+        requiresDeploymentTargetSizeCheck({
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: "robinhood",
+        }),
+        true,
+    );
+    assert.equal(
+        requiresDeploymentTargetSizeCheck({
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: "base",
+        }),
+        false,
+    );
+    assert.equal(
+        requiresDeploymentTargetSizeCheck({
+            fileName: "RefreshRobinhoodTestnetDemoFeeds.s.sol",
+            network: "robinhoodTestnet",
+        }),
+        false,
+    );
 });

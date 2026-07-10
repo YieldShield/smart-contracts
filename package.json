@@ -32,6 +32,7 @@
     "postinstall": "shx cp -n .env.example .env",
     "lint": "make lint",
     "security": "make security",
+    "size-check:robinhood-deployment": "node scripts-js/checkDeploymentTargetSizes.js",
     "size-check": "node scripts-js/checkContractSizes.js",
     "test": "forge test --offline",
     "test:fork": "FORK_TESTS_REQUIRED=true forge test --match-path 'test/*Fork.t.sol'",

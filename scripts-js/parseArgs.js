@@ -19,6 +19,10 @@ const PRODUCTION_DEPLOY_SCRIPT = "DeployYieldShieldProduction.s.sol";
 const DEFAULT_NETWORK = "localhost";
 const ROBINHOOD_TESTNET_NETWORK = "robinhoodTestnet";
 const ROBINHOOD_NETWORKS = new Set(["robinhood", "robinhoodTestnet"]);
+const DEPLOYMENT_TARGET_SIZE_CHECK_SCRIPT = join(
+    __dirname,
+    "checkDeploymentTargetSizes.js",
+);
 const REQUIRED_PRODUCTION_ENV = [
     "YS_PRODUCTION_BOOTSTRAP_HOLDER",
     "YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH",
@@ -199,11 +203,31 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
 }
 
 function forgeScriptArgsForNetwork(network, env = process.env) {
-    if (usesRelaxedRobinhoodTestnetGuards(network, env)) {
+    if (ROBINHOOD_NETWORKS.has(network)) {
         return ["--disable-code-size-limit"];
     }
 
     return [];
+}
+
+function requiresDeploymentTargetSizeCheck({ fileName, network }) {
+    return (
+        fileName === PRODUCTION_DEPLOY_SCRIPT && ROBINHOOD_NETWORKS.has(network)
+    );
+}
+
+function runDeploymentTargetSizeCheck() {
+    const result = spawnSync(
+        process.execPath,
+        [DEPLOYMENT_TARGET_SIZE_CHECK_SCRIPT],
+        { stdio: "inherit" },
+    );
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    return result.status ?? 1;
 }
 
 function printProductionEnvError(missingEnv) {
@@ -404,6 +428,16 @@ The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost
         process.exit(1);
     }
 
+    if (requiresDeploymentTargetSizeCheck({ fileName, network })) {
+        console.log(
+            "\n📏 Validating every production deployment target against Robinhood code-size limits",
+        );
+        const sizeCheckStatus = runDeploymentTargetSizeCheck();
+        if (sizeCheckStatus !== 0) {
+            process.exit(sizeCheckStatus);
+        }
+    }
+
     const makeArgs = [
         `DEPLOY_SCRIPT=script/${fileName}`,
         `RPC_URL=${network}`,
@@ -435,6 +469,7 @@ export {
     networkEnvPrefix,
     parseCliArgs,
     resolveDeployScript,
+    requiresDeploymentTargetSizeCheck,
     usesRelaxedRobinhoodTestnetGuards,
     validateDeployScriptFileName,
     validateNetworkExists,
