@@ -9,8 +9,8 @@
 
 ## Model attribution
 
-- All orchestration, review, adversarial verification, and synthesis were performed by **Claude Fable 5** (`claude-fable-5`). The orchestrator and every reviewer subagent ran on that model; no fallback to Opus was required.
-- Web research (ERC-4626 share-price manipulation, Chainlink L2 sequencer feeds, Pyth pull-oracle pitfalls, Uniswap V3 TWAP manipulation, OZ Governor/Timelock misconfiguration, Robinhood Chain / Arbitrum Orbit specifics) was performed by Claude Fable 5 via web search; sources are listed at the end.
+- **Correction added July 10, 2026:** the original Fable 5 attribution was inaccurate. The session and its inherited reviewer subagents ran on **Claude Opus 4.8**. Published Git history is not rewritten.
+- Web research (ERC-4626 share-price manipulation, Chainlink L2 sequencer feeds, Pyth pull-oracle pitfalls, Uniswap V3 TWAP manipulation, OZ Governor/Timelock misconfiguration, Robinhood Chain / Arbitrum Orbit specifics) was performed in that Claude Opus 4.8 session; sources are listed at the end.
 - Every code-level finding below was re-verified against current `main` at the cited `file:line` before inclusion.
 
 ---
@@ -165,7 +165,7 @@ Prior Highs (upgrade authorizer reverting on the pool; unresettable transfer-int
 
 ## Web research: 2025–2026 attack patterns vs current design
 
-Research performed by Claude Fable 5; full sources below. Confidence is flagged where primary sources could not be confirmed.
+Research performed by Claude Opus 4.8; full sources below. Confidence is flagged where primary sources could not be confirmed.
 
 **ERC-4626 share-price manipulation (high relevance).** Donation/inflation attacks against vault share-price oracles remained a live 2025–2026 class (OpenZeppelin, Euler, Zellic write-ups; the Venus/ZKsync wUSDM incident). This codebase reads ERC-4626 NAV as an oracle leg; the deviation-band and conservative-rate design is the right shape, but see **L-2** for the under-examined *downward* direction.
 
@@ -204,7 +204,7 @@ Core balance identities across deposit / `shieldedWithdraw` / `partialWithdrawSh
 
 ---
 
-## Sources (external research, performed by Claude Fable 5)
+## Sources (external research, performed by Claude Opus 4.8)
 
 - https://www.openzeppelin.com/news/erc-4626-tokens-in-defi-exchange-rate-manipulation-risks
 - https://www.euler.finance/blog/exchange-rate-manipulation-in-erc4626-vaults
