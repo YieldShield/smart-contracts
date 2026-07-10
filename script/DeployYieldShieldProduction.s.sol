@@ -773,8 +773,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         return false;
     }
 
-    function _robinhoodTestnetDemoAssetsRequested() internal view returns (bool) {
-        return _envFlagOrDefault(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS, _isRobinhoodTestnet());
+    function _robinhoodTestnetDemoAssetsRequested() internal view virtual returns (bool) {
+        return _envFlagOrDefault(ENV_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS, false);
     }
 
     function _envFlag(string memory envName) internal view returns (bool) {

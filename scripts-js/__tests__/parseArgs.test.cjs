@@ -205,6 +205,88 @@ test("missingProductionEnv requires nonblank mainnet sequencer provenance", asyn
     );
 });
 
+test("Robinhood testnet deployment mode keeps demo seeding off by default", async () => {
+    const {
+        formatRobinhoodProductionDeploymentMode,
+        robinhoodProductionDeploymentMode,
+    } = await import("../parseArgs.js");
+    const mode = robinhoodProductionDeploymentMode(
+        {
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: "robinhoodTestnet",
+        },
+        {},
+    );
+
+    assert.deepEqual(mode, {
+        codeSizeOverride: true,
+        demoAssetsEnabled: false,
+        demoAssetsSelection: "default-off",
+        guardMode: "relaxed",
+        network: "robinhoodTestnet",
+        sequencerMode: "relaxed-testnet-exception",
+    });
+    assert.match(
+        formatRobinhoodProductionDeploymentMode(mode),
+        /Demo seeding: disabled \(default; explicit opt-in required\)/u,
+    );
+});
+
+test("Robinhood testnet deployment mode reports explicit demo and strict settings", async () => {
+    const { robinhoodProductionDeploymentMode } =
+        await import("../parseArgs.js");
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "robinhoodTestnet",
+    };
+
+    assert.deepEqual(
+        robinhoodProductionDeploymentMode(request, {
+            YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS: "true",
+            YS_ROBINHOOD_TESTNET_SEQUENCER_FEED:
+                "0x0000000000000000000000000000000000000001",
+            YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS: "true",
+        }),
+        {
+            codeSizeOverride: true,
+            demoAssetsEnabled: true,
+            demoAssetsSelection: "explicit-on",
+            guardMode: "strict",
+            network: "robinhoodTestnet",
+            sequencerMode: "configured-input",
+        },
+    );
+    assert.equal(
+        robinhoodProductionDeploymentMode(request, {
+            YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS: "false",
+        }).demoAssetsSelection,
+        "explicit-off",
+    );
+});
+
+test("Robinhood mainnet deployment mode exposes invalid demo opt-in", async () => {
+    const {
+        formatRobinhoodProductionDeploymentMode,
+        robinhoodProductionDeploymentMode,
+    } = await import("../parseArgs.js");
+    const mode = robinhoodProductionDeploymentMode(
+        {
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: "robinhood",
+        },
+        { YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS: "true" },
+    );
+
+    assert.equal(mode.demoAssetsEnabled, false);
+    assert.equal(mode.demoAssetsSelection, "invalid-mainnet-on");
+    assert.equal(mode.guardMode, "strict");
+    assert.equal(mode.sequencerMode, "required-input-missing");
+    assert.match(
+        formatRobinhoodProductionDeploymentMode(mode),
+        /Demo seeding: INVALID \(demo fixtures are testnet-only\)/u,
+    );
+});
+
 test("forgeScriptArgsForNetwork applies the runner override to both Robinhood networks", async () => {
     const { forgeScriptArgsForNetwork } = await import("../parseArgs.js");
 

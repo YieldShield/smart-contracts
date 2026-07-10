@@ -145,12 +145,16 @@ are skipped, and the sequencer uptime feed is optional. Set
 `YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS=true` to rehearse the stricter
 production checks on chain `46630`.
 
-The relaxed testnet path also passes `--disable-code-size-limit` to Foundry so
+Before preflight, the deploy helper prints the selected guard, sequencer, demo,
+and runner-size modes. Demo seeding is disabled by default in both relaxed and
+strict testnet modes and is never inferred from the network.
+
+The Robinhood testnet path also passes `--disable-code-size-limit` to Foundry so
 the current factory/pool monoliths do not make a successful testnet broadcast
 exit nonzero after execution.
 
-To create the demo assets, feeds, pools, and seed liquidity used for product-loop
-testing, add:
+To explicitly create the mock demo assets, feeds, pools, and seed liquidity used
+for product-loop testing, set:
 
 ```sh
 YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS=true ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet

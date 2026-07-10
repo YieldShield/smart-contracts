@@ -33,6 +33,8 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     address internal robinhoodSequencerFeedOverride;
     string internal robinhoodSequencerFeedSourceOverride;
     bool internal robinhoodMissingSequencerExceptionOverride;
+    bool internal demoAssetsRequestedOverrideSet;
+    bool internal demoAssetsRequestedOverride;
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         return this.onERC721Received.selector;
@@ -64,6 +66,15 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         robinhoodSequencerFeedOverride = feed;
         robinhoodSequencerFeedSourceOverride = source;
         robinhoodMissingSequencerExceptionOverride = allowMissing;
+    }
+
+    function setDemoAssetsRequestedOverrideHarness(bool requested) external {
+        demoAssetsRequestedOverrideSet = true;
+        demoAssetsRequestedOverride = requested;
+    }
+
+    function requireRobinhoodTestnetDemoAssetsAllowedHarness() external view {
+        _requireRobinhoodTestnetDemoAssetsAllowed();
     }
 
     function defaultRobinhoodTestnetStockTokensHarness()
@@ -449,6 +460,13 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
             return robinhoodMissingSequencerExceptionOverride;
         }
         return super._robinhoodMissingSequencerFeedExceptionRequested();
+    }
+
+    function _robinhoodTestnetDemoAssetsRequested() internal view override returns (bool) {
+        if (demoAssetsRequestedOverrideSet) {
+            return demoAssetsRequestedOverride;
+        }
+        return super._robinhoodTestnetDemoAssetsRequested();
     }
 
     function _readMasterCopy(address holder) internal view returns (address singleton) {
@@ -1408,10 +1426,10 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function test_ProductionProtocol_RobinhoodTestnetSeedCreatesPoolsAndFinalizes() public {
         vm.chainId(46_630);
-        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "true");
 
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setDemoAssetsRequestedOverrideHarness(true);
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
@@ -1484,6 +1502,34 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);
+    }
+
+    function test_RobinhoodTestnet_DemoAssetsDefaultOffAndRequireExplicitOptIn() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness defaultHarness = new ProductionDeployHarness();
+        assertFalse(defaultHarness.robinhoodTestnetDemoAssetsRequestedHarness());
+
+        ProductionDeployHarness explicitOnHarness = new ProductionDeployHarness();
+        explicitOnHarness.setDemoAssetsRequestedOverrideHarness(true);
+        assertTrue(explicitOnHarness.robinhoodTestnetDemoAssetsRequestedHarness());
+
+        ProductionDeployHarness explicitOffHarness = new ProductionDeployHarness();
+        explicitOffHarness.setDemoAssetsRequestedOverrideHarness(false);
+        assertFalse(explicitOffHarness.robinhoodTestnetDemoAssetsRequestedHarness());
+    }
+
+    function test_RobinhoodMainnet_RejectsExplicitDemoAssetOptIn() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        harness.setDemoAssetsRequestedOverrideHarness(true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodTestnetDemoAssetsUnsupported.selector,
+                ROBINHOOD_MAINNET_CHAIN_ID
+            )
+        );
+        harness.requireRobinhoodTestnetDemoAssetsAllowedHarness();
     }
 
     function test_ConfigurableTokenFaucet_UsesPerTokenDripAmountsAndCooldowns() public {

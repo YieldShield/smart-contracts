@@ -220,6 +220,91 @@ function forgeScriptArgsForNetwork(network, env = process.env) {
     return [];
 }
 
+function robinhoodProductionDeploymentMode(
+    { fileName, network },
+    env = process.env,
+) {
+    if (
+        fileName !== PRODUCTION_DEPLOY_SCRIPT ||
+        !ROBINHOOD_NETWORKS.has(network)
+    ) {
+        return null;
+    }
+
+    const isTestnet = network === ROBINHOOD_TESTNET_NETWORK;
+    const guardMode = usesRelaxedRobinhoodTestnetGuards(network, env)
+        ? "relaxed"
+        : "strict";
+    const demoSettingIsExplicit = hasNonBlankEnvValue(
+        env.YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS,
+    );
+    const demoAssetsEnabled =
+        isTestnet && envFlag(env.YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS);
+    let demoAssetsSelection;
+    if (!isTestnet) {
+        demoAssetsSelection = envFlag(env.YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS)
+            ? "invalid-mainnet-on"
+            : "not-supported";
+    } else if (demoAssetsEnabled) {
+        demoAssetsSelection = "explicit-on";
+    } else {
+        demoAssetsSelection = demoSettingIsExplicit
+            ? "explicit-off"
+            : "default-off";
+    }
+
+    const sequencerFeedEnvName = isTestnet
+        ? "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED"
+        : "YS_ROBINHOOD_SEQUENCER_FEED";
+    let sequencerMode;
+    if (hasNonBlankEnvValue(env[sequencerFeedEnvName])) {
+        sequencerMode = "configured-input";
+    } else if (isTestnet && guardMode === "relaxed") {
+        sequencerMode = "relaxed-testnet-exception";
+    } else if (
+        isTestnet &&
+        envFlag(env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED)
+    ) {
+        sequencerMode = "explicit-testnet-exception";
+    } else {
+        sequencerMode = "required-input-missing";
+    }
+
+    return {
+        codeSizeOverride: true,
+        demoAssetsEnabled,
+        demoAssetsSelection,
+        guardMode,
+        network,
+        sequencerMode,
+    };
+}
+
+function formatRobinhoodProductionDeploymentMode(mode) {
+    const demoLabels = {
+        "default-off": "disabled (default; explicit opt-in required)",
+        "explicit-off": "disabled (explicit)",
+        "explicit-on": "enabled (explicit testnet fixture mode)",
+        "invalid-mainnet-on": "INVALID (demo fixtures are testnet-only)",
+        "not-supported": "disabled (not supported on mainnet)",
+    };
+    const sequencerLabels = {
+        "configured-input": "feed input configured; simulation will probe it",
+        "explicit-testnet-exception": "explicit testnet-only exception",
+        "relaxed-testnet-exception": "relaxed testnet exception",
+        "required-input-missing": "required feed input missing",
+    };
+
+    return [
+        "\n🚦 Robinhood production deployment mode",
+        `   Network: ${mode.network}`,
+        `   Guardrails: ${mode.guardMode}`,
+        `   Demo seeding: ${demoLabels[mode.demoAssetsSelection]}`,
+        `   Sequencer guard: ${sequencerLabels[mode.sequencerMode]}`,
+        `   Runner code-size override: ${mode.codeSizeOverride ? "enabled" : "disabled"}`,
+    ].join("\n");
+}
+
 function requiresDeploymentTargetSizeCheck({ fileName, network }) {
     return (
         fileName === PRODUCTION_DEPLOY_SCRIPT && ROBINHOOD_NETWORKS.has(network)
@@ -348,6 +433,14 @@ async function main(rawArgs = process.argv.slice(2), env = process.env) {
         console.log(
             `\n🛡️  Using ${PRODUCTION_DEPLOY_SCRIPT} for public network '${network}'`,
         );
+    }
+
+    const deploymentMode = robinhoodProductionDeploymentMode(
+        { fileName, network },
+        env,
+    );
+    if (deploymentMode) {
+        console.log(formatRobinhoodProductionDeploymentMode(deploymentMode));
     }
 
     const { keystoreName: configuredKeystoreName, source: keystoreSource } =
@@ -481,6 +574,8 @@ export {
     parseCliArgs,
     resolveDeployScript,
     requiresDeploymentTargetSizeCheck,
+    formatRobinhoodProductionDeploymentMode,
+    robinhoodProductionDeploymentMode,
     usesRelaxedRobinhoodTestnetGuards,
     validateDeployScriptFileName,
     validateNetworkExists,
