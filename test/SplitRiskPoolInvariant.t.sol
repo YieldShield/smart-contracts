@@ -8,11 +8,13 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockOracle } from "../contracts/mocks/MockOracle.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ShieldReceiptNFT } from "../contracts/ShieldReceiptNFT.sol";
 import { ProtectorReceiptNFT } from "../contracts/ProtectorReceiptNFT.sol";
 import { IProtectorReceiptNFT } from "../contracts/interfaces/IProtectorReceiptNFT.sol";
 import { IShieldReceiptNFT } from "../contracts/interfaces/IShieldReceiptNFT.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
 import { FactoryProxyTestBase } from "./helpers/FactoryProxyTestBase.sol";
 
 /// @title Handler Contract for SplitRiskPool Invariant Tests
@@ -277,28 +279,35 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
-        // Start unlock if not started
-        if (pos.unlockRequestTime == 0) {
+        // Start or renew the unlock when no active request exists. Long random
+        // time warps can expire an earlier request while the position remains live.
+        if (
+            pos.unlockRequestTime == 0
+                || block.timestamp > uint256(pos.unlockRequestTime) + ConstantsLib.PROTECTOR_UNLOCK_WINDOW
+        ) {
             vm.prank(actor);
             try pool.startUnlockProcess(tokenId) { }
             catch {
                 _unexpectedRevert(this.withdrawProtector.selector);
                 return;
             }
-
-            // Warp to unlock time
-            vm.warp(block.timestamp + 29 days);
+            pos = protectorNFT.getPosition(tokenId);
         }
 
-        // Check if unlocked
+        // Warp to the exact executable time, keeping the request inside its
+        // seven-day execution window.
         if (pos.unlockRequestTime > block.timestamp) {
-            vm.warp(pos.unlockRequestTime + 1);
+            vm.warp(pos.unlockRequestTime);
         }
 
         uint256 available = pool.getAvailableForWithdrawal(tokenId);
-        amount = bound(amount, 1, available > 0 ? available : 1);
+        if (available == 0) {
+            _skip(this.withdrawProtector.selector);
+            return;
+        }
+        amount = bound(amount, 1, available);
         if (amount > positionAmount) amount = positionAmount;
-        if (amount < positionAmount && positionAmount - amount < backingMinDepositAmount) {
+        if (_protectorWithdrawalLeavesDust(tokenId, amount, positionAmount)) {
             if (available < positionAmount) {
                 _skip(this.withdrawProtector.selector);
                 return;
@@ -321,6 +330,27 @@ contract SplitRiskPoolHandler is Test {
         } catch {
             _unexpectedRevert(this.withdrawProtector.selector);
         }
+    }
+
+    function _protectorWithdrawalLeavesDust(uint256 tokenId, uint256 amount, uint256 positionAmount)
+        internal
+        view
+        returns (bool)
+    {
+        if (amount >= positionAmount) return false;
+
+        uint256 currentTotalShares = pool.totalProtectorShares();
+        uint256 currentTotalTokens = pool.totalProtectorTokens();
+        uint256 positionShares = pool.protectorShares(tokenId);
+        uint256 sharesToBurn = Math.mulDiv(amount, currentTotalShares, currentTotalTokens, Math.Rounding.Ceil);
+        if (sharesToBurn > positionShares) sharesToBurn = positionShares;
+
+        uint256 newShares = positionShares - sharesToBurn;
+        uint256 newTotalShares = currentTotalShares - sharesToBurn;
+        if (newShares == 0 || newTotalShares == 0) return false;
+
+        uint256 newAmount = Math.mulDiv(newShares, currentTotalTokens - amount, newTotalShares);
+        return newAmount != 0 && newAmount < backingMinDepositAmount;
     }
 
     /// @notice Withdraw as shielded
