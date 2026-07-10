@@ -186,7 +186,9 @@ jobs:
         run: npm ci
 
       - name: Generate coverage summary
-        run: forge coverage --ffi --ir-minimum --report summary
+        # Coverage instrumentation invalidates gas benchmarks. The normal Foundry
+        # job still runs this suite without instrumentation and enforces its 15M cap.
+        run: forge coverage --ffi --ir-minimum --report summary --no-match-path "test/FactoryLinearScanGas.t.sol"
 
   slither:
     name: Slither security analysis
