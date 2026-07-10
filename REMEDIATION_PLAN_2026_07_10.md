@@ -270,6 +270,66 @@ Commit: `Correct July 4 review finding totals`
 - Correct the July 10 executive-summary Low count and mark this accounting issue
   resolved without changing finding IDs or rewriting history.
 
+## Completion record
+
+All 17 findings in `MULTI_AGENT_REVIEW_2026_07_10.md` are implemented in separately
+revertible commits. Follow-up commits discovered by the final verification campaign
+remain separate rather than being folded into their parent fixes.
+
+| Finding | Fix commit(s)                                                                              |
+| ------- | ------------------------------------------------------------------------------------------ |
+| M-01    | `ff5e2a1`, with operational guardian enforcement and live manifest validation in `d243b04` |
+| M-02    | `1b171fc`                                                                                  |
+| M-03    | `56ef91d`, with live creation-receipt provenance enforcement in `efe4553`                  |
+| M-04    | `b1d7c60`                                                                                  |
+| M-05    | `6b2438f`                                                                                  |
+| M-06    | `2b4c878`                                                                                  |
+| L-01    | `57bd257`                                                                                  |
+| L-02    | `ba86627`                                                                                  |
+| L-03    | `05ed188`, with broad-seed precondition corrections in `c7c9971` and `342934d`             |
+| L-04    | `727c6e0`                                                                                  |
+| L-05    | `53b1072`, with atomic manifest metadata integration in `56ef91d`                          |
+| L-06    | `dd03a60`                                                                                  |
+| L-07    | `ddd21a8`, with deterministic calendar annotation `8e78ef8`                                |
+| I-01    | `e016d4e`                                                                                  |
+| I-02    | `8038928`                                                                                  |
+| I-03    | `93fb9ae`                                                                                  |
+| I-04    | `a48ab84`                                                                                  |
+
+Final local verification on July 10, 2026:
+
+- Solidity and JavaScript formatting passed; all 82 script tests passed, including
+  16 generation-safe manifest finalizer tests and 17 deployment-preflight tests.
+- `foundry.lock` matched all four submodule revisions.
+- The full offline Foundry build, storage-layout snapshots, and full offline test suite
+  passed.
+- The strict 32-run/64-depth fail-on-revert invariant suite passed. A full
+  256-run/500-depth campaign passed with the recorded regression seed, and the full
+  suite passed again with a fresh seed.
+- Production guardian tests proved that the configured nonzero guardian is distinct
+  from the timelock, survives finalization and recovery, can pause immediately, and
+  cannot unpause or change the calendar. Active manifest promotion independently
+  re-read the live guardian and rejected any metadata/wiring mismatch.
+- Deployment address provenance was bound to live successful CREATE receipts;
+  forged `additionalContracts` entries and CALL targets were rejected as creation
+  evidence.
+- Tracked size ceilings passed at 45,988/46,255 bytes for `SplitRiskPool` and
+  41,258/41,525 bytes for `SplitRiskPoolFactory`; all 16 production deployment
+  targets passed Robinhood's runtime/initcode limits.
+- Slither 0.11.5 analyzed 154 contracts with 74 detector families and the exact
+  no-exclusion `--fail-high` gate exited zero. Medium and Pyth-specific results remain
+  visible in reporting rather than being globally excluded.
+- Aderyn completed all 88 detectors and generated its report. Aderyn remains a
+  report-only CI signal; its broad heuristic findings were not converted into silent
+  global exclusions.
+
+Residual boundaries requiring external operator material remain unchanged: a real
+Pyth updater smoke test needs an API key; Robinhood mainnet stock protection needs a
+verified sequencer-feed address and provenance; refreshing the checked-in synthetic
+testnet feeds needs their owner keystore; and the pool/factory remain intentionally
+non-portable to standard EIP-170 networks while their Robinhood size budgets are
+enforced.
+
 ## Verification and delivery gates
 
 Each finding receives its focused tests plus formatting/build checks before its own
