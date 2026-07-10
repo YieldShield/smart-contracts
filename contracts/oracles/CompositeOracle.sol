@@ -542,8 +542,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Get current deviation for a token between primary and backup feeds
     /// @dev L-5: returns type(uint256).max if either feed fails to produce a
     ///      price, so off-chain monitoring can distinguish "no signal" from
-    ///      "real deviation" instead of seeing the call revert. The strict
-    ///      internal _calculateFeedDeviation is unchanged and still reverts.
+    ///      "real deviation" instead of seeing the call revert.
     /// @param token The token to check
     /// @return deviation Deviation in basis points, or type(uint256).max on
     ///         partial feed failure
@@ -554,24 +553,6 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(config.primaryFeed, token);
         (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedDisputeFeedPrice(config.backupFeed, token);
         if (!primarySuccess || !backupSuccess) return type(uint256).max;
-        return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
-    }
-
-    /// @dev Returns the absolute deviation in bps between two feeds for a token, after
-    ///      normalising both prices to `USD_DECIMALS`. The challenge mechanism compares
-    ///      raw integers, so feeds with different `decimals()` would otherwise produce
-    ///      astronomical false deviations and let any caller force-trip the dual-feed
-    ///      switch without any real price divergence.
-    function _calculateFeedDeviation(address primaryFeed, address backupFeed, address token)
-        internal
-        view
-        returns (uint256)
-    {
-        (bool primarySuccess, uint256 primaryPrice) = _tryGetNormalizedFeedPrice(primaryFeed, token);
-        (bool backupSuccess, uint256 backupPrice) = _tryGetNormalizedFeedPrice(backupFeed, token);
-        if (!primarySuccess || !backupSuccess) {
-            revert InvalidPrice(token, 0);
-        }
         return OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
     }
 

@@ -754,14 +754,6 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return Math.mulDiv(amount, _getProtectedBackingPrice(), backingTokenScale);
     }
 
-    /// @dev Best-effort wrapper for protected backing-token valuation.
-    function _tryGetProtectedBackingValue(uint256 amount) internal view returns (bool success, uint256 value) {
-        uint256 price;
-        (success, price) = _tryGetProtectedBackingPrice();
-        if (!success) return (false, 0);
-        return (true, Math.mulDiv(amount, price, backingTokenScale));
-    }
-
     /**
      * @notice Get the current utilization ratio based on USD values
      * @dev Calculates utilization using USD-BASED accounting via price oracle.
