@@ -46,4 +46,16 @@ test("Slither 0.11.5 is pinned in both jobs without detector-family exclusions",
         3,
         "only the three callback-tested balance paths may be suppressed",
     );
+
+    const marketGate = readFileSync(
+        join(root, "contracts", "oracles", "USMarketSessionGate.sol"),
+        "utf8",
+    );
+    const calendarSuppressions =
+        marketGate.match(/slither-disable-next-line weak-prng/gu) || [];
+    assert.equal(
+        calendarSuppressions.length,
+        1,
+        "only the deterministic UTC modulo may suppress weak-prng",
+    );
 });

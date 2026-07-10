@@ -114,6 +114,9 @@ contract USMarketSessionGate is Ownable {
         if (emergencyPaused) return false;
 
         uint64 epochDay = uint64(block.timestamp / SECONDS_PER_DAY);
+        // This modulo derives a deterministic UTC clock offset for calendar
+        // lookup; it is never used as randomness or as an unpredictable value.
+        // slither-disable-next-line weak-prng
         uint32 secondOfDay = uint32(block.timestamp % SECONDS_PER_DAY);
         DailySession memory session = _dailySessions[epochDay];
         return
