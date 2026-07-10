@@ -31,6 +31,7 @@
     "format": "make format",
     "postinstall": "shx cp -n .env.example .env",
     "lint": "make lint",
+    "robinhood:mock-feeds": "node scripts-js/robinhood-mock-feed-operator.cjs",
     "security": "make security",
     "size-check:robinhood-deployment": "node scripts-js/checkDeploymentTargetSizes.js",
     "size-check": "node scripts-js/checkContractSizes.js",
