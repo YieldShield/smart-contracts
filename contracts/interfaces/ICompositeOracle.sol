@@ -180,13 +180,17 @@ interface ICompositeOracle is IPriceOracle {
 
     // ============ Graceful Fallback ============
 
-    /// @notice Get value with guarded fallback for configured tokens
-    /// @dev Tries the active feed first. Uses the inactive feed only when the active feed
-    ///      has a transient failure and no dual-feed dispute is active or unresolved.
-    ///      Returns (0, false) when all allowed sources fail or the active feed is disputed.
+    /// @notice Get a token value using the configured fail-closed feed policy
+    /// @dev This is not an availability bypass. Before serving either feed, dual-feed tokens
+    ///      reject pending challenges and unresolved protected-price deviations with `(0, false)`.
+    ///      The currently active feed is tried first. The inactive feed is eligible only as a
+    ///      guarded fallback while the primary remains active and undisputed; once the backup is
+    ///      active, a failure never silently re-promotes the disabled primary. A healthy protected
+    ///      primary remains usable during a transient failure of its comparison backup.
     /// @param token The token address
     /// @param amount The amount of tokens
-    /// @return value USD value (8 decimals), 0 if all sources fail
-    /// @return isReliable True if active/primary source succeeded, false if using backup or failed
+    /// @return value USD value (8 decimals), or 0 when no policy-permitted source can serve
+    /// @return isReliable True only when the currently active feed served the value; false when
+    ///         an inactive fallback served a degraded value or when no value was returned
     function getValueWithFallback(address token, uint256 amount) external view returns (uint256 value, bool isReliable);
 }

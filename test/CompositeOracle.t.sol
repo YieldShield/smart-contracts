@@ -1591,6 +1591,10 @@ contract CompositeOracleDualFeedTest is Test {
 
         uint256 strictPrice = compositeOracle.getPriceWithStrictCircuitBreaker(address(token));
         assertEq(strictPrice, PRIMARY_PRICE, "strict-CB getter must still serve while backup is transiently down");
+
+        (uint256 fallbackValue, bool isReliable) = compositeOracle.getValueWithFallback(address(token), 1e18);
+        assertEq(fallbackValue, PRIMARY_PRICE, "fallback getter must keep serving the healthy active primary");
+        assertTrue(isReliable, "active-primary value remains reliable during a comparison-backup outage");
     }
 
     function test_MutableBackupLosingCircuitBreakerDoesNotDisputeProtectedPrimary() public {

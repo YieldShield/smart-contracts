@@ -1244,15 +1244,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     }
 
     /// @inheritdoc ICompositeOracle
-    /// @dev Fails closed when the active feed is disputed:
+    /// @dev Implements the interface's guarded policy; it does not bypass dispute protection.
+    ///      Fails closed when the active feed is disputed:
     ///      - If a challenge is pending, the active primary is explicitly under dispute.
     ///      - If the backup/comparison feed is unavailable, the active primary cannot be verified.
     ///      - If `isBackupActive == true`, the primary feed is the known-bad inactive feed;
     ///        do NOT silently fall back to it (H-3).
     ///      - If `_hasUnresolvedDualFeedDeviation == true`, the dual-feed challenge mechanism
     ///        has already flagged the active feed as unsafe; skip the inactive feed too.
-    ///      Otherwise the inactive feed is the legitimate backup of an undisputed primary
-    ///      and may safely serve as a fallback when the active feed has a transient failure.
+    ///      Otherwise the inactive feed is the legitimate backup of an undisputed, still-active
+    ///      primary and may serve a degraded fallback value if the later active-feed read fails.
+    ///      `isReliable` reports whether the active feed served the returned value, not whether a
+    ///      non-zero fallback value exists. A healthy active primary remains reliable when only
+    ///      its comparison backup has a transient failure.
     function getValueWithFallback(address token, uint256 amount)
         external
         view
