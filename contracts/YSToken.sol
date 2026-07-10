@@ -7,13 +7,17 @@ import { ERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/ERC2
 import { ERC20Votes } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import { Nonces } from "@openzeppelin/contracts/utils/Nonces.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { GovernanceConstantsLib } from "./libraries/GovernanceConstantsLib.sol";
 
 /// @title YSToken
 /// @author David Hawig
 /// @notice YieldShield governance token with voting capabilities
 contract YSToken is ERC20, ERC20Permit, ERC20Votes {
     uint256 public constant INITIAL_SUPPLY = 1_000_000 * 10 ** 18; // 1 million YS tokens
-    uint256 public constant MIN_GOVERNANCE_SUPPLY = 10_000 * 10 ** 18; // Matches YSGovernor minimum quorum
+    /// @notice Irreducible supply floor matching YSGovernor's maximum proposal threshold
+    /// @dev Burns must leave supply strictly above this floor so an account can still
+    ///      hold enough votes to meet every proposal threshold governance may configure.
+    uint256 public constant MIN_GOVERNANCE_SUPPLY = GovernanceConstantsLib.MIN_GOVERNANCE_SUPPLY;
 
     error InvalidInitialHolder(address holder);
     error BurnWouldReduceSupplyBelowGovernanceQuorum(uint256 supplyAfterBurn, uint256 minimumSupply);

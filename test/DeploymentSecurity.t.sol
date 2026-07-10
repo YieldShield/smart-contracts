@@ -1073,7 +1073,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
     }
 
-    function test_ProductionBootstrap_BurnCannotReduceBelowQuorumVotingPower() public {
+    function test_ProductionBootstrap_BurnCannotBreakProposalReachability() public {
         (YSToken ysToken,, YSGovernor governor) = _deployGovernance();
         uint256 belowQuorumSupply = ysToken.MIN_GOVERNANCE_SUPPLY() - 1;
         uint256 burnAmount = ysToken.INITIAL_SUPPLY() - belowQuorumSupply;
@@ -1088,9 +1088,11 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
         ysToken.burn(burnAmount);
 
-        // M-15: proposalThreshold is now equal to MIN_GOVERNANCE_SUPPLY (both 10k).
-        // After M-15, the burn floor and propose threshold coincide — assertLe
-        // captures the invariant that you can still propose at the floor.
+        assertEq(
+            governor.MAX_GOVERNOR_PROPOSAL_THRESHOLD(),
+            ysToken.MIN_GOVERNANCE_SUPPLY(),
+            "burn floor must match the maximum configurable proposal threshold"
+        );
         assertLe(governor.proposalThreshold(), ysToken.MIN_GOVERNANCE_SUPPLY());
     }
 

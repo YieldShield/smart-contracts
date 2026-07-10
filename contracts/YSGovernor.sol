@@ -13,6 +13,7 @@ import { GovernorTimelockControl } from "@openzeppelin/contracts/governance/exte
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { YSTimelockController } from "./governance/YSTimelockController.sol";
+import { GovernanceConstantsLib } from "./libraries/GovernanceConstantsLib.sol";
 
 /// @title YSGovernor
 /// @author David Hawig
@@ -33,7 +34,7 @@ contract YSGovernor is
     uint32 public constant MIN_GOVERNOR_VOTING_PERIOD = 5 days;
     uint32 public constant MAX_GOVERNOR_VOTING_PERIOD = 30 days;
     uint256 public constant MIN_GOVERNOR_PROPOSAL_THRESHOLD = 10_000 * 10 ** 18;
-    uint256 public constant MAX_GOVERNOR_PROPOSAL_THRESHOLD = 100_000 * 10 ** 18;
+    uint256 public constant MAX_GOVERNOR_PROPOSAL_THRESHOLD = GovernanceConstantsLib.MAX_PROPOSAL_THRESHOLD;
     uint256 public constant MIN_GOVERNOR_TIMELOCK_DELAY = 2 days;
     uint256 public constant MAX_GOVERNOR_TIMELOCK_DELAY = 30 days;
     uint256 public constant MIN_GOVERNOR_QUORUM_NUMERATOR = 2;

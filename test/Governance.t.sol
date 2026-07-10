@@ -404,6 +404,49 @@ contract YSGovernorTest is Test, FactoryProxyTestBase {
         governor.execute(targets, values, calldatas, descriptionHash);
     }
 
+    function test_MaxProposalThresholdRemainsReachableAfterBurns() public {
+        uint256 maximumThreshold = governor.MAX_GOVERNOR_PROPOSAL_THRESHOLD();
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
+            abi.encodeWithSelector(YSGovernor.setProposalThreshold.selector, maximumThreshold),
+            "Set maximum proposal threshold"
+        );
+        governor.execute(targets, values, calldatas, descriptionHash);
+        assertEq(governor.proposalThreshold(), maximumThreshold);
+        assertEq(ysToken.MIN_GOVERNANCE_SUPPLY(), maximumThreshold);
+
+        vm.prank(voter1);
+        ysToken.burn(400_000e18 - 1);
+        vm.prank(voter2);
+        ysToken.burn(400_000e18);
+        vm.prank(nonVoter);
+        ysToken.burn(100e18);
+        ysToken.burn(99_900e18);
+
+        assertEq(ysToken.totalSupply(), maximumThreshold + 1);
+        assertEq(ysToken.balanceOf(voter1), maximumThreshold + 1);
+
+        vm.prank(voter1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                YSToken.BurnWouldReduceSupplyBelowGovernanceQuorum.selector, maximumThreshold, maximumThreshold
+            )
+        );
+        ysToken.burn(1);
+
+        vm.warp(block.timestamp + 1);
+        address[] memory proposalTargets = new address[](1);
+        proposalTargets[0] = address(timelock);
+        uint256[] memory proposalValues = new uint256[](1);
+        bytes[] memory proposalCalldatas = new bytes[](1);
+        proposalCalldatas[0] = "";
+
+        vm.prank(voter1);
+        uint256 proposalId = governor.propose(
+            proposalTargets, proposalValues, proposalCalldatas, "Proposal remains numerically reachable"
+        );
+        assertTrue(proposalId != 0);
+    }
+
     function test_GovernorSettingsAllowQuorumNumeratorBounds() public {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) = _queueGovernorCall(
             abi.encodeWithSelector(YSGovernor.updateQuorumNumerator.selector, 2), "Allow minimum quorum numerator"
