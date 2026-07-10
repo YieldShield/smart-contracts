@@ -286,7 +286,7 @@ remain separate rather than being folded into their parent fixes.
 | M-06    | `2b4c878`                                                                                  |
 | L-01    | `57bd257`                                                                                  |
 | L-02    | `ba86627`                                                                                  |
-| L-03    | `05ed188`, with broad-seed precondition corrections in `c7c9971` and `342934d`             |
+| L-03    | `05ed188`, with broad-seed precondition corrections in `c7c9971`, `342934d`, and `fc77e5e` |
 | L-04    | `727c6e0`                                                                                  |
 | L-05    | `53b1072`, with atomic manifest metadata integration in `56ef91d`                          |
 | L-06    | `dd03a60`                                                                                  |
@@ -305,7 +305,9 @@ Final local verification on July 10, 2026:
   passed.
 - The strict 32-run/64-depth fail-on-revert invariant suite passed. A full
   256-run/500-depth campaign passed with the recorded regression seed, and the full
-  suite passed again with a fresh seed.
+  suite passed again with fresh seeds. The first pushed CI campaign exposed one more
+  modeled-validity gap after repeated oracle price drops; `fc77e5e` added an explicit
+  zero-USD deposit regression and the fresh broad campaign passed afterward.
 - Production guardian tests proved that the configured nonzero guardian is distinct
   from the timelock, survives finalization and recovery, can pause immediately, and
   cannot unpause or change the calendar. Active manifest promotion independently
