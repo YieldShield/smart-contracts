@@ -115,6 +115,9 @@ const ERC4626_INTERFACE = new ethers.Interface([
 const OWNABLE_INTERFACE = new ethers.Interface([
     "function owner() view returns (address)",
 ]);
+const MARKET_SESSION_GATE_INTERFACE = new ethers.Interface([
+    "function emergencyGuardian() view returns (address)",
+]);
 const TIMELOCK_INTERFACE = new ethers.Interface([
     "function DEFAULT_ADMIN_ROLE() view returns (bytes32)",
     "function PROPOSER_ROLE() view returns (bytes32)",
@@ -411,6 +414,15 @@ async function readLiveProtocolState(
             "owner",
         );
     }
+    let marketSessionGuardian = null;
+    if (oracleMode === "chainlink") {
+        [marketSessionGuardian] = await contractCall(
+            provider,
+            MARKET_SESSION_GATE_INTERFACE,
+            byName.get("USMarketSessionGate"),
+            "emergencyGuardian",
+        );
+    }
     const timelockRoles = {};
     for (const [key, functionName] of [
         ["defaultAdmin", "DEFAULT_ADMIN_ROLE"],
@@ -466,6 +478,7 @@ async function readLiveProtocolState(
             authorizedCallerCount: Number(authorizedCallerCount),
         },
         erc4626: { owner: erc4626Owner, underlyingPriceOracle },
+        marketSessionGuardian,
         oracleOwners,
         timelockRoles,
     };
@@ -485,7 +498,10 @@ function sortedAddresses(values) {
     return values.map((value) => ethers.getAddress(value)).sort();
 }
 
-function validateProtocolWiring(state, { byName, demoEnabled, oracleMode }) {
+function validateProtocolWiring(
+    state,
+    { byName, candidate, demoEnabled, oracleMode },
+) {
     const timelock = byName.get("TimelockController");
     const factory = byName.get("SplitRiskPoolFactory");
     requireAddress(
@@ -582,6 +598,11 @@ function validateProtocolWiring(state, { byName, demoEnabled, oracleMode }) {
             state.oracleOwners.USMarketSessionGate,
             timelock,
             "US market gate owner",
+        );
+        requireAddress(
+            state.marketSessionGuardian,
+            candidate.marketSessionGuardian,
+            "US market gate emergency guardian",
         );
     }
 
@@ -904,6 +925,19 @@ async function validateAndBuildManifest({
 
     const { byName, demoEnabled, oracleMode } =
         validateExactInventory(candidate);
+    if (oracleMode === "chainlink") {
+        if (
+            !ethers.isAddress(candidate.marketSessionGuardian) ||
+            ethers.getAddress(candidate.marketSessionGuardian) ===
+                ethers.ZeroAddress ||
+            ethers.getAddress(candidate.marketSessionGuardian) ===
+                ethers.getAddress(byName.get("TimelockController"))
+        ) {
+            throw new Error(
+                "Deployment candidate has an invalid marketSessionGuardian.",
+            );
+        }
+    }
     const { createdAddresses, transactionHashes } = await validateBroadcast({
         broadcast,
         candidate,
@@ -966,7 +1000,12 @@ async function validateAndBuildManifest({
         demoEnabled,
         oracleMode,
     });
-    validateProtocolWiring(protocolState, { byName, demoEnabled, oracleMode });
+    validateProtocolWiring(protocolState, {
+        byName,
+        candidate,
+        demoEnabled,
+        oracleMode,
+    });
 
     const manifest = {
         ...candidate,

@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { YSToken } from "../contracts/YSToken.sol";
 import { YSGovernor } from "../contracts/YSGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { YSTimelockController } from "../contracts/governance/YSTimelockController.sol";
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { PythOracle } from "../contracts/oracles/PythOracle.sol";
@@ -35,6 +36,8 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bool internal robinhoodMissingSequencerExceptionOverride;
     bool internal demoAssetsRequestedOverrideSet;
     bool internal demoAssetsRequestedOverride;
+    bool internal marketSessionGuardianOverrideSet;
+    address internal marketSessionGuardianOverride;
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         return this.onERC721Received.selector;
@@ -59,6 +62,27 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 
     function deploymentMetadataValueHarness(string memory key) external view returns (bool found, string memory value) {
         return _deploymentMetadataValue(key);
+    }
+
+    function setMarketSessionGuardianOverrideHarness(address guardian) external {
+        marketSessionGuardianOverrideSet = true;
+        marketSessionGuardianOverride = guardian;
+    }
+
+    function readProductionMarketSessionGuardianHarness(address timelockAddr) external view returns (address) {
+        return _readProductionMarketSessionGuardian(timelockAddr);
+    }
+
+    function snapshotProductionMarketSessionGuardianHarness(address timelockAddr) external {
+        _snapshotProductionMarketSessionGuardian(_readProductionMarketSessionGuardian(timelockAddr));
+    }
+
+    function deployProductionMarketSessionGateHarness(address initialOwner, address timelockAddr)
+        external
+        returns (USMarketSessionGate)
+    {
+        deployer = initialOwner;
+        return _deployProductionMarketSessionGate(timelockAddr);
     }
 
     function setRobinhoodSequencerConfigHarness(address feed, string memory source, bool allowMissing) external {
@@ -383,6 +407,21 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         }
 
         return super._readRequiredProductionCodehash(name, envName);
+    }
+
+    function _readProductionMarketSessionGuardian(address timelockAddr)
+        internal
+        view
+        override
+        returns (address guardian)
+    {
+        if (!marketSessionGuardianOverrideSet) {
+            return super._readProductionMarketSessionGuardian(timelockAddr);
+        }
+        guardian = marketSessionGuardianOverride;
+        if (guardian == address(0) || guardian == timelockAddr) {
+            revert ProductionMarketSessionGuardianInvalid(guardian, timelockAddr);
+        }
     }
 
     function requireProductionPythOracleCodehashHarness(address pythOracleAddr, string memory envName) external view {
@@ -1372,12 +1411,55 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         );
     }
 
-    function test_ProductionProtocol_FinalizerSupportsChainlinkNativeBootstrap() public {
+    function test_ProductionMarketSessionGuardian_FreshDeploymentUsesConfigAndMetadata() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address timelock = address(0xBEEF);
+        address guardian = address(0xA11CE);
+        harness.setMarketSessionGuardianOverrideHarness(guardian);
+
+        USMarketSessionGate marketSessionGate =
+            harness.deployProductionMarketSessionGateHarness(address(harness), timelock);
+
+        assertEq(marketSessionGate.owner(), address(harness));
+        assertEq(marketSessionGate.emergencyGuardian(), guardian);
+        (bool found, string memory guardianMetadata) = harness.deploymentMetadataValueHarness("marketSessionGuardian");
+        assertTrue(found);
+        assertEq(guardianMetadata, vm.toString(guardian));
+    }
+
+    function test_ProductionMarketSessionGuardian_RejectsZeroAndTimelock() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address timelock = address(0xBEEF);
+
+        harness.setMarketSessionGuardianOverrideHarness(address(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionMarketSessionGuardianInvalid.selector, address(0), timelock
+            )
+        );
+        harness.readProductionMarketSessionGuardianHarness(timelock);
+
+        harness.setMarketSessionGuardianOverrideHarness(timelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionMarketSessionGuardianInvalid.selector, timelock, timelock
+            )
+        );
+        harness.readProductionMarketSessionGuardianHarness(timelock);
+    }
+
+    function test_ProductionProtocol_FinalizerRecoversPauseOnlyChainlinkGuardian() public {
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
+        address guardian = address(0xA11CE);
+        harness.setMarketSessionGuardianOverrideHarness(guardian);
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        // Exercise recovery from the former deployment wiring, where the timelock
+        // was also the guardian. Finalization replaces it before transferring ownership.
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
+        vm.prank(address(harness));
+        marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1416,12 +1498,26 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.owner(), address(timelock));
+        assertEq(marketSessionGate.emergencyGuardian(), guardian);
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.compositeOracle(), address(compositeOracle));
         assertEq(factory.defaultProtocolFeeRecipient(), address(timelock));
         assertEq(factory.pythOracle(), address(0));
         assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
         assertEq(address(erc4626OracleFeed.underlyingPriceOracle()), address(chainlinkOracleFeed));
+
+        assertTrue(marketSessionGate.isMarketOpen());
+        vm.prank(guardian);
+        marketSessionGate.emergencyPause();
+        assertFalse(marketSessionGate.isMarketOpen());
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, guardian));
+        marketSessionGate.clearEmergencyPause();
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, guardian));
+        marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
     }
 
     function test_ProductionProtocol_RobinhoodTestnetSeedCreatesPoolsAndFinalizes() public {
@@ -1430,9 +1526,11 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
         harness.setDemoAssetsRequestedOverrideHarness(true);
+        address guardian = address(0xA11CE);
+        harness.setMarketSessionGuardianOverrideHarness(guardian);
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
-        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
+        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), guardian);
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1499,6 +1597,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.owner(), address(timelock));
+        assertEq(marketSessionGate.emergencyGuardian(), guardian);
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);

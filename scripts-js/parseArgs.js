@@ -33,7 +33,10 @@ const REQUIRED_PRODUCTION_ENV = [
     "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
     "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
 ];
-const REQUIRED_ROBINHOOD_ENV = ["YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH"];
+const REQUIRED_ROBINHOOD_ENV = [
+    "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH",
+    "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
+];
 const REQUIRED_PYTH_ENV = ["YS_PRODUCTION_PYTH_ORACLE_CODEHASH"];
 const deployScriptFileNamePattern = /^[A-Za-z0-9_.-]+\.s\.sol$/u;
 
@@ -177,7 +180,9 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
     }
 
     if (usesRelaxedRobinhoodTestnetGuards(network, env)) {
-        return [];
+        return hasNonBlankEnvValue(env.YS_PRODUCTION_MARKET_SESSION_GUARDIAN)
+            ? []
+            : ["YS_PRODUCTION_MARKET_SESSION_GUARDIAN"];
     }
 
     const missing = [...REQUIRED_PRODUCTION_ENV];

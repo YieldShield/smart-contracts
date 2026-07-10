@@ -136,7 +136,7 @@ make deploy DEPLOY_SCRIPT=script/DeployYieldShield.s.sol RPC_URL=localhost
 Deploy to Robinhood testnet from the monorepo root:
 
 ```sh
-ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
+YS_PRODUCTION_MARKET_SESSION_GUARDIAN=<pause-only-guardian> ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
 ```
 
 Robinhood testnet defaults to relaxed guardrails: if `YS_PRODUCTION_BOOTSTRAP_HOLDER`
@@ -144,6 +144,12 @@ is unset, the deployer receives the initial YS supply, production Safe/codehash 
 are skipped, and the sequencer uptime feed is optional. Set
 `YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS=true` to rehearse the stricter
 production checks on chain `46630`.
+
+Every Robinhood deployment also requires
+`YS_PRODUCTION_MARKET_SESSION_GUARDIAN`. Use a nonzero operational signer or
+multisig distinct from the governance timelock. The deployed gate records this
+address in candidate metadata and grants it only the ability to close sessions;
+reopening or changing the calendar remains timelock-controlled.
 
 Before preflight, the deploy helper prints the selected guard, sequencer, demo,
 and runner-size modes. Demo seeding is disabled by default in both relaxed and
@@ -157,7 +163,7 @@ To explicitly create the mock demo assets, feeds, pools, and seed liquidity used
 for product-loop testing, set:
 
 ```sh
-YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS=true ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
+YS_PRODUCTION_MARKET_SESSION_GUARDIAN=<pause-only-guardian> YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS=true ROBINHOOD_TESTNET_KEYSTORE_ACCOUNT=test yarn deploy --network robinhoodTestnet
 ```
 
 Or pass the keystore explicitly:

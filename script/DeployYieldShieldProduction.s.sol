@@ -37,6 +37,11 @@ interface IProductionERC4626OracleFeed is IProductionOwnable {
     function underlyingPriceOracle() external view returns (address);
 }
 
+interface IProductionMarketSessionGate is IProductionOwnable {
+    function emergencyGuardian() external view returns (address);
+    function setEmergencyGuardian(address newGuardian) external;
+}
+
 interface IProductionMintableERC20 {
     function mint(address to, uint256 amount) external;
 }
@@ -159,6 +164,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
     string private constant ENV_CHAINLINK_ORACLE_CODEHASH = "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH";
     string private constant ENV_CHAINLINK_MAX_PRICE_AGE = "YS_PRODUCTION_CHAINLINK_MAX_PRICE_AGE";
+    string private constant ENV_MARKET_SESSION_GUARDIAN = "YS_PRODUCTION_MARKET_SESSION_GUARDIAN";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE = "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
@@ -184,10 +190,12 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_FACTORY_GOVERNANCE_TIMELOCK = "factory.governanceTimelock";
     bytes32 private constant FIELD_FACTORY_IMPLEMENTATION = "factory.proxyImplementation";
     bytes32 private constant FIELD_POOL_IMPLEMENTATION = "factory.poolImplementation";
+    bytes32 private constant FIELD_MARKET_SESSION_GUARDIAN = "marketSession.guardian";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED = "robinhoodSequencerUptimeFeed";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE = "robinhoodSequencerUptimeFeedSource";
     string private constant METADATA_ROBINHOOD_DEMO_ASSETS_ENABLED = "robinhoodDemoAssetsEnabled";
     string private constant METADATA_PRODUCTION_GUARD_MODE = "productionGuardMode";
+    string private constant METADATA_MARKET_SESSION_GUARDIAN = "marketSessionGuardian";
 
     error LocalChainRequiresLocalDeployment(uint256 chainId);
     error ProductionTimelockTooShort(uint256 providedDelay, uint256 minimumDelay);
@@ -229,6 +237,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionRobinhoodSequencerFeedSourceRequired(uint256 chainId, string envName);
     error ProductionRobinhoodSequencerFeedInvalid(address feed);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
+    error ProductionMarketSessionGuardianInvalid(address guardian, address timelock);
 
     function run() external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
@@ -323,6 +332,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) external ScaffoldEthDeployerRunner {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
         _snapshotProductionDeploymentMode();
+        _snapshotProductionMarketSessionGuardian(_readProductionMarketSessionGuardian(timelockAddr));
         if (_requiresStrictProductionGuards()) {
             _readRequiredProductionCodehash(NAME_FACTORY_IMPLEMENTATION, ENV_FACTORY_IMPLEMENTATION_CODEHASH);
             _readRequiredProductionCodehash(NAME_POOL_IMPLEMENTATION, ENV_POOL_IMPLEMENTATION_CODEHASH);
@@ -602,9 +612,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         compositeOracleAddr = address(compositeOracle);
         console.log("CompositeOracle deployed at:", compositeOracleAddr);
 
-        USMarketSessionGate marketSessionGate = new USMarketSessionGate(deployer, timelockAddr);
+        USMarketSessionGate marketSessionGate = _deployProductionMarketSessionGate(timelockAddr);
         address marketSessionGateAddr = address(marketSessionGate);
         console.log("USMarketSessionGate deployed at:", marketSessionGateAddr);
+        console.log("USMarketSessionGate emergency guardian:", marketSessionGate.emergencyGuardian());
 
         // Testnet demo seeding is intentionally given only the current UTC day. Mainnet and
         // future days remain fail-closed until governance loads a reviewed exchange calendar.
@@ -792,6 +803,28 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         bool demoAssetsEnabled = _isRobinhoodTestnet() && _robinhoodTestnetDemoAssetsRequested();
         _setDeploymentMetadata(METADATA_ROBINHOOD_DEMO_ASSETS_ENABLED, demoAssetsEnabled ? "true" : "false");
         _setDeploymentMetadata(METADATA_PRODUCTION_GUARD_MODE, _requiresStrictProductionGuards() ? "strict" : "relaxed");
+    }
+
+    function _readProductionMarketSessionGuardian(address timelockAddr)
+        internal
+        view
+        virtual
+        returns (address guardian)
+    {
+        guardian = vm.envOr(ENV_MARKET_SESSION_GUARDIAN, address(0));
+        if (guardian == address(0) || guardian == timelockAddr) {
+            revert ProductionMarketSessionGuardianInvalid(guardian, timelockAddr);
+        }
+    }
+
+    function _snapshotProductionMarketSessionGuardian(address guardian) internal {
+        _setDeploymentMetadata(METADATA_MARKET_SESSION_GUARDIAN, vm.toString(guardian));
+    }
+
+    function _deployProductionMarketSessionGate(address timelockAddr) internal returns (USMarketSessionGate gate) {
+        address guardian = _readProductionMarketSessionGuardian(timelockAddr);
+        _snapshotProductionMarketSessionGuardian(guardian);
+        gate = new USMarketSessionGate(deployer, guardian);
     }
 
     function _envFlag(string memory envName) internal view returns (bool) {
@@ -1230,6 +1263,17 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
         _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, d.factoryAddr, bootstrapAdmin);
         if (_isChainlinkProtocolDeployment(d)) {
+            address expectedMarketSessionGuardian = _readProductionMarketSessionGuardian(d.timelockAddr);
+            IProductionMarketSessionGate marketSessionGate = IProductionMarketSessionGate(d.marketSessionGateAddr);
+            address currentMarketSessionGuardian = marketSessionGate.emergencyGuardian();
+            if (currentMarketSessionGuardian != expectedMarketSessionGuardian) {
+                if (marketSessionGate.owner() != bootstrapAdmin) {
+                    revert ProductionProtocolAddressMismatch(
+                        FIELD_MARKET_SESSION_GUARDIAN, currentMarketSessionGuardian, expectedMarketSessionGuardian
+                    );
+                }
+                marketSessionGate.setEmergencyGuardian(expectedMarketSessionGuardian);
+            }
             _transferOwnershipIfNeeded(
                 NAME_CHAINLINK_ORACLE_FEED, d.chainlinkOracleFeedAddr, d.timelockAddr, bootstrapAdmin
             );
@@ -1340,11 +1384,17 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             );
         }
         if (_isChainlinkProtocolDeployment(d)) {
+            address expectedMarketSessionGuardian = _readProductionMarketSessionGuardian(d.timelockAddr);
             _requireProductionOwner(
                 NAME_CHAINLINK_ORACLE_FEED, IProductionOwnable(d.chainlinkOracleFeedAddr).owner(), d.timelockAddr
             );
             _requireProductionOwner(
                 NAME_US_MARKET_SESSION_GATE, IProductionOwnable(d.marketSessionGateAddr).owner(), d.timelockAddr
+            );
+            _requireProductionAddress(
+                FIELD_MARKET_SESSION_GUARDIAN,
+                IProductionMarketSessionGate(d.marketSessionGateAddr).emergencyGuardian(),
+                expectedMarketSessionGuardian
             );
             _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), address(0));
             _requireProductionAddress(

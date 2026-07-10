@@ -68,6 +68,9 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     names.forEach((name, index) => {
         candidate[addressFor(index + 1)] = name;
     });
+    if (oracleMode === "chainlink") {
+        candidate.marketSessionGuardian = addressFor(900);
+    }
     const byName = new Map(
         Object.entries(candidate)
             .filter(([key]) => /^0x[0-9a-f]{40}$/iu.test(key))
@@ -259,6 +262,8 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
                     ? byName.get("PythOracle")
                     : byName.get("ChainlinkOracleFeed"),
         },
+        marketSessionGuardian:
+            oracleMode === "chainlink" ? candidate.marketSessionGuardian : null,
         oracleOwners:
             oracleMode === "pyth"
                 ? { PythOracle: byName.get("SplitRiskPoolFactory") }
@@ -576,6 +581,35 @@ test("timelock roles must each have their sole expected member", async () => {
             }),
         ),
         /Timelock proposer role topology mismatch/u,
+    );
+});
+
+test("market session guardian metadata must be distinct and match live wiring", async () => {
+    const item = await fixture();
+    const timelock = Object.entries(item.candidate).find(
+        ([, name]) => name === "TimelockController",
+    )[0];
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                candidate: {
+                    ...item.candidate,
+                    marketSessionGuardian: timelock,
+                },
+            }),
+        ),
+        /invalid marketSessionGuardian/u,
+    );
+
+    const wrongState = structuredClone(item.protocolState);
+    wrongState.marketSessionGuardian = addressFor(901);
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                readProtocolState: async () => wrongState,
+            }),
+        ),
+        /emergency guardian wiring mismatch/u,
     );
 });
 

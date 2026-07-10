@@ -79,7 +79,7 @@ test("configuredKeystore prefers network-specific env defaults", async () => {
     );
 });
 
-test("missingProductionEnv relaxes production pins for Robinhood testnet by default", async () => {
+test("missingProductionEnv relaxes production pins but still requires the Robinhood guardian", async () => {
     const { missingProductionEnv, usesRelaxedRobinhoodTestnetGuards } =
         await import("../parseArgs.js");
 
@@ -94,6 +94,19 @@ test("missingProductionEnv relaxes production pins for Robinhood testnet by defa
                 network: "robinhoodTestnet",
             },
             {},
+        ),
+        ["YS_PRODUCTION_MARKET_SESSION_GUARDIAN"],
+    );
+    assert.deepEqual(
+        missingProductionEnv(
+            {
+                fileName: "DeployYieldShieldProduction.s.sol",
+                network: "robinhoodTestnet",
+            },
+            {
+                YS_PRODUCTION_MARKET_SESSION_GUARDIAN:
+                    "0x0000000000000000000000000000000000000009",
+            },
         ),
         [],
     );
@@ -127,6 +140,7 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
             "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
             "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
             "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH",
+            "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
             "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED or YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED=true",
         ],
     );
@@ -145,6 +159,8 @@ test("missingProductionEnv limits the missing-sequencer exception to Robinhood t
         YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH: `0x${"33".repeat(32)}`,
         YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: `0x${"44".repeat(32)}`,
         YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH: `0x${"55".repeat(32)}`,
+        YS_PRODUCTION_MARKET_SESSION_GUARDIAN:
+            "0x0000000000000000000000000000000000000009",
         YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED: "true",
     };
     const productionDeploy = {
@@ -183,6 +199,8 @@ test("missingProductionEnv requires nonblank mainnet sequencer provenance", asyn
         YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH: `0x${"33".repeat(32)}`,
         YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH: `0x${"44".repeat(32)}`,
         YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH: `0x${"55".repeat(32)}`,
+        YS_PRODUCTION_MARKET_SESSION_GUARDIAN:
+            "0x0000000000000000000000000000000000000009",
         YS_ROBINHOOD_SEQUENCER_FEED:
             "0x0000000000000000000000000000000000000003",
         YS_ROBINHOOD_SEQUENCER_FEED_SOURCE: "   ",
