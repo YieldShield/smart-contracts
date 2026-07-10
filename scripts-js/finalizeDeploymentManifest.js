@@ -720,19 +720,36 @@ async function validateBroadcast({ broadcast, candidate, chainId, provider }) {
                 `On-chain receipt ${hash} deployer does not match the candidate.`,
             );
         }
-        if (
-            transaction.contractAddress &&
-            ethers.isAddress(transaction.contractAddress)
-        ) {
-            createdAddresses.add(
-                ethers.getAddress(transaction.contractAddress),
-            );
-        }
-        for (const additional of transaction.additionalContracts || []) {
-            const address = additional.address || additional.contractAddress;
-            if (address && ethers.isAddress(address)) {
-                createdAddresses.add(ethers.getAddress(address));
+        const transactionType = String(
+            transaction.transactionType || "",
+        ).toUpperCase();
+        if (transactionType === "CREATE" || transactionType === "CREATE2") {
+            if (
+                !transaction.contractAddress ||
+                !ethers.isAddress(transaction.contractAddress)
+            ) {
+                throw new Error(
+                    `Broadcast creation transaction ${hash} is missing a valid contract address.`,
+                );
             }
+            if (
+                !liveReceipt.contractAddress ||
+                !ethers.isAddress(liveReceipt.contractAddress)
+            ) {
+                throw new Error(
+                    `On-chain creation receipt ${hash} is missing a valid contract address.`,
+                );
+            }
+            const recordedAddress = ethers.getAddress(
+                transaction.contractAddress,
+            );
+            const liveAddress = ethers.getAddress(liveReceipt.contractAddress);
+            if (recordedAddress !== liveAddress) {
+                throw new Error(
+                    `Broadcast creation address does not match the on-chain receipt for ${hash}.`,
+                );
+            }
+            createdAddresses.add(liveAddress);
         }
         transactionHashes.push(hash);
     }

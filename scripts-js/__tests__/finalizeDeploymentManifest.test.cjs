@@ -17,9 +17,32 @@ const DEPLOYMENT_ID = "gen-test-00000001";
 const CONFIGURATION_DIGEST = `0x${"cd".repeat(32)}`;
 const DEPLOYER = "0x000000000000000000000000000000000000dEaD";
 const TX_HASH = `0x${"ab".repeat(32)}`;
+const FACTORY_CREATED_OUTPUTS = new Set([
+    "RobinhoodSGOVUSDGPool",
+    "RobinhoodSPYUSDGPool",
+    "RobinhoodQQQUSDGPool",
+    "RobinhoodUSDGWETHPool",
+    "RobinhoodTSLAUSDGPool",
+    "RobinhoodAMZNUSDGPool",
+    "RobinhoodPLTRUSDGPool",
+    "RobinhoodNFLXUSDGPool",
+    "RobinhoodAMDUSDGPool",
+]);
+const PREEXISTING_DEMO_INPUTS = new Set([
+    "RobinhoodTestTSLA",
+    "RobinhoodTestAMZN",
+    "RobinhoodTestPLTR",
+    "RobinhoodTestNFLX",
+    "RobinhoodTestAMD",
+]);
 
 function addressFor(index) {
     return `0x${index.toString(16).padStart(40, "0")}`;
+}
+
+function transactionHashFor(index) {
+    if (index === 0) return TX_HASH;
+    return `0x${index.toString(16).padStart(64, "0")}`;
 }
 
 async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
@@ -50,19 +73,33 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
             .filter(([key]) => /^0x[0-9a-f]{40}$/iu.test(key))
             .map(([address, name]) => [name, address]),
     );
+    const createdContracts = [...byName.entries()].filter(
+        ([name]) =>
+            !FACTORY_CREATED_OUTPUTS.has(name) &&
+            !PREEXISTING_DEMO_INPUTS.has(name),
+    );
+    const transactions = createdContracts.map(([name, address], index) => ({
+        hash: transactionHashFor(index),
+        transaction: { from: DEPLOYER },
+        transactionType: "CREATE",
+        contractAddress: address,
+        additionalContracts: [{ address: addressFor(999), name }],
+    }));
+    const receipts = transactions.map(({ contractAddress, hash }) => ({
+        contractAddress,
+        status: "0x1",
+        transactionHash: hash,
+    }));
+    const liveReceipts = new Map(
+        receipts.map(({ contractAddress, transactionHash }) => [
+            transactionHash,
+            { contractAddress, from: DEPLOYER, status: 1 },
+        ]),
+    );
     const broadcast = {
         chain: CHAIN_ID,
-        transactions: [
-            {
-                hash: TX_HASH,
-                transaction: { from: DEPLOYER },
-                transactionType: "CREATE",
-                additionalContracts: [...byName.entries()].map(
-                    ([name, address]) => ({ address, name }),
-                ),
-            },
-        ],
-        receipts: [{ status: "0x1", transactionHash: TX_HASH }],
+        transactions,
+        receipts,
         pending: [],
     };
     const missingCode = new Set();
@@ -71,7 +108,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
             return { chainId: BigInt(CHAIN_ID) };
         },
         async getTransactionReceipt(hash) {
-            return hash === TX_HASH ? { from: DEPLOYER, status: 1 } : null;
+            return liveReceipts.get(hash) || null;
         },
         async getCode(address) {
             return missingCode.has(address.toLowerCase()) ? "0x" : "0x6000";
@@ -243,6 +280,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         ...module,
         broadcast,
         candidate,
+        liveReceipts,
         missingCode,
         provider,
         protocolState,
@@ -304,6 +342,23 @@ function validationArgs(item, overrides = {}) {
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
     };
+}
+
+function removeCreationEvidence(item, broadcast, deploymentName) {
+    const address = Object.entries(item.candidate).find(
+        ([, name]) => name === deploymentName,
+    )[0];
+    const transactionIndex = broadcast.transactions.findIndex(
+        ({ contractAddress }) => contractAddress === address,
+    );
+    assert.notEqual(transactionIndex, -1);
+    const [transaction] = broadcast.transactions.splice(transactionIndex, 1);
+    const receiptIndex = broadcast.receipts.findIndex(
+        ({ transactionHash }) => transactionHash === transaction.hash,
+    );
+    assert.notEqual(receiptIndex, -1);
+    broadcast.receipts.splice(receiptIndex, 1);
+    return { address, transaction };
 }
 
 test("complete generation promotes atomically and records exact demo fixture metadata", async (t) => {
@@ -584,13 +639,17 @@ test("relaxed guards and demo mode are rejected outside Robinhood", async () => 
     );
 });
 
-test("same-generation recovery cannot excuse unbound addresses", async () => {
+test("additional-contract metadata cannot bind an address to a deployment generation", async () => {
     const item = await fixture();
     const broadcast = structuredClone(item.broadcast);
-    broadcast.transactions[0].additionalContracts =
-        broadcast.transactions[0].additionalContracts.filter(
-            ({ name }) => name !== "CompositeOracle",
-        );
+    const { address } = removeCreationEvidence(
+        item,
+        broadcast,
+        "CompositeOracle",
+    );
+    broadcast.transactions[0].additionalContracts = [
+        { address, name: "CompositeOracle" },
+    ];
 
     await assert.rejects(
         item.validateAndBuildManifest(validationArgs(item, { broadcast })),
@@ -605,6 +664,71 @@ test("same-generation recovery cannot excuse unbound addresses", async () => {
             }),
         ),
         /CompositeOracle is not tied/u,
+    );
+});
+
+test("CALL targets cannot bind an address to a deployment generation", async () => {
+    const item = await fixture();
+    const broadcast = structuredClone(item.broadcast);
+    const { address, transaction } = removeCreationEvidence(
+        item,
+        broadcast,
+        "CompositeOracle",
+    );
+    transaction.transactionType = "CALL";
+    transaction.contractAddress = address;
+    broadcast.transactions.push(transaction);
+    broadcast.receipts.push({
+        status: "0x1",
+        transactionHash: transaction.hash,
+    });
+    item.liveReceipts.set(transaction.hash, {
+        from: DEPLOYER,
+        status: 1,
+    });
+
+    await assert.rejects(
+        item.validateAndBuildManifest(validationArgs(item, { broadcast })),
+        /CompositeOracle is not tied/u,
+    );
+});
+
+test("CREATE provenance must match a live receipt contract address", async () => {
+    const item = await fixture();
+    const creationHash = item.broadcast.transactions[0].hash;
+    const originalGetReceipt = item.provider.getTransactionReceipt.bind(
+        item.provider,
+    );
+    const providerWithoutAddress = {
+        ...item.provider,
+        async getTransactionReceipt(hash) {
+            const receipt = await originalGetReceipt(hash);
+            return hash === creationHash
+                ? { ...receipt, contractAddress: null }
+                : receipt;
+        },
+    };
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { provider: providerWithoutAddress }),
+        ),
+        /missing a valid contract address/u,
+    );
+
+    const providerWithMismatch = {
+        ...item.provider,
+        async getTransactionReceipt(hash) {
+            const receipt = await originalGetReceipt(hash);
+            return hash === creationHash
+                ? { ...receipt, contractAddress: addressFor(999) }
+                : receipt;
+        },
+    };
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { provider: providerWithMismatch }),
+        ),
+        /creation address does not match/u,
     );
 });
 
@@ -655,11 +779,19 @@ test("same-generation recovery is idempotent and history collisions fail", async
     delete changedCandidate[oldAddress];
     changedCandidate[changedAddress] = "CompositeOracle";
     const changedBroadcast = structuredClone(item.broadcast);
-    const compositeEvidence =
-        changedBroadcast.transactions[0].additionalContracts.find(
-            ({ name }) => name === "CompositeOracle",
-        );
-    compositeEvidence.address = changedAddress;
+    const compositeTransaction = changedBroadcast.transactions.find(
+        ({ contractAddress }) => contractAddress === oldAddress,
+    );
+    compositeTransaction.contractAddress = changedAddress;
+    const compositeReceipt = changedBroadcast.receipts.find(
+        ({ transactionHash }) => transactionHash === compositeTransaction.hash,
+    );
+    compositeReceipt.contractAddress = changedAddress;
+    item.liveReceipts.set(compositeTransaction.hash, {
+        contractAddress: changedAddress,
+        from: DEPLOYER,
+        status: 1,
+    });
     const changedProtocolState = structuredClone(item.protocolState);
     changedProtocolState.factory.compositeOracle = changedAddress;
     writeAttempt(rootDir, changedCandidate, changedBroadcast, first.manifest);
