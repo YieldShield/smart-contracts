@@ -609,19 +609,31 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     // ============ Invariant 5: Total Token Tracking ============
 
-    /// @notice Sum of all position amounts should equal total tracked tokens
+    /// @notice Protector claims should stay covered by their active or expired backing ledger
     function invariant_totalTokenTracking() public view {
         // Sum all current protector claims
-        uint256 sumProtectorPositions = 0;
+        uint256 sumActiveProtectorPositions = 0;
+        uint256 sumExpiredProtectorPositions = 0;
+        uint256 currentProtectorEpoch = pool.protectorShareEpoch();
         uint256 protectorNextTokenId = protectorNFT.nextTokenId();
         for (uint256 tokenId = 0; tokenId < protectorNextTokenId; tokenId++) {
             try protectorNFT.ownerOf(tokenId) returns (address owner) {
                 if (owner != address(0)) {
-                    sumProtectorPositions += pool.getProtectorPositionAmount(tokenId);
+                    uint256 positionAmount = pool.getProtectorPositionAmount(tokenId);
+                    if (pool.protectorShareEpochs(tokenId) == currentProtectorEpoch) {
+                        sumActiveProtectorPositions += positionAmount;
+                    } else {
+                        sumExpiredProtectorPositions += positionAmount;
+                    }
                 }
             } catch {
                 // Token doesn't exist or was burned
             }
+        }
+
+        uint256 totalExpiredProtectorBackingReserve = 0;
+        for (uint256 epoch = 0; epoch < currentProtectorEpoch; epoch++) {
+            totalExpiredProtectorBackingReserve += pool.protectorEpochBackingRemainingReserve(epoch);
         }
 
         // Sum all shielded positions (only non-withdrawn)
@@ -644,14 +656,24 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
         // Total tokens should match sum of positions
         assertLe(
-            sumProtectorPositions,
+            sumActiveProtectorPositions,
             pool.totalProtectorTokens(),
-            "Summed protector claims should never exceed tracked protector backing"
+            "Summed active protector claims should never exceed active backing"
         );
         assertLe(
-            pool.totalProtectorTokens() - sumProtectorPositions,
+            pool.totalProtectorTokens() - sumActiveProtectorPositions,
             protectorNextTokenId,
-            "Protector rounding dust should stay bounded by position count"
+            "Active protector rounding dust should stay bounded by position count"
+        );
+        assertLe(
+            sumExpiredProtectorPositions,
+            totalExpiredProtectorBackingReserve,
+            "Summed expired protector claims should never exceed expired backing reserves"
+        );
+        assertLe(
+            totalExpiredProtectorBackingReserve - sumExpiredProtectorPositions,
+            protectorNextTokenId,
+            "Expired protector rounding dust should stay bounded by position count"
         );
         assertEq(
             pool.totalShieldedTokens(), sumShieldedPositions, "Total shielded tokens should match sum of positions"

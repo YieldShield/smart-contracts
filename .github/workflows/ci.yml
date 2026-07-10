@@ -95,6 +95,15 @@ jobs:
         with:
           version: v1.5.1
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
       - name: Detect fork RPC secrets
         id: fork-rpc
         env:
@@ -162,6 +171,15 @@ jobs:
         with:
           version: v1.5.1
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
       - name: Generate coverage summary
         run: forge coverage --ffi --ir-minimum --report summary
 
@@ -194,6 +212,15 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
 
       - name: Install Slither
         run: |
@@ -272,6 +299,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
       - name: Install Slither
         run: |
           python -m pip install --upgrade pip
@@ -306,6 +342,10 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
 
       - name: Install Aderyn
         run: npm install -g @cyfrin/aderyn@0.6.8
