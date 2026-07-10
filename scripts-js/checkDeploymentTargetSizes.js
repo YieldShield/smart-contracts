@@ -35,6 +35,7 @@ const PRODUCTION_DEPLOYMENT_TARGETS = Object.freeze({
     SplitRiskPool: "out/SplitRiskPool.sol/SplitRiskPool.json",
     SplitRiskPoolFactory:
         "out/SplitRiskPoolFactory.sol/SplitRiskPoolFactory.json",
+    USMarketSessionGate: "out/USMarketSessionGate.sol/USMarketSessionGate.json",
     YSGovernor: "out/YSGovernor.sol/YSGovernor.json",
     YSTimelockController:
         "out/YSTimelockController.sol/YSTimelockController.json",

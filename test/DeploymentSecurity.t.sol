@@ -12,6 +12,7 @@ import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { USMarketSessionGate } from "../contracts/oracles/USMarketSessionGate.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ConfigurableTokenFaucet } from "../contracts/mocks/ConfigurableTokenFaucet.sol";
@@ -146,6 +147,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
+                marketSessionGateAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -173,6 +175,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
+                marketSessionGateAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -202,6 +205,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
+                marketSessionGateAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -215,6 +219,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address poolImplementationAddr,
         address compositeOracleAddr,
         address chainlinkOracleFeedAddr,
+        address marketSessionGateAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr,
@@ -231,6 +236,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: address(0),
                 chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                marketSessionGateAddr: marketSessionGateAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -245,11 +251,16 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address poolImplementationAddr,
         address compositeOracleAddr,
         address chainlinkOracleFeedAddr,
+        address marketSessionGateAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr
     ) external {
         deployer = address(this);
+        USMarketSessionGate marketSessionGate = USMarketSessionGate(marketSessionGateAddr);
+        marketSessionGate.setDailySession(
+            uint64(block.timestamp / marketSessionGate.SECONDS_PER_DAY()), 0, marketSessionGate.SECONDS_PER_DAY()
+        );
         _seedRobinhoodTestnetDemoAssets(
             ProtocolDeployment({
                 factoryAddr: factoryAddr,
@@ -258,6 +269,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: address(0),
                 chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                marketSessionGateAddr: marketSessionGateAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -271,6 +283,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         address poolImplementationAddr,
         address compositeOracleAddr,
         address chainlinkOracleFeedAddr,
+        address marketSessionGateAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr
@@ -286,6 +299,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 compositeOracleAddr: compositeOracleAddr,
                 pythOracleAddr: address(0),
                 chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
+                marketSessionGateAddr: marketSessionGateAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -1299,6 +1313,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1314,6 +1329,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(poolImplementation),
             address(compositeOracle),
             address(chainlinkOracleFeed),
+            address(marketSessionGate),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor),
@@ -1325,6 +1341,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(poolImplementation),
             address(compositeOracle),
             address(chainlinkOracleFeed),
+            address(marketSessionGate),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor)
@@ -1334,6 +1351,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
+        assertEq(marketSessionGate.owner(), address(timelock));
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.compositeOracle(), address(compositeOracle));
         assertEq(factory.defaultProtocolFeeRecipient(), address(timelock));
@@ -1350,6 +1368,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         ProductionDeployHarness harness = new ProductionDeployHarness();
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1367,6 +1386,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(poolImplementation),
             address(compositeOracle),
             address(chainlinkOracleFeed),
+            address(marketSessionGate),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor)
@@ -1393,6 +1413,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(poolImplementation),
             address(compositeOracle),
             address(chainlinkOracleFeed),
+            address(marketSessionGate),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor),
@@ -1404,6 +1425,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
             address(poolImplementation),
             address(compositeOracle),
             address(chainlinkOracleFeed),
+            address(marketSessionGate),
             address(erc4626OracleFeed),
             address(timelock),
             address(governor)
@@ -1412,6 +1434,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.owner(), address(timelock));
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
+        assertEq(marketSessionGate.owner(), address(timelock));
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);

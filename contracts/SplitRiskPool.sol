@@ -560,6 +560,34 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
     }
 
+    /// @dev Enforce optional oracle-level policy before fixing a new position's valueAtDeposit.
+    ///      Legacy/non-composite oracles without the capability selector remain compatible.
+    ///      Once an oracle reports that a gate is required, every status failure is fail-closed.
+    function _requireProtectionOpeningAllowed(address token) internal view {
+        (bool capabilitySuccess, bytes memory capabilityData) = poolConfig.priceOracle
+            .staticcall(abi.encodeCall(ICompositeOracle.protectionOpeningEligibilityRequired, (token)));
+
+        if (!capabilitySuccess && capabilityData.length == 0) {
+            return;
+        }
+        if (!capabilitySuccess || capabilityData.length < 32) {
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+        }
+        if (!abi.decode(capabilityData, (bool))) {
+            return;
+        }
+
+        (bool eligibilitySuccess, bytes memory eligibilityData) =
+            poolConfig.priceOracle.staticcall(abi.encodeCall(ICompositeOracle.isProtectionOpeningAllowed, (token)));
+
+        if (!eligibilitySuccess || eligibilityData.length < 32) {
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+        }
+        if (!abi.decode(eligibilityData, (bool))) {
+            revert ErrorsLib.ProtectionOpeningClosed(token);
+        }
+    }
+
     /// @dev Returns true while any shield receipt liability remains in pool accounting.
     function _hasShieldedLiabilities() internal view returns (bool) {
         return totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0;
@@ -1942,6 +1970,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // depositor realise the deviation via cross-asset withdraw.
         _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
+        _requireProtectionOpeningAllowed(SHIELDED_TOKEN);
 
         // Balance-delta transfer, followed by an exact-receipt check. Fee-on-transfer
         // shielded tokens are intentionally unsupported for cross-asset accounting.

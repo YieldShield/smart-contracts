@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
+import { USMarketSessionGate } from "../contracts/oracles/USMarketSessionGate.sol";
 import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggregator.sol";
 import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
@@ -15,9 +16,16 @@ contract MockSixDecimalInnerFeed {
     }
 }
 
+contract RevertingMarketSessionGate {
+    function isMarketOpen() external pure returns (bool) {
+        revert("status unavailable");
+    }
+}
+
 contract RobinhoodStockOracleFeedTest is Test {
     ChainlinkOracleFeed internal chainlinkFeed;
     RobinhoodStockOracleFeed internal stockFeed;
+    USMarketSessionGate internal marketSessionGate;
     MockChainlinkAggregator internal tslaAggregator;
     MockChainlinkAggregator internal wethAggregator;
     MockRobinhoodStockToken internal tsla;
@@ -36,14 +44,16 @@ contract RobinhoodStockOracleFeedTest is Test {
         wethAggregator = new MockChainlinkAggregator("WETH / USD", 8, WETH_PRICE);
         chainlinkFeed.setTokenFeed(address(tsla), address(tslaAggregator));
         chainlinkFeed.setTokenFeed(address(weth), address(wethAggregator));
-        stockFeed = new RobinhoodStockOracleFeed(address(chainlinkFeed));
+        marketSessionGate = new USMarketSessionGate(address(this), address(0xBEEF));
+        marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+        stockFeed = new RobinhoodStockOracleFeed(address(chainlinkFeed), address(marketSessionGate));
     }
 
     // ============ Constructor ============
 
     function test_constructor_RevertsOnZeroInnerFeed() public {
         vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.InvalidInnerFeed.selector, address(0)));
-        new RobinhoodStockOracleFeed(address(0));
+        new RobinhoodStockOracleFeed(address(0), address(marketSessionGate));
     }
 
     function test_constructor_RevertsOnNonEightDecimalInnerFeed() public {
@@ -53,11 +63,17 @@ contract RobinhoodStockOracleFeedTest is Test {
                 RobinhoodStockOracleFeed.InvalidInnerFeedDecimals.selector, address(sixDecimalFeed), uint8(6)
             )
         );
-        new RobinhoodStockOracleFeed(address(sixDecimalFeed));
+        new RobinhoodStockOracleFeed(address(sixDecimalFeed), address(marketSessionGate));
+    }
+
+    function test_constructor_RevertsOnInvalidMarketSessionGate() public {
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.InvalidMarketSessionGate.selector, address(0)));
+        new RobinhoodStockOracleFeed(address(chainlinkFeed), address(0));
     }
 
     function test_constructor_SetsInnerFeed() public view {
         assertEq(stockFeed.innerFeed(), address(chainlinkFeed));
+        assertEq(stockFeed.marketSessionGate(), address(marketSessionGate));
         assertEq(stockFeed.decimals(), 8);
         assertEq(stockFeed.description(), "Robinhood Stock Chainlink Oracle Feed");
     }
@@ -145,6 +161,35 @@ contract RobinhoodStockOracleFeedTest is Test {
         assertFalse(stockFeed.supportsStrictProtectedPrice(address(tsla)));
     }
 
+    // ============ Protection opening eligibility ============
+
+    function test_openingEligibility_AllowsConfiguredOpenSession() public view {
+        assertTrue(stockFeed.supportsProtectionOpeningEligibility(address(tsla)));
+        assertTrue(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_openingEligibility_ClosedSessionDoesNotDisablePriceReads() public {
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+        assertEq(stockFeed.getPrice(address(tsla)), uint256(TSLA_PRICE));
+    }
+
+    function test_openingEligibility_FailsClosedForPausedOrUnsupportedToken() public {
+        tsla.setOraclePaused(true);
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(weth)));
+    }
+
+    function test_openingEligibility_FailsClosedWhenMarketStatusCallReverts() public {
+        RevertingMarketSessionGate revertingGate = new RevertingMarketSessionGate();
+        RobinhoodStockOracleFeed feedWithBrokenGate =
+            new RobinhoodStockOracleFeed(address(chainlinkFeed), address(revertingGate));
+
+        assertFalse(feedWithBrokenGate.isProtectionOpeningAllowed(address(tsla)));
+        assertEq(feedWithBrokenGate.getPrice(address(tsla)), uint256(TSLA_PRICE));
+    }
+
     // ============ Corporate-action multiplier scenario ============
 
     function test_multiplierWindow_NoReadablePriceMidWindowAndNewPriceAfter() public {
@@ -181,6 +226,8 @@ contract RobinhoodStockOracleFeedTest is Test {
         composite.setTokenOracleFeed(address(tsla), address(stockFeed));
         assertEq(composite.getOracleType(address(tsla)), "chainlink-stock");
         assertEq(composite.getPrice(address(tsla)), uint256(TSLA_PRICE));
+        assertTrue(composite.protectionOpeningEligibilityRequired(address(tsla)));
+        assertTrue(composite.isProtectionOpeningAllowed(address(tsla)));
 
         // Unwrapped ChainlinkOracleFeed must keep detecting as plain "chainlink".
         composite.setTokenOracleFeed(address(weth), address(chainlinkFeed));
@@ -191,5 +238,24 @@ contract RobinhoodStockOracleFeedTest is Test {
         tsla.setOraclePaused(true);
         vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
         composite.getPrice(address(tsla));
+    }
+
+    function test_compositeOracle_ClosedPrimaryGateAppliesWhileBackupIsActive() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupFeed = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
+        backupFeed.setTokenFeed(address(tsla), address(backupAggregator));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backupFeed));
+
+        composite.challengeForToken(address(tsla));
+        vm.warp(block.timestamp + composite.challengeDurationSec() + 1);
+        backupAggregator.setAnswer(TSLA_PRICE * 2);
+        composite.finalizeChallenge(address(tsla));
+        assertTrue(composite.isBackupActiveForToken(address(tsla)));
+
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        // Opening policy must still come from the primary stock wrapper rather than the
+        // now-active plain backup feed.
+        assertFalse(composite.isProtectionOpeningAllowed(address(tsla)));
     }
 }

@@ -2,6 +2,11 @@
 pragma solidity ^0.8.35;
 
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
+
+interface IUSMarketSessionGate {
+    function isMarketOpen() external view returns (bool);
+}
 
 /// @title IRobinhoodStockToken
 /// @notice Minimal interface for Robinhood stock tokens exposing the corporate-action pause flag
@@ -23,8 +28,8 @@ interface IChainlinkOracleFeedOptional {
 
 /// @title RobinhoodStockOracleFeed
 /// @author David Hawig
-/// @notice Stateless IOracleFeed wrapper that guards Robinhood stock-token pricing with the
-///         token's `oraclePaused()` corporate-action flag
+/// @notice IOracleFeed wrapper that guards Robinhood stock-token pricing with the token's
+///         `oraclePaused()` flag and new-protection openings with an explicit market calendar
 /// @dev Robinhood stock tokens pause their oracle around corporate actions (splits, reverse
 ///      splits, dividends) while the UI multiplier is rebased; during that window the Chainlink
 ///      price for the token must be treated as unavailable. Every price read here first probes
@@ -34,15 +39,21 @@ interface IChainlinkOracleFeedOptional {
 ///      ChainlinkOracleFeed, including the optional capability functions CompositeOracle probes
 ///      (`getPriceUnsafe`, `supportsCircuitBreaker`, `supportsStrictProtectedPrice`,
 ///      `isPriceStale`), so wrapping does not weaken the inner feed's protections.
-contract RobinhoodStockOracleFeed is IOracleFeed {
+contract RobinhoodStockOracleFeed is IOracleFeed, IProtectionOpeningEligibility {
     /// @notice The wrapped ChainlinkOracleFeed that performs the actual price reads
     address public immutable innerFeed;
+
+    /// @notice Fail-closed calendar used only when opening new protection positions
+    address public immutable marketSessionGate;
 
     /// @notice Custom error for zero inner feed address
     error InvalidInnerFeed(address feed);
 
     /// @notice Custom error when the inner feed does not report 8 decimals
     error InvalidInnerFeedDecimals(address feed, uint8 feedDecimals);
+
+    /// @notice Custom error for an invalid market-session gate
+    error InvalidMarketSessionGate(address gate);
 
     /// @notice Custom error when the stock token's oracle is paused for a corporate action
     error StockTokenOraclePaused(address token);
@@ -52,11 +63,16 @@ contract RobinhoodStockOracleFeed is IOracleFeed {
 
     /// @notice Constructor
     /// @param _innerFeed The ChainlinkOracleFeed address to wrap
-    constructor(address _innerFeed) {
+    /// @param _marketSessionGate Fail-closed US-equity session calendar
+    constructor(address _innerFeed, address _marketSessionGate) {
         if (_innerFeed == address(0)) revert InvalidInnerFeed(_innerFeed);
+        if (_marketSessionGate == address(0) || _marketSessionGate.code.length == 0) {
+            revert InvalidMarketSessionGate(_marketSessionGate);
+        }
         uint8 innerDecimals = IOracleFeed(_innerFeed).decimals();
         if (innerDecimals != 8) revert InvalidInnerFeedDecimals(_innerFeed, innerDecimals);
         innerFeed = _innerFeed;
+        marketSessionGate = _marketSessionGate;
     }
 
     /// @dev Reverts unless the token's corporate-action pause flag is readable and false.
@@ -118,6 +134,28 @@ contract RobinhoodStockOracleFeed is IOracleFeed {
             return (true, 0);
         }
         return IChainlinkOracleFeedOptional(innerFeed).isPriceStale(token);
+    }
+
+    /// @inheritdoc IProtectionOpeningEligibility
+    function supportsProtectionOpeningEligibility(address) external pure returns (bool supported) {
+        return true;
+    }
+
+    /// @inheritdoc IProtectionOpeningEligibility
+    /// @dev This does not gate price reads or exits. Missing token pause status, a failed market
+    ///      status call, a closed calendar day, or an emergency pause all fail closed for openings.
+    function isProtectionOpeningAllowed(address token) external view returns (bool allowed) {
+        try IRobinhoodStockToken(token).oraclePaused() returns (bool paused) {
+            if (paused) return false;
+        } catch {
+            return false;
+        }
+
+        try IUSMarketSessionGate(marketSessionGate).isMarketOpen() returns (bool marketOpen) {
+            return marketOpen;
+        } catch {
+            return false;
+        }
     }
 
     /// @inheritdoc IOracleFeed

@@ -165,4 +165,8 @@ library ErrorsLib {
     /// @notice Thrown when a price-sensitive operation is attempted while the token's
     ///         dual-feed oracle has a pending or currently challengeable price dispute.
     error OraclePendingChallenge(address token);
+    /// @notice Thrown when the token's configured oracle policy disallows opening new protection
+    error ProtectionOpeningClosed(address token);
+    /// @notice Thrown when an oracle advertises opening eligibility but returns malformed status
+    error ProtectionOpeningEligibilityUnavailable(address token, address oracle);
 }

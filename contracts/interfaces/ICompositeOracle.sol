@@ -143,6 +143,17 @@ interface ICompositeOracle is IPriceOracle {
     /// @return supported True if the active feed advertises strict protected pricing support
     function supportsStrictProtectedPrice(address token) external view returns (bool supported);
 
+    // ============ Protection Opening Eligibility ============
+
+    /// @notice Whether a new protection position may currently be opened for a token
+    /// @dev Returns true for feeds without the optional opening-eligibility capability.
+    ///      Feeds that advertised the capability when configured fail closed if their
+    ///      eligibility response later becomes unavailable or malformed.
+    function isProtectionOpeningAllowed(address token) external view returns (bool allowed);
+
+    /// @notice Whether the token's configured primary feed requires opening eligibility
+    function protectionOpeningEligibilityRequired(address token) external view returns (bool required);
+
     // ============ Challenge Mechanism ============
 
     /// @notice Initiate a challenge for a dual-feed token

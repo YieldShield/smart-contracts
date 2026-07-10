@@ -6,6 +6,7 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
 import { ConstantsLib } from "../libraries/ConstantsLib.sol";
@@ -279,6 +280,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.challengeEndTime = 0;
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
+        _setProtectionOpeningEligibilityRequirement(token, oracleFeed);
 
         // Try to detect oracle type from feed description
         try IOracleFeed(oracleFeed).description() returns (string memory desc) {
@@ -322,6 +324,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
         _tokenOracleType[token] = oracleType;
+        _setProtectionOpeningEligibilityRequirement(token, oracleFeed);
 
         emit TokenOracleFeedSet(token, oracleFeed);
     }
@@ -354,6 +357,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.challengeEndTime = 0;
         config.lastChallengeTime = 0;
         _isTokenSupported[token] = true;
+        _setProtectionOpeningEligibilityRequirement(token, primaryFeed);
 
         // Try to detect oracle type from primary feed description
         try IOracleFeed(primaryFeed).description() returns (string memory desc) {
@@ -457,6 +461,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         delete _tokenOracleConfig[token];
         delete _tokenOracleType[token];
+        delete protectionOpeningEligibilityRequired[token];
         _isTokenSupported[token] = false;
 
         // Clear the strict circuit-breaker requirement when removing the feed; otherwise
@@ -478,6 +483,17 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @inheritdoc ICompositeOracle
     function isTokenSupported(address token) external view returns (bool) {
         return _isTokenSupported[token];
+    }
+
+    /// @inheritdoc ICompositeOracle
+    function isProtectionOpeningAllowed(address token) external view returns (bool allowed) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (!protectionOpeningEligibilityRequired[token]) return true;
+
+        (bool success, bytes memory data) = config.primaryFeed
+            .staticcall(abi.encodeCall(IProtectionOpeningEligibility.isProtectionOpeningAllowed, (token)));
+        return success && data.length >= 32 && abi.decode(data, (bool));
     }
 
     /// @inheritdoc ICompositeOracle
@@ -852,6 +868,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @dev Scheduled override per (token, action). executableAt == 0 = not scheduled.
     mapping(bytes32 => EmergencyOverrideSchedule) public emergencyOverrides;
+
+    /// @notice True when the configured primary feed advertised a deposit-opening gate
+    /// @dev Appended after prior storage declarations. The primary feed remains the policy
+    ///      source even while a dual-feed backup is active, so failover cannot bypass the gate.
+    mapping(address => bool) public override protectionOpeningEligibilityRequired;
 
     event EmergencyOverrideScheduled(
         address indexed token, bytes32 indexed action, uint256 executableAt, bytes32 stateNonce
@@ -1516,6 +1537,19 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         if (!success || data.length < 32) return false;
         return abi.decode(data, (bool));
+    }
+
+    /// @dev Snapshot the primary feed's optional opening-policy capability at configuration
+    ///      time. A later failure of the feed cannot silently turn a required gate into opt-out.
+    function _setProtectionOpeningEligibilityRequirement(address token, address primaryFeed) internal {
+        bool required;
+        if (primaryFeed.code.length != 0) {
+            (bool success, bytes memory data) = primaryFeed.staticcall(
+                abi.encodeCall(IProtectionOpeningEligibility.supportsProtectionOpeningEligibility, (token))
+            );
+            required = success && data.length >= 32 && abi.decode(data, (bool));
+        }
+        protectionOpeningEligibilityRequired[token] = required;
     }
 
     /// @notice Detect oracle type from feed description
