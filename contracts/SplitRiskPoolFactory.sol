@@ -102,8 +102,10 @@ contract SplitRiskPoolFactory is
     address public erc4626OracleFeed;
     address public defaultProtocolFeeRecipient;
 
-    /// @notice Maximum number of active pools that can exist at the same time
-    uint256 public constant MAX_POOLS = 1000;
+    /// @notice Hard maximum number of active pools that can exist at the same time
+    /// @dev Bounds governance paths that scan every active pool. The same conservative
+    ///      ceiling is used for the token whitelist so combined validation remains executable.
+    uint256 public constant MAX_POOLS = 100;
     uint256 public constant DEFAULT_MINIMUM_CREATION_BOND_USD = 500e8;
     uint256 public constant PROTECTOR_ONLY_POOL_DEACTIVATION_DELAY = 7 days;
 
@@ -116,7 +118,7 @@ contract SplitRiskPoolFactory is
     /* State Variables */
     address[] public pools;
     /// @dev Mapping from pool address to pool info
-    mapping(address => ISplitRiskPoolFactory.PoolInfo) private _poolInfo;
+    mapping(address => ISplitRiskPoolFactory.PoolInfo) internal _poolInfo;
     // Backing-asset policy: require the strict protected-price path instead of compatibility fallback.
     mapping(address => bool) public tokenRequiresStrictProtectedPrice;
 
@@ -1105,14 +1107,16 @@ contract SplitRiskPoolFactory is
 
     /**
      * @notice Updates the active pool cap.
-     * @dev Allows governance to raise capacity if active slots are economically occupied.
-     *      The cap cannot be lowered below the number of pools currently active.
+     * @dev Allows governance to tune capacity within the hard bound. The cap cannot be
+     *      lowered below the number of pools currently active or raised above MAX_POOLS.
      * @param newMaxActivePools New active pool cap
      */
     function setMaxActivePools(uint256 newMaxActivePools) external onlyGovernance {
         uint256 activePoolLength = activePools.length;
-        if (newMaxActivePools == 0 || newMaxActivePools < activePoolLength) {
-            revert ErrorsLib.MaxPoolsExceeded(activePoolLength, newMaxActivePools);
+        unchecked {
+            if (newMaxActivePools - 1 > MAX_POOLS - 1 || newMaxActivePools < activePoolLength) {
+                revert ErrorsLib.MaxPoolsExceeded(activePoolLength, newMaxActivePools);
+            }
         }
 
         uint256 previousValue = _activePoolLimit();

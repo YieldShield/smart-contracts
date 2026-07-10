@@ -11,8 +11,8 @@ export const TRACKED_SIZE_BUDGETS = Object.freeze({
         reason: "Robinhood-targeted monolith pending module split",
     }),
     SplitRiskPoolFactory: Object.freeze({
-        runtimeLimit: 41_256,
-        initcodeLimit: 41_523,
+        runtimeLimit: 41_258,
+        initcodeLimit: 41_525,
         reason: "Robinhood-targeted monolith pending module split",
     }),
 });

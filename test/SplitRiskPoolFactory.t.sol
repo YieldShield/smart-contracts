@@ -1676,15 +1676,40 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
 
     function testMaxPoolsConstant() public view {
         // Verify the MAX_POOLS constant is set correctly
-        assertEq(factory.MAX_POOLS(), 1000, "MAX_POOLS should be 1000");
-        assertEq(factory.maxActivePools(), 1000, "maxActivePools should default to MAX_POOLS");
+        assertEq(factory.MAX_POOLS(), 100, "MAX_POOLS should be hard-bound at 100");
+        assertEq(factory.maxActivePools(), 100, "maxActivePools should default to MAX_POOLS");
     }
 
-    function testGovernanceCanRaiseMaxActivePools() public {
+    function testGovernanceCanTuneMaxActivePoolsWithinHardCap() public {
         vm.prank(governanceTimelock);
-        factory.setMaxActivePools(1_500);
+        factory.setMaxActivePools(64);
+        assertEq(factory.maxActivePools(), 64);
 
-        assertEq(factory.maxActivePools(), 1_500, "governance should be able to raise active pool cap");
+        vm.prank(governanceTimelock);
+        factory.setMaxActivePools(100);
+
+        assertEq(factory.maxActivePools(), 100, "governance may restore the hard cap");
+    }
+
+    function testGovernanceCannotRaiseMaxActivePoolsAboveHardCap() public {
+        vm.prank(governanceTimelock);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.MaxPoolsExceeded.selector, 0, 101));
+        factory.setMaxActivePools(101);
+    }
+
+    function testWhitelistHardCapRejectsTokenAboveOneHundred() public {
+        uint256 existingCount = factory.getWhitelistedTokens().length;
+        for (uint256 i = existingCount; i < 100; ++i) {
+            MockERC20 token = new MockERC20("Bounded Token", "BOUND");
+            oracle.setPrice(address(token), 1e8);
+            factory.addTokenInitial(address(token), "Bounded Token", "BOUND", address(oracle), address(0), 10_000, true);
+        }
+        assertEq(factory.getWhitelistedTokens().length, 100);
+
+        MockERC20 overCapToken = new MockERC20("Over Cap", "OVER");
+        oracle.setPrice(address(overCapToken), 1e8);
+        vm.expectRevert(abi.encodeWithSelector(TokenWhitelistLib.WhitelistCapExceeded.selector, 100));
+        factory.addTokenInitial(address(overCapToken), "Over Cap", "OVER", address(oracle), address(0), 10_000, true);
     }
 
     function testGovernanceCannotSetMaxActivePoolsBelowActiveCount() public {
@@ -1737,7 +1762,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         if (!found) {
             // Alternative: verify the check exists in createPool by checking code
             // For now, we verify the MAX_POOLS constant and that normal creation works
-            assertEq(factory.MAX_POOLS(), 1000, "MAX_POOLS should be 1000");
+            assertEq(factory.MAX_POOLS(), 100, "MAX_POOLS should be 100");
 
             // Create a pool to verify the limit check code path exists
             address pool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
@@ -1745,14 +1770,14 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
             return;
         }
 
-        // Set activePools.length to MAX_POOLS (1000)
-        vm.store(address(factory), activePoolsSlot, bytes32(uint256(1000)));
+        // Set activePools.length to MAX_POOLS (100)
+        vm.store(address(factory), activePoolsSlot, bytes32(uint256(100)));
 
         // Verify the length was set
-        assertEq(factory.getActivePools().length, 1000, "Should have 1000 active pools after storage manipulation");
+        assertEq(factory.getActivePools().length, 100, "Should have 100 active pools after storage manipulation");
 
         // Now try to create a new pool - should revert
-        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.MaxPoolsExceeded.selector, 1000, 1000));
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.MaxPoolsExceeded.selector, 100, 100));
         factory.createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000, 0);
     }
 
