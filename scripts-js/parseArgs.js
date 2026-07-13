@@ -5,12 +5,21 @@ import { join, dirname } from "path";
 import { readFileSync, existsSync } from "fs";
 import { parse } from "toml";
 import { fileURLToPath } from "url";
+import { JsonRpcProvider } from "ethers";
 import {
     DEFAULT_KEYSTORE_ACCOUNT,
     isValidKeystoreName,
     keystoreExists,
 } from "./foundryKeystore.js";
 import { selectOrCreateKeystore } from "./selectOrCreateKeystore.js";
+import {
+    CHAIN_FINALITY_POLICY,
+    chainFinalityPolicy,
+    requireIndependentRpcOperators,
+    requireIndependentRpcUrls,
+    resolveFinalityEvidence,
+    resolveRpcUrl,
+} from "./finalizeDeploymentManifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config();
@@ -404,6 +413,109 @@ function runDeploymentTargetSizeCheck() {
     return result.status ?? 1;
 }
 
+function deploymentFinalityPolicyForNetwork(
+    network,
+    finalityPolicy = CHAIN_FINALITY_POLICY,
+) {
+    if (
+        finalityPolicy?.schemaVersion !== 2 ||
+        !finalityPolicy.chains ||
+        typeof network !== "string"
+    ) {
+        throw new Error("Deployment finality policy is invalid.");
+    }
+
+    const matches = Object.entries(finalityPolicy.chains).filter(
+        ([, policy]) => policy?.rpcAlias === network,
+    );
+    if (matches.length !== 1) {
+        throw new Error(
+            `Public network alias '${network}' has no unique checked-in deployment finality policy.`,
+        );
+    }
+
+    const [chainId, policy] = matches[0];
+    chainFinalityPolicy(chainId, finalityPolicy);
+    return { chainId, policy };
+}
+
+async function preflightPublicDeploymentPromotion(
+    { fileName, network, env = process.env },
+    {
+        finalityPolicy = CHAIN_FINALITY_POLICY,
+        providerFactory = (rpcUrl) => new JsonRpcProvider(rpcUrl),
+        resolveRpcUrlFn = resolveRpcUrl,
+    } = {},
+) {
+    if (fileName !== PRODUCTION_DEPLOY_SCRIPT || isLocalNetwork(network)) {
+        return null;
+    }
+
+    const { chainId } = deploymentFinalityPolicyForNetwork(
+        network,
+        finalityPolicy,
+    );
+    const primaryRpcUrl = resolveRpcUrlFn(network, env);
+    const validationRpcInput = env.YS_DEPLOYMENT_VALIDATION_RPC_URL;
+    const validationRpcUrl = validationRpcInput
+        ? resolveRpcUrlFn(validationRpcInput, env)
+        : validationRpcInput;
+    const canonicalRpcUrls = requireIndependentRpcUrls(
+        primaryRpcUrl,
+        validationRpcUrl,
+    );
+    const rpcProviderOperators = requireIndependentRpcOperators(
+        env.YS_DEPLOYMENT_RPC_OPERATOR,
+        env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR,
+    );
+    const provider = providerFactory(canonicalRpcUrls.primaryRpcUrl);
+    const validationProvider = providerFactory(
+        canonicalRpcUrls.validationRpcUrl,
+    );
+
+    try {
+        return await resolveFinalityEvidence({
+            chainId,
+            provider,
+            validationProvider,
+            primaryRpcUrl: canonicalRpcUrls.primaryRpcUrl,
+            validationRpcUrl: canonicalRpcUrls.validationRpcUrl,
+            deploymentRpcOperator: rpcProviderOperators.deployment,
+            validationRpcOperator: rpcProviderOperators.validation,
+            finalityPolicy,
+        });
+    } finally {
+        provider?.destroy?.();
+        validationProvider?.destroy?.();
+    }
+}
+
+async function runDeploymentGatesAndSpawn(
+    { fileName, network, env, makeArgs, childEnv },
+    {
+        preflight = preflightPublicDeploymentPromotion,
+        runSizeCheck = runDeploymentTargetSizeCheck,
+        spawn = spawnSync,
+        log = console.log,
+    } = {},
+) {
+    await preflight({ fileName, network, env });
+
+    if (requiresDeploymentTargetSizeCheck({ fileName, network })) {
+        log(
+            "\n📏 Validating every production deployment target against Robinhood code-size limits",
+        );
+        const sizeCheckStatus = runSizeCheck();
+        if (sizeCheckStatus !== 0) return sizeCheckStatus;
+    }
+
+    const result = spawn("make", makeArgs, {
+        env: childEnv,
+        stdio: "inherit",
+    });
+    return result.status ?? 1;
+}
+
 function printProductionEnvError(missingEnv) {
     console.log(
         "\n❌ Error: Missing production deployment environment values:",
@@ -628,16 +740,6 @@ The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost
         process.exit(1);
     }
 
-    if (requiresDeploymentTargetSizeCheck({ fileName, network })) {
-        console.log(
-            "\n📏 Validating every production deployment target against Robinhood code-size limits",
-        );
-        const sizeCheckStatus = runDeploymentTargetSizeCheck();
-        if (sizeCheckStatus !== 0) {
-            process.exit(sizeCheckStatus);
-        }
-    }
-
     const makeArgs = [
         `DEPLOY_SCRIPT=script/${fileName}`,
         `RPC_URL=${network}`,
@@ -662,12 +764,23 @@ The default account (${DEFAULT_KEYSTORE_ACCOUNT}) can only be used for localhost
               YS_PRODUCTION_DEPLOYMENT_CANDIDATE: "true",
           }
         : process.env;
-    const result = spawnSync("make", makeArgs, {
-        env: childEnv,
-        stdio: "inherit",
-    });
+    let deploymentStatus;
+    try {
+        deploymentStatus = await runDeploymentGatesAndSpawn({
+            fileName,
+            network,
+            env,
+            makeArgs,
+            childEnv,
+        });
+    } catch (error) {
+        console.error(
+            `\n❌ Deployment promotion preflight failed: ${error.message}`,
+        );
+        process.exit(1);
+    }
 
-    process.exit(result.status ?? 1);
+    process.exit(deploymentStatus);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -676,6 +789,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 export {
     configuredKeystore,
+    deploymentFinalityPolicyForNetwork,
     deploymentConfigurationDigest,
     forgeScriptArgsForNetwork,
     hasNonBlankEnvValue,
@@ -684,9 +798,11 @@ export {
     missingProductionEnv,
     networkEnvPrefix,
     parseCliArgs,
+    preflightPublicDeploymentPromotion,
     resolveDeploymentGeneration,
     resolveDeployScript,
     requiresDeploymentTargetSizeCheck,
+    runDeploymentGatesAndSpawn,
     isValidDeploymentGenerationId,
     formatRobinhoodProductionDeploymentMode,
     robinhoodProductionDeploymentMode,

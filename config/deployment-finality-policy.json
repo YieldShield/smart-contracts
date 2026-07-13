@@ -3,11 +3,25 @@
   "chains": {
     "4663": {
       "network": "robinhood-mainnet",
+      "rpcAlias": "robinhood",
       "blockTag": "finalized",
       "requireIndependentValidationRpc": true
     },
     "46630": {
       "network": "robinhood-testnet",
+      "rpcAlias": "robinhoodTestnet",
+      "blockTag": "finalized",
+      "requireIndependentValidationRpc": true
+    },
+    "42161": {
+      "network": "arbitrum-mainnet",
+      "rpcAlias": "arbitrum",
+      "blockTag": "finalized",
+      "requireIndependentValidationRpc": true
+    },
+    "421614": {
+      "network": "arbitrum-sepolia",
+      "rpcAlias": "arbitrumSepolia",
       "blockTag": "finalized",
       "requireIndependentValidationRpc": true
     }

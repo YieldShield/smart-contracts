@@ -173,6 +173,13 @@ finality evidence. These identities are operator-attested rather than
 cryptographically discovered; use an independently operated full node for one
 side when possible.
 
+The production deploy CLI accepts promotion policy only for the checked-in
+`arbitrum`, `arbitrumSepolia`, `robinhood`, and `robinhoodTestnet` aliases.
+Before any contract-size check, Make target, or Forge broadcast, it resolves
+both RPCs and requires them to report the policy's chain ID and the same
+explicit finalized block. Other public aliases fail closed before deployment;
+supporting another chain requires a reviewed finality-policy entry first.
+
 Robinhood mainnet has no canonical sequencer uptime feed identified in the
 current Chainlink registry. It therefore remains operationally blocked until an
 operator supplies a documented `YS_ROBINHOOD_SEQUENCER_FEED`, its public

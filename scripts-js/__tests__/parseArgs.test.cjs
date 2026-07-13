@@ -392,6 +392,216 @@ test("deployment target size preflight is scoped to Robinhood production deploys
     );
 });
 
+test("production deployment finality policy supports only reviewed public aliases", async () => {
+    const { deploymentFinalityPolicyForNetwork } =
+        await import("../parseArgs.js");
+
+    assert.equal(
+        deploymentFinalityPolicyForNetwork("arbitrum").chainId,
+        "42161",
+    );
+    assert.equal(
+        deploymentFinalityPolicyForNetwork("arbitrumSepolia").chainId,
+        "421614",
+    );
+    assert.equal(
+        deploymentFinalityPolicyForNetwork("robinhood").chainId,
+        "4663",
+    );
+    assert.equal(
+        deploymentFinalityPolicyForNetwork("robinhoodTestnet").chainId,
+        "46630",
+    );
+    assert.throws(
+        () => deploymentFinalityPolicyForNetwork("base"),
+        /has no unique checked-in deployment finality policy/u,
+    );
+});
+
+test("public deployment preflight verifies both chains and their agreed finalized block", async () => {
+    const { preflightPublicDeploymentPromotion } =
+        await import("../parseArgs.js");
+    const primaryRpcUrl = "https://primary.example/v1";
+    const validationRpcUrl = "https://validation.example/v1";
+    const finalizedHash = `0x${"ab".repeat(32)}`;
+    const destroyed = [];
+    const makeProvider = (label, chainId = 421614n, hash = finalizedHash) => ({
+        async getNetwork() {
+            return { chainId };
+        },
+        async send(method, params) {
+            assert.equal(method, "eth_getBlockByNumber");
+            assert.deepEqual(params, ["finalized", false]);
+            return { hash, number: "0x64" };
+        },
+        destroy() {
+            destroyed.push(label);
+        },
+    });
+    const providers = new Map([
+        [primaryRpcUrl, makeProvider("primary")],
+        [validationRpcUrl, makeProvider("validation")],
+    ]);
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "arbitrumSepolia",
+        env: {
+            YS_DEPLOYMENT_RPC_OPERATOR: "alchemy",
+            YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR: "self-hosted-berlin",
+            YS_DEPLOYMENT_VALIDATION_RPC_URL: validationRpcUrl,
+        },
+    };
+    const dependencies = {
+        providerFactory: (url) => providers.get(url),
+        resolveRpcUrlFn: (input) =>
+            input === "arbitrumSepolia" ? primaryRpcUrl : input,
+    };
+
+    const evidence = await preflightPublicDeploymentPromotion(
+        request,
+        dependencies,
+    );
+    assert.equal(evidence.blockHash, finalizedHash);
+    assert.equal(evidence.blockNumber, "100");
+    assert.deepEqual(evidence.rpcProviderOperators, {
+        deployment: "alchemy",
+        validation: "self-hosted-berlin",
+    });
+    assert.deepEqual(destroyed.sort(), ["primary", "validation"]);
+
+    let invalidProviderConstructions = 0;
+    await assert.rejects(
+        preflightPublicDeploymentPromotion(
+            {
+                ...request,
+                env: {
+                    ...request.env,
+                    YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR: "ALCHEMY",
+                },
+            },
+            {
+                ...dependencies,
+                providerFactory: () => {
+                    invalidProviderConstructions += 1;
+                    return {};
+                },
+            },
+        ),
+        /must identify an operator distinct/u,
+    );
+    await assert.rejects(
+        preflightPublicDeploymentPromotion(
+            {
+                ...request,
+                env: {
+                    ...request.env,
+                    YS_DEPLOYMENT_VALIDATION_RPC_URL: "",
+                },
+            },
+            {
+                ...dependencies,
+                providerFactory: () => {
+                    invalidProviderConstructions += 1;
+                    return {};
+                },
+            },
+        ),
+        /YS_DEPLOYMENT_VALIDATION_RPC_URL is required/u,
+    );
+    assert.equal(invalidProviderConstructions, 0);
+
+    const wrongChainProviders = new Map([
+        [primaryRpcUrl, makeProvider("wrong-primary", 42161n)],
+        [validationRpcUrl, makeProvider("wrong-validation")],
+    ]);
+    await assert.rejects(
+        preflightPublicDeploymentPromotion(request, {
+            ...dependencies,
+            providerFactory: (url) => wrongChainProviders.get(url),
+        }),
+        /do not match the candidate chain/u,
+    );
+
+    const disagreementProviders = new Map([
+        [primaryRpcUrl, makeProvider("disagree-primary")],
+        [
+            validationRpcUrl,
+            makeProvider(
+                "disagree-validation",
+                421614n,
+                `0x${"cd".repeat(32)}`,
+            ),
+        ],
+    ]);
+    await assert.rejects(
+        preflightPublicDeploymentPromotion(request, {
+            ...dependencies,
+            providerFactory: (url) => disagreementProviders.get(url),
+        }),
+        /disagree on the finalized block/u,
+    );
+});
+
+test("unsupported aliases and failed preflights cannot reach size checks or Make", async () => {
+    const { preflightPublicDeploymentPromotion, runDeploymentGatesAndSpawn } =
+        await import("../parseArgs.js");
+    const calls = [];
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "base",
+        env: {},
+        makeArgs: ["deploy-and-generate-abis"],
+        childEnv: {},
+    };
+
+    await assert.rejects(
+        runDeploymentGatesAndSpawn(request, {
+            preflight: async (preflightRequest) => {
+                calls.push("preflight");
+                return preflightPublicDeploymentPromotion(preflightRequest, {
+                    providerFactory: () => {
+                        calls.push("provider");
+                        return {};
+                    },
+                });
+            },
+            runSizeCheck: () => {
+                calls.push("size");
+                return 0;
+            },
+            spawn: () => {
+                calls.push("make");
+                return { status: 0 };
+            },
+            log: () => {},
+        }),
+        /has no unique checked-in deployment finality policy/u,
+    );
+    assert.deepEqual(calls, ["preflight"]);
+
+    const orderedCalls = [];
+    const status = await runDeploymentGatesAndSpawn(
+        {
+            ...request,
+            network: "robinhoodTestnet",
+        },
+        {
+            preflight: async () => orderedCalls.push("preflight"),
+            runSizeCheck: () => {
+                orderedCalls.push("size");
+                return 0;
+            },
+            spawn: (command) => {
+                orderedCalls.push(command);
+                return { status: 0 };
+            },
+            log: () => {},
+        },
+    );
+    assert.equal(status, 0);
+    assert.deepEqual(orderedCalls, ["preflight", "size", "make"]);
+});
+
 test("production deployment generations are deterministic for injected entropy", async () => {
     const { resolveDeploymentGeneration } = await import("../parseArgs.js");
     const request = {
