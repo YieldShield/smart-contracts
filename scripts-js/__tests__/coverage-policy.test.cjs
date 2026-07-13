@@ -8,13 +8,18 @@ const workflow = readFileSync(
     "utf8",
 );
 
-test("coverage excludes instrumentation-sensitive gas benchmarks only", () => {
+test("ordinary tests use the hermetic package command and coverage excludes gas benchmarks", () => {
     const checks = workflow.slice(
         workflow.indexOf("  checks:"),
         workflow.indexOf("  fork-tests:"),
     );
-    assert.match(checks, /run: forge test\n/u);
+    assert.match(checks, /run: npm test\n/u);
     assert.doesNotMatch(checks, /FactoryLinearScanGas/u);
+
+    const packageJson = JSON.parse(
+        readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"),
+    );
+    assert.equal(packageJson.scripts.test, "forge test --offline");
 
     const coverage = workflow.slice(
         workflow.indexOf("  coverage:"),

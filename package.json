@@ -38,7 +38,7 @@
     "size-check:robinhood-deployment": "node scripts-js/checkDeploymentTargetSizes.js",
     "size-check": "node scripts-js/checkContractSizes.js",
     "test": "forge test --offline",
-    "test:fork": "FORK_TESTS_REQUIRED=true forge test --match-path 'test/*Fork.t.sol'",
+    "test:fork": "FORK_TESTS_ENABLED=true FORK_TESTS_REQUIRED=true forge test --match-path 'test/*Fork.t.sol'",
     "test:scripts": "node --test scripts-js/__tests__/*.test.cjs",
     "verify": "make verify RPC_URL=${1:-localhost}"
   },

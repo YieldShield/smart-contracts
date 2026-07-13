@@ -13,6 +13,13 @@ const robinhoodFork = readFileSync(
     join(root, "test", "RobinhoodMainnetFork.t.sol"),
     "utf8",
 );
+const forkHelper = readFileSync(
+    join(root, "test", "helpers", "ForkTestHelper.sol"),
+    "utf8",
+);
+const packageJson = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+);
 
 const forkJob = workflow.slice(
     workflow.indexOf("  fork-tests:"),
@@ -31,6 +38,22 @@ test("Ethereum fork suites are independently gated", () => {
         /if: steps\.ethereum-fork-rpcs\.outputs\.sepolia_available == 'true'/u,
     );
     assert.doesNotMatch(forkJob, /\[ -n "\$MAINNET_RPC_URL" \] &&/u);
+});
+
+test("RPC configuration alone cannot enable live fork tests", () => {
+    assert.match(forkHelper, /vm\.envOr\("FORK_TESTS_ENABLED", required\)/u);
+    assert.match(forkHelper, /if \(!enabled\)/u);
+    assert.match(
+        packageJson.scripts["test:fork"],
+        /^FORK_TESTS_ENABLED=true FORK_TESTS_REQUIRED=true /u,
+    );
+
+    const enabledCount =
+        forkJob.match(/FORK_TESTS_ENABLED: "true"/gu)?.length ?? 0;
+    const requiredCount =
+        forkJob.match(/FORK_TESTS_REQUIRED: "true"/gu)?.length ?? 0;
+    assert.equal(enabledCount, 3);
+    assert.equal(requiredCount, 3);
 });
 
 test("Robinhood mainnet fork smoke is mandatory and has the official public fallback", () => {

@@ -7,12 +7,19 @@ abstract contract ForkTestHelper is Test {
     error ForkRpcUrlRequired(string envName);
 
     function _forkUrlOrSkip(string memory envName, string memory networkName) internal returns (string memory) {
+        bool required = vm.envOr("FORK_TESTS_REQUIRED", false);
+        bool enabled = vm.envOr("FORK_TESTS_ENABLED", required);
+        if (!enabled) {
+            vm.skip(true, string.concat(networkName, " fork tests not enabled"));
+            return "";
+        }
+
         string memory forkUrl = vm.envOr(envName, string(""));
         if (bytes(forkUrl).length != 0) {
             return forkUrl;
         }
 
-        if (vm.envOr("FORK_TESTS_REQUIRED", false)) {
+        if (required) {
             revert ForkRpcUrlRequired(envName);
         }
 
