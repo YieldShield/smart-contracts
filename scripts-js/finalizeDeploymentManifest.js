@@ -14,6 +14,14 @@ import { resolveRpcEndpoint } from "./checkAccountBalance.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
+const FINALITY_POLICY_PATH = join(
+    PROJECT_ROOT,
+    "config",
+    "deployment-finality-policy.json",
+);
+const CHAIN_FINALITY_POLICY = Object.freeze(
+    JSON.parse(readFileSync(FINALITY_POLICY_PATH, "utf8")),
+);
 
 const PYTH_CORE_INVENTORY = Object.freeze([
     "YSToken",
@@ -216,6 +224,161 @@ function inventoryByName(manifest) {
         byName.set(name, ethers.getAddress(address));
     }
     return byName;
+}
+
+function chainFinalityPolicy(chainId, policy = CHAIN_FINALITY_POLICY) {
+    if (policy?.schemaVersion !== 1 || !policy.chains) {
+        throw new Error("Deployment finality policy is invalid.");
+    }
+    const chainPolicy = policy.chains[String(chainId)];
+    if (
+        !chainPolicy ||
+        chainPolicy.blockTag !== "finalized" ||
+        chainPolicy.requireIndependentValidationRpc !== true
+    ) {
+        throw new Error(
+            `Chain ${chainId} has no checked-in deployment finality policy.`,
+        );
+    }
+    return chainPolicy;
+}
+
+function canonicalRpcUrl(value, label) {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(`${label} is required for public manifest promotion.`);
+    }
+    let parsed;
+    try {
+        parsed = new URL(value.trim());
+    } catch {
+        throw new Error(`${label} must be an HTTP(S) RPC URL.`);
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error(`${label} must be an HTTP(S) RPC URL.`);
+    }
+    parsed.hash = "";
+    if (parsed.pathname !== "/") {
+        parsed.pathname = parsed.pathname.replace(/\/+$/u, "");
+    }
+    return parsed.toString();
+}
+
+function requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl) {
+    const primary = canonicalRpcUrl(primaryRpcUrl, "Deployment RPC URL");
+    const validation = canonicalRpcUrl(
+        validationRpcUrl,
+        "YS_DEPLOYMENT_VALIDATION_RPC_URL",
+    );
+    if (
+        primary === validation ||
+        new URL(primary).hostname === new URL(validation).hostname
+    ) {
+        throw new Error(
+            "YS_DEPLOYMENT_VALIDATION_RPC_URL must use a host distinct from the deployment RPC URL.",
+        );
+    }
+    return { primaryRpcUrl: primary, validationRpcUrl: validation };
+}
+
+function parseRpcQuantity(value, label) {
+    if (
+        typeof value !== "string" ||
+        !/^0x(?:0|[1-9a-f][0-9a-f]*)$/iu.test(value)
+    ) {
+        throw new Error(`${label} returned an invalid block number.`);
+    }
+    return BigInt(value);
+}
+
+async function readExplicitFinalizedBlock(provider, blockTag, label) {
+    if (!provider || typeof provider.send !== "function") {
+        throw new Error(
+            `${label} does not support explicit JSON-RPC finality checks.`,
+        );
+    }
+    const block = await provider.send("eth_getBlockByNumber", [
+        blockTag,
+        false,
+    ]);
+    if (!block || !ethers.isHexString(block.hash, 32)) {
+        throw new Error(`${label} did not return a finalized block.`);
+    }
+    return {
+        number: parseRpcQuantity(block.number, label),
+        hash: block.hash.toLowerCase(),
+    };
+}
+
+async function resolveFinalityEvidence({
+    chainId,
+    provider,
+    validationProvider,
+    primaryRpcUrl,
+    validationRpcUrl,
+    finalityPolicy = CHAIN_FINALITY_POLICY,
+}) {
+    const policy = chainFinalityPolicy(chainId, finalityPolicy);
+    requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl);
+    if (!validationProvider || validationProvider === provider) {
+        throw new Error(
+            "An independent deployment validation provider is required for public manifest promotion.",
+        );
+    }
+    const [primaryNetwork, validationNetwork] = await Promise.all([
+        provider.getNetwork(),
+        validationProvider.getNetwork(),
+    ]);
+    if (
+        BigInt(primaryNetwork.chainId).toString() !== String(chainId) ||
+        BigInt(validationNetwork.chainId).toString() !== String(chainId)
+    ) {
+        throw new Error(
+            "Deployment RPC providers do not match the candidate chain.",
+        );
+    }
+    const [primaryBlock, validationBlock] = await Promise.all([
+        readExplicitFinalizedBlock(provider, policy.blockTag, "Deployment RPC"),
+        readExplicitFinalizedBlock(
+            validationProvider,
+            policy.blockTag,
+            "Validation RPC",
+        ),
+    ]);
+    if (
+        primaryBlock.number !== validationBlock.number ||
+        primaryBlock.hash !== validationBlock.hash
+    ) {
+        throw new Error(
+            "Deployment RPC providers disagree on the finalized block.",
+        );
+    }
+    return {
+        blockHash: primaryBlock.hash,
+        blockNumber: primaryBlock.number.toString(),
+        blockTag: policy.blockTag,
+        independentValidationRpc: true,
+        policySchemaVersion: finalityPolicy.schemaVersion,
+    };
+}
+
+function providerAtBlock(provider, blockNumber) {
+    return {
+        call(transaction) {
+            return provider.call({ ...transaction, blockTag: blockNumber });
+        },
+        getCode(address) {
+            return provider.getCode(address, blockNumber);
+        },
+        getNetwork() {
+            return provider.getNetwork();
+        },
+        getStorage(address, position) {
+            return provider.getStorage(address, position, blockNumber);
+        },
+        getTransactionReceipt(hash) {
+            return provider.getTransactionReceipt(hash);
+        },
+    };
 }
 
 function validateExactInventory(candidate) {
@@ -674,7 +837,70 @@ function broadcastChainId(broadcast) {
     }
 }
 
-async function validateBroadcast({ broadcast, candidate, chainId, provider }) {
+function receiptProjection(receipt, expectedHash) {
+    if (!receipt) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} is missing or failed.`,
+        );
+    }
+    const transactionHash = String(
+        receipt?.hash ?? receipt?.transactionHash ?? "",
+    ).toLowerCase();
+    if (transactionHash !== expectedHash) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} returned an unexpected transaction hash.`,
+        );
+    }
+    if (!receiptSucceeded(receipt?.status)) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} is missing or failed.`,
+        );
+    }
+    if (!receipt.from || !ethers.isAddress(receipt.from)) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} has no valid deployer.`,
+        );
+    }
+    if (!ethers.isHexString(receipt.blockHash, 32)) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} has no valid block hash.`,
+        );
+    }
+    let blockNumber;
+    try {
+        blockNumber = BigInt(receipt.blockNumber);
+    } catch {
+        throw new Error(
+            `On-chain receipt ${expectedHash} has no valid block number.`,
+        );
+    }
+    if (blockNumber < 0n) {
+        throw new Error(
+            `On-chain receipt ${expectedHash} has no valid block number.`,
+        );
+    }
+    const contractAddress = receipt.contractAddress
+        ? ethers.getAddress(receipt.contractAddress)
+        : null;
+    return {
+        blockHash: receipt.blockHash.toLowerCase(),
+        blockNumber: blockNumber.toString(),
+        contractAddress,
+        from: ethers.getAddress(receipt.from),
+        status: 1,
+        transactionHash,
+    };
+}
+
+async function validateBroadcast({
+    broadcast,
+    candidate,
+    chainId,
+    provider,
+    validationProvider,
+    finalizedBlockHash,
+    finalizedBlockNumber,
+}) {
     if (broadcastChainId(broadcast) !== String(chainId)) {
         throw new Error("Broadcast chain does not match the candidate chain.");
     }
@@ -729,14 +955,34 @@ async function validateBroadcast({ broadcast, candidate, chainId, provider }) {
                 `Broadcast transaction ${hash} is incomplete or failed.`,
             );
         }
-        const liveReceipt = await provider.getTransactionReceipt(hash);
-        if (!liveReceipt || !receiptSucceeded(liveReceipt.status)) {
-            throw new Error(`On-chain receipt ${hash} is missing or failed.`);
+        const [liveReceipt, validationReceipt] = await Promise.all([
+            provider.getTransactionReceipt(hash),
+            validationProvider.getTransactionReceipt(hash),
+        ]);
+        const liveProjection = receiptProjection(liveReceipt, hash);
+        const validationProjection = receiptProjection(validationReceipt, hash);
+        if (
+            JSON.stringify(liveProjection) !==
+            JSON.stringify(validationProjection)
+        ) {
+            throw new Error(
+                `Deployment RPC providers disagree on transaction receipt ${hash}.`,
+            );
+        }
+        if (BigInt(liveProjection.blockNumber) > finalizedBlockNumber) {
+            throw new Error(
+                `On-chain receipt ${hash} is not included in the agreed finalized state.`,
+            );
         }
         if (
-            !liveReceipt.from ||
-            ethers.getAddress(liveReceipt.from) !== expectedDeployer
+            BigInt(liveProjection.blockNumber) === finalizedBlockNumber &&
+            liveProjection.blockHash !== finalizedBlockHash
         ) {
+            throw new Error(
+                `On-chain receipt ${hash} is not included in the agreed finalized block.`,
+            );
+        }
+        if (liveProjection.from !== expectedDeployer) {
             throw new Error(
                 `On-chain receipt ${hash} deployer does not match the candidate.`,
             );
@@ -754,8 +1000,8 @@ async function validateBroadcast({ broadcast, candidate, chainId, provider }) {
                 );
             }
             if (
-                !liveReceipt.contractAddress ||
-                !ethers.isAddress(liveReceipt.contractAddress)
+                !liveProjection.contractAddress ||
+                !ethers.isAddress(liveProjection.contractAddress)
             ) {
                 throw new Error(
                     `On-chain creation receipt ${hash} is missing a valid contract address.`,
@@ -764,7 +1010,7 @@ async function validateBroadcast({ broadcast, candidate, chainId, provider }) {
             const recordedAddress = ethers.getAddress(
                 transaction.contractAddress,
             );
-            const liveAddress = ethers.getAddress(liveReceipt.contractAddress);
+            const liveAddress = liveProjection.contractAddress;
             if (recordedAddress !== liveAddress) {
                 throw new Error(
                     `Broadcast creation address does not match the on-chain receipt for ${hash}.`,
@@ -873,6 +1119,10 @@ async function validateAndBuildManifest({
     deploymentId,
     configurationDigest,
     provider,
+    validationProvider,
+    primaryRpcUrl,
+    validationRpcUrl,
+    finalityPolicy = CHAIN_FINALITY_POLICY,
     env = process.env,
     now = () => new Date(),
     readFeed,
@@ -918,11 +1168,6 @@ async function validateAndBuildManifest({
             "Relaxed production guards and Robinhood demo assets are valid only on chain 46630.",
         );
     }
-    const liveNetwork = await provider.getNetwork();
-    if (BigInt(liveNetwork.chainId).toString() !== String(chainId)) {
-        throw new Error("RPC chain does not match the deployment candidate.");
-    }
-
     const { byName, demoEnabled, oracleMode } =
         validateExactInventory(candidate);
     if (
@@ -946,17 +1191,44 @@ async function validateAndBuildManifest({
             );
         }
     }
+    const finalityEvidence = await resolveFinalityEvidence({
+        chainId,
+        provider,
+        validationProvider,
+        primaryRpcUrl,
+        validationRpcUrl,
+        finalityPolicy,
+    });
+    const finalizedBlockNumber = BigInt(finalityEvidence.blockNumber);
+    const finalizedProvider = providerAtBlock(provider, finalizedBlockNumber);
+    const finalizedValidationProvider = providerAtBlock(
+        validationProvider,
+        finalizedBlockNumber,
+    );
     const { createdAddresses, transactionHashes } = await validateBroadcast({
         broadcast,
         candidate,
         chainId,
-        provider,
+        provider: finalizedProvider,
+        validationProvider: finalizedValidationProvider,
+        finalizedBlockHash: finalityEvidence.blockHash,
+        finalizedBlockNumber,
     });
     const codehashes = {};
     for (const address of byName.values()) {
-        const code = await provider.getCode(address);
+        const [code, validationCode] = await Promise.all([
+            finalizedProvider.getCode(address),
+            finalizedValidationProvider.getCode(address),
+        ]);
         if (typeof code !== "string" || code === "0x") {
-            throw new Error(`No deployed code at ${address}.`);
+            throw new Error(
+                `No deployed code at ${address} in finalized state.`,
+            );
+        }
+        if (code.toLowerCase() !== validationCode?.toLowerCase()) {
+            throw new Error(
+                `Deployment RPC providers disagree on finalized code at ${address}.`,
+            );
         }
         codehashes[address] = ethers.keccak256(code);
     }
@@ -1003,11 +1275,26 @@ async function validateAndBuildManifest({
         reviewedCodehashPins[name] = expected.toLowerCase();
     }
 
-    const protocolState = await readProtocolState(provider, {
-        byName,
-        demoEnabled,
-        oracleMode,
-    });
+    const [protocolState, validationProtocolState] = await Promise.all([
+        readProtocolState(finalizedProvider, {
+            byName,
+            demoEnabled,
+            oracleMode,
+        }),
+        readProtocolState(finalizedValidationProvider, {
+            byName,
+            demoEnabled,
+            oracleMode,
+        }),
+    ]);
+    if (
+        JSON.stringify(canonicalize(protocolState)) !==
+        JSON.stringify(canonicalize(validationProtocolState))
+    ) {
+        throw new Error(
+            "Deployment RPC providers disagree on finalized protocol wiring.",
+        );
+    }
     validateProtocolWiring(protocolState, {
         byName,
         candidate,
@@ -1022,6 +1309,7 @@ async function validateAndBuildManifest({
         transactionHashes,
         codehashEvidence: codehashes,
         addressEvidence,
+        finalityEvidence,
         reviewedCodehashPins,
     };
     if (demoEnabled) {
@@ -1034,7 +1322,7 @@ async function validateAndBuildManifest({
             byName,
             codehashes,
             expectedDeployer: candidate.deployer,
-            provider,
+            provider: finalizedProvider,
             readFeed,
         });
     }
@@ -1052,7 +1340,11 @@ function canonicalize(value) {
 }
 
 function immutableGenerationProjection(manifest) {
-    const { validatedAt: _validatedAt, ...immutable } = manifest;
+    const {
+        finalityEvidence: _finalityEvidence,
+        validatedAt: _validatedAt,
+        ...immutable
+    } = manifest;
     const standardMockFeeds =
         immutable.fixtureMetadata?.robinhoodStandardMockFeeds;
     if (standardMockFeeds) {
@@ -1080,6 +1372,10 @@ async function promoteDeploymentManifest({
     configurationDigest,
     scriptName = "DeployYieldShieldProduction.s.sol",
     provider,
+    validationProvider,
+    primaryRpcUrl,
+    validationRpcUrl,
+    finalityPolicy = CHAIN_FINALITY_POLICY,
     env = process.env,
     now,
     readFeed,
@@ -1119,6 +1415,10 @@ async function promoteDeploymentManifest({
         deploymentId,
         configurationDigest,
         provider,
+        validationProvider,
+        primaryRpcUrl,
+        validationRpcUrl,
+        finalityPolicy,
         env,
         now,
         readFeed,
@@ -1189,7 +1489,14 @@ async function main() {
     const configurationDigest = process.env.YS_DEPLOYMENT_CONFIGURATION_DIGEST;
     if (!configurationDigest)
         throw new Error("YS_DEPLOYMENT_CONFIGURATION_DIGEST is required.");
-    const provider = new ethers.JsonRpcProvider(resolveRpcUrl(args["rpc-url"]));
+    const primaryRpcUrl = resolveRpcUrl(args["rpc-url"]);
+    const validationRpcInput = process.env.YS_DEPLOYMENT_VALIDATION_RPC_URL;
+    const validationRpcUrl = validationRpcInput
+        ? resolveRpcUrl(validationRpcInput)
+        : validationRpcInput;
+    requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl);
+    const provider = new ethers.JsonRpcProvider(primaryRpcUrl);
+    const validationProvider = new ethers.JsonRpcProvider(validationRpcUrl);
     try {
         const result = await promoteDeploymentManifest({
             chainId: args["chain-id"],
@@ -1197,12 +1504,16 @@ async function main() {
             configurationDigest,
             scriptName: args.script,
             provider,
+            validationProvider,
+            primaryRpcUrl,
+            validationRpcUrl,
         });
         console.log(
             `Promoted deployment generation ${args["deployment-id"]} to ${result.activePath}`,
         );
     } finally {
         provider.destroy();
+        validationProvider.destroy();
     }
 }
 
@@ -1214,12 +1525,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 }
 
 export {
+    CHAIN_FINALITY_POLICY,
     CHAINLINK_CORE_INVENTORY,
     DEMO_EXTRA_INVENTORY,
     DEMO_FEEDS,
     PYTH_CORE_INVENTORY,
     buildFixtureMetadata,
+    chainFinalityPolicy,
     promoteDeploymentManifest,
+    requireIndependentRpcUrls,
+    resolveFinalityEvidence,
     resolveRpcUrl,
     validateAndBuildManifest,
     validateExactInventory,

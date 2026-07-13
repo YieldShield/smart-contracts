@@ -49,6 +49,13 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
         deploymentId: "generation-1",
         configurationDigest: "digest-1",
         validatedAt: "2026-07-13T00:00:00.000Z",
+        finalityEvidence: {
+            blockHash: `0x${"ab".repeat(32)}`,
+            blockNumber: "1234",
+            blockTag: "finalized",
+            independentValidationRpc: true,
+            policySchemaVersion: 1,
+        },
         robinhoodDemoAssetsEnabled: "false",
         transactionHashes: ["0x01"],
         codehashEvidence: {},
@@ -69,6 +76,14 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
     });
 
     assert.equal(validateActiveDeploymentManifest("46630", manifest), manifest);
+
+    const withoutFinalityEvidence = { ...manifest };
+    delete withoutFinalityEvidence.finalityEvidence;
+    assert.throws(
+        () =>
+            validateActiveDeploymentManifest("46630", withoutFinalityEvidence),
+        /missing finalized-state promotion evidence/u,
+    );
 
     delete manifest["0x0000000000000000000000000000000000000001"];
     assert.throws(

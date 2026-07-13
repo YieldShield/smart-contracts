@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "chains": {
+    "4663": {
+      "network": "robinhood-mainnet",
+      "blockTag": "finalized",
+      "requireIndependentValidationRpc": true
+    },
+    "46630": {
+      "network": "robinhood-testnet",
+      "blockTag": "finalized",
+      "requireIndependentValidationRpc": true
+    }
+  }
+}

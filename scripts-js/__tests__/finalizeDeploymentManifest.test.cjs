@@ -17,6 +17,11 @@ const DEPLOYMENT_ID = "gen-test-00000001";
 const CONFIGURATION_DIGEST = `0x${"cd".repeat(32)}`;
 const DEPLOYER = "0x000000000000000000000000000000000000dEaD";
 const TX_HASH = `0x${"ab".repeat(32)}`;
+const FINALIZED_BLOCK_NUMBER = 100n;
+const FINALIZED_BLOCK_HASH = `0x${"fa".repeat(32)}`;
+const RECEIPT_BLOCK_HASH = `0x${"bc".repeat(32)}`;
+const PRIMARY_RPC_URL = "https://deployment-rpc.example/v1";
+const VALIDATION_RPC_URL = "https://validation-rpc.example/v1";
 const FACTORY_CREATED_OUTPUTS = new Set([
     "RobinhoodSGOVUSDGPool",
     "RobinhoodSPYUSDGPool",
@@ -96,7 +101,14 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     const liveReceipts = new Map(
         receipts.map(({ contractAddress, transactionHash }) => [
             transactionHash,
-            { contractAddress, from: DEPLOYER, status: 1 },
+            {
+                blockHash: RECEIPT_BLOCK_HASH,
+                blockNumber: FINALIZED_BLOCK_NUMBER - 1n,
+                contractAddress,
+                from: DEPLOYER,
+                status: 1,
+                transactionHash,
+            },
         ]),
     );
     const broadcast = {
@@ -106,17 +118,33 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         pending: [],
     };
     const missingCode = new Set();
+    const callBlockTags = [];
+    const codeBlockTags = [];
     const provider = {
+        async call(transaction) {
+            callBlockTags.push(transaction.blockTag);
+            return "0x";
+        },
         async getNetwork() {
             return { chainId: BigInt(CHAIN_ID) };
         },
         async getTransactionReceipt(hash) {
             return liveReceipts.get(hash) || null;
         },
-        async getCode(address) {
+        async getCode(address, blockTag) {
+            codeBlockTags.push(blockTag);
             return missingCode.has(address.toLowerCase()) ? "0x" : "0x6000";
         },
+        async send(method, params) {
+            assert.equal(method, "eth_getBlockByNumber");
+            assert.deepEqual(params, ["finalized", false]);
+            return {
+                hash: FINALIZED_BLOCK_HASH,
+                number: `0x${FINALIZED_BLOCK_NUMBER.toString(16)}`,
+            };
+        },
     };
+    const validationProvider = { ...provider };
     const poolInfo = {};
     if (demo) {
         const configs = {
@@ -284,12 +312,18 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     return {
         ...module,
         broadcast,
+        callBlockTags,
         candidate,
+        codeBlockTags,
         liveReceipts,
         missingCode,
         provider,
+        validationProvider,
         protocolState,
-        readProtocolState: async () => structuredClone(protocolState),
+        readProtocolState: async (scopedProvider) => {
+            await scopedProvider.call({ data: "0x", to: addressFor(1) });
+            return structuredClone(protocolState);
+        },
     };
 }
 
@@ -329,6 +363,9 @@ function promotionArgs(rootDir, item, overrides = {}) {
         deploymentId: DEPLOYMENT_ID,
         configurationDigest: CONFIGURATION_DIGEST,
         provider: item.provider,
+        validationProvider: item.validationProvider,
+        primaryRpcUrl: PRIMARY_RPC_URL,
+        validationRpcUrl: VALIDATION_RPC_URL,
         readProtocolState: item.readProtocolState,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
@@ -343,6 +380,9 @@ function validationArgs(item, overrides = {}) {
         deploymentId: DEPLOYMENT_ID,
         configurationDigest: CONFIGURATION_DIGEST,
         provider: item.provider,
+        validationProvider: item.validationProvider,
+        primaryRpcUrl: PRIMARY_RPC_URL,
+        validationRpcUrl: VALIDATION_RPC_URL,
         readProtocolState: item.readProtocolState,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
@@ -399,6 +439,25 @@ test("complete generation promotes atomically and records exact demo fixture met
     assert.equal(result.manifest.status, "active");
     assert.equal(result.manifest.deploymentId, DEPLOYMENT_ID);
     assert.equal(result.manifest.transactionHashes[0], TX_HASH);
+    assert.deepEqual(result.manifest.finalityEvidence, {
+        blockHash: FINALIZED_BLOCK_HASH,
+        blockNumber: FINALIZED_BLOCK_NUMBER.toString(),
+        blockTag: "finalized",
+        independentValidationRpc: true,
+        policySchemaVersion: 1,
+    });
+    assert.ok(item.codeBlockTags.length > 0);
+    assert.ok(
+        item.codeBlockTags.every(
+            (blockTag) => blockTag === FINALIZED_BLOCK_NUMBER,
+        ),
+    );
+    assert.ok(item.callBlockTags.length > 0);
+    assert.ok(
+        item.callBlockTags.every(
+            (blockTag) => blockTag === FINALIZED_BLOCK_NUMBER,
+        ),
+    );
     assert.equal(
         result.manifest.fixtureMetadata.robinhoodStandardMockFeeds.fixtureId,
         "robinhood-standard-mock-feeds-v1",
@@ -444,6 +503,98 @@ test("complete generation promotes atomically and records exact demo fixture met
     );
 });
 
+test("public promotion requires a distinct independent validation RPC", async () => {
+    const item = await fixture();
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { validationRpcUrl: undefined }),
+        ),
+        /YS_DEPLOYMENT_VALIDATION_RPC_URL is required/u,
+    );
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                validationRpcUrl: `${PRIMARY_RPC_URL}/`,
+            }),
+        ),
+        /host distinct/u,
+    );
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                validationRpcUrl:
+                    "https://deployment-rpc.example/another-account",
+            }),
+        ),
+        /host distinct/u,
+    );
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                validationProvider: item.provider,
+            }),
+        ),
+        /independent deployment validation provider/u,
+    );
+});
+
+test("promotion fails closed when RPCs disagree on finalized state", async () => {
+    const item = await fixture();
+    const validationProvider = {
+        ...item.validationProvider,
+        async send() {
+            return {
+                hash: `0x${"fb".repeat(32)}`,
+                number: `0x${FINALIZED_BLOCK_NUMBER.toString(16)}`,
+            };
+        },
+    };
+
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { validationProvider }),
+        ),
+        /disagree on the finalized block/u,
+    );
+});
+
+test("head-only deployment state cannot be promoted", async () => {
+    const item = await fixture();
+    const headOnlyProvider = {
+        ...item.provider,
+        async getCode(_address, blockTag) {
+            return blockTag === undefined ? "0x6000" : "0x";
+        },
+    };
+    assert.equal(await headOnlyProvider.getCode(addressFor(1)), "0x6000");
+
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { provider: headOnlyProvider }),
+        ),
+        /No deployed code.*finalized state/u,
+    );
+});
+
+test("promotion requires both RPCs to agree on finalized receipts", async () => {
+    const item = await fixture();
+    const validationProvider = {
+        ...item.validationProvider,
+        async getTransactionReceipt(hash) {
+            const receipt =
+                await item.validationProvider.getTransactionReceipt(hash);
+            return { ...receipt, blockHash: `0x${"bd".repeat(32)}` };
+        },
+    };
+
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, { validationProvider }),
+        ),
+        /disagree on transaction receipt/u,
+    );
+});
+
 test("partial broadcast cannot replace the previous active manifest", async (t) => {
     const item = await fixture();
     item.broadcast.receipts = [];
@@ -485,6 +636,9 @@ test("candidate validation rejects wrong chain, deployer, digest, inventory, and
         deploymentId: DEPLOYMENT_ID,
         configurationDigest: CONFIGURATION_DIGEST,
         provider: item.provider,
+        validationProvider: item.validationProvider,
+        primaryRpcUrl: PRIMARY_RPC_URL,
+        validationRpcUrl: VALIDATION_RPC_URL,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         readProtocolState: item.readProtocolState,
     };
@@ -532,6 +686,9 @@ test("demo fixture metadata rejects an unexpected feed owner", async () => {
             deploymentId: DEPLOYMENT_ID,
             configurationDigest: CONFIGURATION_DIGEST,
             provider: item.provider,
+            validationProvider: item.validationProvider,
+            primaryRpcUrl: PRIMARY_RPC_URL,
+            validationRpcUrl: VALIDATION_RPC_URL,
             readProtocolState: item.readProtocolState,
             readFeed: async () => ({
                 decimals: 8,
@@ -715,6 +872,7 @@ test("Chainlink production mode accepts Robinhood mainnet", async () => {
             return { chainId: 4663n };
         },
     };
+    const validationProvider = { ...provider };
 
     const manifest = await item.validateAndBuildManifest(
         validationArgs(item, {
@@ -722,6 +880,7 @@ test("Chainlink production mode accepts Robinhood mainnet", async () => {
             candidate,
             chainId: "4663",
             provider,
+            validationProvider,
         }),
     );
     assert.equal(manifest.chainId, "4663");
@@ -771,8 +930,11 @@ test("CALL targets cannot bind an address to a deployment generation", async () 
         transactionHash: transaction.hash,
     });
     item.liveReceipts.set(transaction.hash, {
+        blockHash: RECEIPT_BLOCK_HASH,
+        blockNumber: FINALIZED_BLOCK_NUMBER - 1n,
         from: DEPLOYER,
         status: 1,
+        transactionHash: transaction.hash,
     });
 
     await assert.rejects(
@@ -798,7 +960,10 @@ test("CREATE provenance must match a live receipt contract address", async () =>
     };
     await assert.rejects(
         item.validateAndBuildManifest(
-            validationArgs(item, { provider: providerWithoutAddress }),
+            validationArgs(item, {
+                provider: providerWithoutAddress,
+                validationProvider: { ...providerWithoutAddress },
+            }),
         ),
         /missing a valid contract address/u,
     );
@@ -814,7 +979,10 @@ test("CREATE provenance must match a live receipt contract address", async () =>
     };
     await assert.rejects(
         item.validateAndBuildManifest(
-            validationArgs(item, { provider: providerWithMismatch }),
+            validationArgs(item, {
+                provider: providerWithMismatch,
+                validationProvider: { ...providerWithMismatch },
+            }),
         ),
         /creation address does not match/u,
     );
@@ -876,9 +1044,12 @@ test("same-generation recovery is idempotent and history collisions fail", async
     );
     compositeReceipt.contractAddress = changedAddress;
     item.liveReceipts.set(compositeTransaction.hash, {
+        blockHash: RECEIPT_BLOCK_HASH,
+        blockNumber: FINALIZED_BLOCK_NUMBER - 1n,
         contractAddress: changedAddress,
         from: DEPLOYER,
         status: 1,
+        transactionHash: compositeTransaction.hash,
     });
     const changedProtocolState = structuredClone(item.protocolState);
     changedProtocolState.factory.compositeOracle = changedAddress;

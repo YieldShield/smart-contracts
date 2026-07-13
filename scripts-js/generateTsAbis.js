@@ -78,6 +78,18 @@ function validateActiveDeploymentManifest(chainId, manifest) {
             );
         }
     }
+    const finalityEvidence = manifest.finalityEvidence;
+    if (
+        finalityEvidence?.blockTag !== "finalized" ||
+        finalityEvidence?.independentValidationRpc !== true ||
+        finalityEvidence?.policySchemaVersion !== 1 ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(finalityEvidence?.blockNumber ?? "") ||
+        !/^0x[0-9a-f]{64}$/iu.test(finalityEvidence?.blockHash ?? "")
+    ) {
+        throw new Error(
+            `Deployment ${normalizedChainId} is missing finalized-state promotion evidence`,
+        );
+    }
     const evidenceObjects = [
         manifest.codehashEvidence,
         manifest.addressEvidence,
