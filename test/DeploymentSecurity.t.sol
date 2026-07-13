@@ -36,6 +36,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bytes32 internal expectedPythOracleCodehash;
     bytes32 internal expectedChainlinkOracleCodehash;
     bytes32 internal expectedUSMarketSessionGateCodehash;
+    bytes32 internal expectedRobinhoodStockOracleCodehash;
     bytes32 internal expectedRobinhoodSequencerCodehash;
     bool internal strictProductionGuardsOverrideSet;
     bool internal strictProductionGuardsOverride;
@@ -142,6 +143,35 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         return address(0);
     }
 
+    function deployRobinhoodStockOracleFeedHarness(address chainlinkOracleFeed, address marketSessionGate)
+        external
+        returns (address)
+    {
+        return _deployRobinhoodStockOracleFeed(chainlinkOracleFeed, marketSessionGate);
+    }
+
+    function validateRobinhoodStockOracleWiringHarness(
+        address chainlinkOracleFeed,
+        address marketSessionGate,
+        address stockOracleFeed
+    ) external view {
+        _validateRobinhoodStockOracleWiring(
+            ProtocolDeployment({
+                factoryAddr: address(0),
+                factoryImplementationAddr: address(0),
+                poolImplementationAddr: address(0),
+                compositeOracleAddr: address(0),
+                pythOracleAddr: address(0),
+                chainlinkOracleFeedAddr: chainlinkOracleFeed,
+                marketSessionGateAddr: marketSessionGate,
+                robinhoodStockOracleFeedAddr: stockOracleFeed,
+                erc4626OracleFeedAddr: address(0),
+                timelockAddr: address(0),
+                governorAddr: address(0)
+            })
+        );
+    }
+
     function validateProductionBootstrapHolder(address holder) external view {
         _validateProductionBootstrapHolder(
             holder,
@@ -233,6 +263,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -270,6 +301,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -307,6 +339,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -315,113 +348,26 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     }
 
     function finalizeProductionChainlinkProtocolBootstrapHarness(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address chainlinkOracleFeedAddr,
-        address marketSessionGateAddr,
-        address erc4626OracleFeedAddr,
-        address timelockAddr,
-        address governorAddr,
+        ProtocolDeployment memory protocol,
         address bootstrapAdmin
     ) external {
-        _pinProductionChainlinkProtocolCodehashesForHarness(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            chainlinkOracleFeedAddr,
-            marketSessionGateAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
-        );
-        _finalizeProductionProtocolBootstrap(
-            ProtocolDeployment({
-                factoryAddr: factoryAddr,
-                factoryImplementationAddr: factoryImplementationAddr,
-                poolImplementationAddr: poolImplementationAddr,
-                compositeOracleAddr: compositeOracleAddr,
-                pythOracleAddr: address(0),
-                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
-                marketSessionGateAddr: marketSessionGateAddr,
-                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
-                timelockAddr: timelockAddr,
-                governorAddr: governorAddr
-            }),
-            bootstrapAdmin
-        );
+        _pinProductionChainlinkProtocolCodehashesForHarness(protocol);
+        _finalizeProductionProtocolBootstrap(protocol, bootstrapAdmin);
     }
 
-    function seedRobinhoodTestnetDemoAssetsHarness(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address chainlinkOracleFeedAddr,
-        address marketSessionGateAddr,
-        address erc4626OracleFeedAddr,
-        address timelockAddr,
-        address governorAddr
-    ) external {
+    function seedRobinhoodTestnetDemoAssetsHarness(ProtocolDeployment memory protocol) external {
         deployer = address(this);
-        USMarketSessionGate marketSessionGate = USMarketSessionGate(marketSessionGateAddr);
+        deployments.push(Deployment("RobinhoodStockOracleFeed", protocol.robinhoodStockOracleFeedAddr));
+        USMarketSessionGate marketSessionGate = USMarketSessionGate(protocol.marketSessionGateAddr);
         marketSessionGate.setDailySession(
             uint64(block.timestamp / marketSessionGate.SECONDS_PER_DAY()), 0, marketSessionGate.SECONDS_PER_DAY()
         );
-        _seedRobinhoodTestnetDemoAssets(
-            ProtocolDeployment({
-                factoryAddr: factoryAddr,
-                factoryImplementationAddr: factoryImplementationAddr,
-                poolImplementationAddr: poolImplementationAddr,
-                compositeOracleAddr: compositeOracleAddr,
-                pythOracleAddr: address(0),
-                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
-                marketSessionGateAddr: marketSessionGateAddr,
-                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
-                timelockAddr: timelockAddr,
-                governorAddr: governorAddr
-            })
-        );
+        _seedRobinhoodTestnetDemoAssets(protocol);
     }
 
-    function validateProductionChainlinkProtocolFinalizedHarness(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address chainlinkOracleFeedAddr,
-        address marketSessionGateAddr,
-        address erc4626OracleFeedAddr,
-        address timelockAddr,
-        address governorAddr
-    ) external {
-        _pinProductionChainlinkProtocolCodehashesForHarness(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            chainlinkOracleFeedAddr,
-            marketSessionGateAddr,
-            erc4626OracleFeedAddr,
-            timelockAddr,
-            governorAddr
-        );
-        _validateProductionProtocolFinalized(
-            ProtocolDeployment({
-                factoryAddr: factoryAddr,
-                factoryImplementationAddr: factoryImplementationAddr,
-                poolImplementationAddr: poolImplementationAddr,
-                compositeOracleAddr: compositeOracleAddr,
-                pythOracleAddr: address(0),
-                chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
-                marketSessionGateAddr: marketSessionGateAddr,
-                erc4626OracleFeedAddr: erc4626OracleFeedAddr,
-                timelockAddr: timelockAddr,
-                governorAddr: governorAddr
-            })
-        );
+    function validateProductionChainlinkProtocolFinalizedHarness(ProtocolDeployment memory protocol) external {
+        _pinProductionChainlinkProtocolCodehashesForHarness(protocol);
+        _validateProductionProtocolFinalized(protocol);
     }
 
     function _pinProductionProtocolCodehashesForHarness(
@@ -448,31 +394,24 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         }
     }
 
-    function _pinProductionChainlinkProtocolCodehashesForHarness(
-        address factoryAddr,
-        address factoryImplementationAddr,
-        address poolImplementationAddr,
-        address compositeOracleAddr,
-        address chainlinkOracleCodehashAddr,
-        address marketSessionGateAddr,
-        address erc4626OracleAddr,
-        address timelockAddr,
-        address governorAddr
-    ) internal {
+    function _pinProductionChainlinkProtocolCodehashesForHarness(ProtocolDeployment memory protocol) internal {
         _pinCommonProductionCodehashesForHarness(
-            factoryAddr,
-            factoryImplementationAddr,
-            poolImplementationAddr,
-            compositeOracleAddr,
-            erc4626OracleAddr,
-            timelockAddr,
-            governorAddr
+            protocol.factoryAddr,
+            protocol.factoryImplementationAddr,
+            protocol.poolImplementationAddr,
+            protocol.compositeOracleAddr,
+            protocol.erc4626OracleFeedAddr,
+            protocol.timelockAddr,
+            protocol.governorAddr
         );
         if (expectedChainlinkOracleCodehash == bytes32(0)) {
-            expectedChainlinkOracleCodehash = chainlinkOracleCodehashAddr.codehash;
+            expectedChainlinkOracleCodehash = protocol.chainlinkOracleFeedAddr.codehash;
         }
         if (expectedUSMarketSessionGateCodehash == bytes32(0)) {
-            expectedUSMarketSessionGateCodehash = marketSessionGateAddr.codehash;
+            expectedUSMarketSessionGateCodehash = protocol.marketSessionGateAddr.codehash;
+        }
+        if (expectedRobinhoodStockOracleCodehash == bytes32(0)) {
+            expectedRobinhoodStockOracleCodehash = protocol.robinhoodStockOracleFeedAddr.codehash;
         }
     }
 
@@ -544,6 +483,9 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         if (name == bytes32("USMarketSessionGate") && expectedUSMarketSessionGateCodehash != bytes32(0)) {
             return expectedUSMarketSessionGateCodehash;
         }
+        if (name == bytes32("RobinhoodStockOracleFeed") && expectedRobinhoodStockOracleCodehash != bytes32(0)) {
+            return expectedRobinhoodStockOracleCodehash;
+        }
         if (name == bytes32("RobinhoodSequencerFeed") && expectedRobinhoodSequencerCodehash != bytes32(0)) {
             return expectedRobinhoodSequencerCodehash;
         }
@@ -552,18 +494,33 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     }
 
     function setExpectedProductionCodehashHarness(bytes32 name, bytes32 expectedCodehash) external {
-        if (name == bytes32("SplitRiskPoolFactory")) expectedFactoryProxyCodehash = expectedCodehash;
-        else if (name == bytes32("FactoryImplementation")) expectedFactoryImplementationCodehash = expectedCodehash;
-        else if (name == bytes32("PoolImplementation")) expectedPoolImplementationCodehash = expectedCodehash;
-        else if (name == bytes32("YSToken")) expectedYSTokenCodehash = expectedCodehash;
-        else if (name == bytes32("TimelockController")) expectedTimelockCodehash = expectedCodehash;
-        else if (name == bytes32("YSGovernor")) expectedGovernorCodehash = expectedCodehash;
-        else if (name == bytes32("CompositeOracle")) expectedCompositeOracleCodehash = expectedCodehash;
-        else if (name == bytes32("ERC4626OracleFeed")) expectedERC4626OracleCodehash = expectedCodehash;
-        else if (name == bytes32("PythOracle")) expectedPythOracleCodehash = expectedCodehash;
-        else if (name == bytes32("ChainlinkOracleFeed")) expectedChainlinkOracleCodehash = expectedCodehash;
-        else if (name == bytes32("USMarketSessionGate")) expectedUSMarketSessionGateCodehash = expectedCodehash;
-        else if (name == bytes32("RobinhoodSequencerFeed")) expectedRobinhoodSequencerCodehash = expectedCodehash;
+        if (name == bytes32("SplitRiskPoolFactory")) {
+            expectedFactoryProxyCodehash = expectedCodehash;
+        } else if (name == bytes32("FactoryImplementation")) {
+            expectedFactoryImplementationCodehash = expectedCodehash;
+        } else if (name == bytes32("PoolImplementation")) {
+            expectedPoolImplementationCodehash = expectedCodehash;
+        } else if (name == bytes32("YSToken")) {
+            expectedYSTokenCodehash = expectedCodehash;
+        } else if (name == bytes32("TimelockController")) {
+            expectedTimelockCodehash = expectedCodehash;
+        } else if (name == bytes32("YSGovernor")) {
+            expectedGovernorCodehash = expectedCodehash;
+        } else if (name == bytes32("CompositeOracle")) {
+            expectedCompositeOracleCodehash = expectedCodehash;
+        } else if (name == bytes32("ERC4626OracleFeed")) {
+            expectedERC4626OracleCodehash = expectedCodehash;
+        } else if (name == bytes32("PythOracle")) {
+            expectedPythOracleCodehash = expectedCodehash;
+        } else if (name == bytes32("ChainlinkOracleFeed")) {
+            expectedChainlinkOracleCodehash = expectedCodehash;
+        } else if (name == bytes32("USMarketSessionGate")) {
+            expectedUSMarketSessionGateCodehash = expectedCodehash;
+        } else if (name == bytes32("RobinhoodStockOracleFeed")) {
+            expectedRobinhoodStockOracleCodehash = expectedCodehash;
+        } else if (name == bytes32("RobinhoodSequencerFeed")) {
+            expectedRobinhoodSequencerCodehash = expectedCodehash;
+        }
     }
 
     function requireProductionCodehashHarness(bytes32 name, address contractAddress, string memory envName)
@@ -1591,6 +1548,51 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(guardianMetadata, vm.toString(guardian));
     }
 
+    function test_RobinhoodStockOracle_IsCoreDeploymentAndPinsImmutableWiring() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
+        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(0xA11CE));
+
+        address stockOracleFeed =
+            harness.deployRobinhoodStockOracleFeedHarness(address(chainlinkOracleFeed), address(marketSessionGate));
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodStockOracleFeed"), stockOracleFeed);
+        assertEq(RobinhoodStockOracleFeed(stockOracleFeed).innerFeed(), address(chainlinkOracleFeed));
+        assertEq(RobinhoodStockOracleFeed(stockOracleFeed).marketSessionGate(), address(marketSessionGate));
+        harness.validateRobinhoodStockOracleWiringHarness(
+            address(chainlinkOracleFeed), address(marketSessionGate), stockOracleFeed
+        );
+
+        ChainlinkOracleFeed wrongInnerFeed = new ChainlinkOracleFeed(86_400);
+        RobinhoodStockOracleFeed wrongInner =
+            new RobinhoodStockOracleFeed(address(wrongInnerFeed), address(marketSessionGate));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAddressMismatch.selector,
+                bytes32("stockOracle.innerFeed"),
+                address(wrongInnerFeed),
+                address(chainlinkOracleFeed)
+            )
+        );
+        harness.validateRobinhoodStockOracleWiringHarness(
+            address(chainlinkOracleFeed), address(marketSessionGate), address(wrongInner)
+        );
+
+        USMarketSessionGate wrongMarketGate = new USMarketSessionGate(address(harness), address(0xA11CE));
+        RobinhoodStockOracleFeed wrongGate =
+            new RobinhoodStockOracleFeed(address(chainlinkOracleFeed), address(wrongMarketGate));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionProtocolAddressMismatch.selector,
+                bytes32("stockOracle.marketGate"),
+                address(wrongMarketGate),
+                address(marketSessionGate)
+            )
+        );
+        harness.validateRobinhoodStockOracleWiringHarness(
+            address(chainlinkOracleFeed), address(marketSessionGate), address(wrongGate)
+        );
+    }
+
     function test_ProductionMarketSessionGuardian_RejectsZeroAndTimelock() public {
         ProductionDeployHarness harness = new ProductionDeployHarness();
         address timelock = address(0xBEEF);
@@ -1624,40 +1626,32 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         // Exercise recovery from the former deployment wiring, where the timelock
         // was also the guardian. Finalization replaces it before transferring ownership.
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
+        RobinhoodStockOracleFeed stockOracleFeed =
+            new RobinhoodStockOracleFeed(address(chainlinkOracleFeed), address(marketSessionGate));
         vm.prank(address(harness));
         marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        DeployYieldShieldProduction.ProtocolDeployment memory protocol;
+        protocol.factoryAddr = address(factory);
+        protocol.factoryImplementationAddr = _proxyImplementation(address(factory));
+        protocol.poolImplementationAddr = address(poolImplementation);
+        protocol.compositeOracleAddr = address(compositeOracle);
+        protocol.chainlinkOracleFeedAddr = address(chainlinkOracleFeed);
+        protocol.marketSessionGateAddr = address(marketSessionGate);
+        protocol.robinhoodStockOracleFeedAddr = address(stockOracleFeed);
+        protocol.erc4626OracleFeedAddr = address(erc4626OracleFeed);
+        protocol.timelockAddr = address(timelock);
+        protocol.governorAddr = address(governor);
 
         compositeOracle.transferOwnership(address(harness));
         chainlinkOracleFeed.transferOwnership(address(harness));
         erc4626OracleFeed.transferOwnership(address(harness));
 
-        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
-            address(factory),
-            _proxyImplementation(address(factory)),
-            address(poolImplementation),
-            address(compositeOracle),
-            address(chainlinkOracleFeed),
-            address(marketSessionGate),
-            address(erc4626OracleFeed),
-            address(timelock),
-            address(governor),
-            address(harness)
-        );
-        harness.validateProductionChainlinkProtocolFinalizedHarness(
-            address(factory),
-            _proxyImplementation(address(factory)),
-            address(poolImplementation),
-            address(compositeOracle),
-            address(chainlinkOracleFeed),
-            address(marketSessionGate),
-            address(erc4626OracleFeed),
-            address(timelock),
-            address(governor)
-        );
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(protocol, address(harness));
+        harness.validateProductionChainlinkProtocolFinalizedHarness(protocol);
 
         assertEq(factory.owner(), address(timelock));
         assertFalse(factory.bootstrapModeEnabled());
@@ -1669,6 +1663,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.compositeOracle(), address(compositeOracle));
         assertEq(factory.defaultProtocolFeeRecipient(), address(timelock));
         assertEq(factory.pythOracle(), address(0));
+        assertEq(compositeOracle.robinhoodStockOracleFeed(), address(stockOracleFeed));
         assertEq(factory.erc4626OracleFeed(), address(erc4626OracleFeed));
         assertEq(address(erc4626OracleFeed.underlyingPriceOracle()), address(chainlinkOracleFeed));
 
@@ -1690,37 +1685,18 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         vm.chainId(1);
         ProductionDeployHarness harness = new ProductionDeployHarness();
         address chainlinkOracleFeed = address(0xC11);
+        DeployYieldShieldProduction.ProtocolDeployment memory protocol;
+        protocol.chainlinkOracleFeedAddr = chainlinkOracleFeed;
 
         vm.expectRevert(
             abi.encodeWithSelector(DeployYieldShieldProduction.ProductionRobinhoodUnsupportedChain.selector, uint256(1))
         );
-        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
-            address(0),
-            address(0),
-            address(0),
-            address(0),
-            chainlinkOracleFeed,
-            address(0),
-            address(0),
-            address(0),
-            address(0),
-            address(harness)
-        );
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(protocol, address(harness));
 
         vm.expectRevert(
             abi.encodeWithSelector(DeployYieldShieldProduction.ProductionRobinhoodUnsupportedChain.selector, uint256(1))
         );
-        harness.validateProductionChainlinkProtocolFinalizedHarness(
-            address(0),
-            address(0),
-            address(0),
-            address(0),
-            chainlinkOracleFeed,
-            address(0),
-            address(0),
-            address(0),
-            address(0)
-        );
+        harness.validateProductionChainlinkProtocolFinalizedHarness(protocol);
     }
 
     function test_ProductionProtocol_RobinhoodTestnetSeedCreatesPoolsAndFinalizes() public {
@@ -1734,10 +1710,23 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), guardian);
+        RobinhoodStockOracleFeed stockOracleFeed =
+            new RobinhoodStockOracleFeed(address(chainlinkOracleFeed), address(marketSessionGate));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
         SplitRiskPoolFactory factory = _deployFactory(address(harness), address(timelock), address(poolImplementation));
+        DeployYieldShieldProduction.ProtocolDeployment memory protocol;
+        protocol.factoryAddr = address(factory);
+        protocol.factoryImplementationAddr = _proxyImplementation(address(factory));
+        protocol.poolImplementationAddr = address(poolImplementation);
+        protocol.compositeOracleAddr = address(compositeOracle);
+        protocol.chainlinkOracleFeedAddr = address(chainlinkOracleFeed);
+        protocol.marketSessionGateAddr = address(marketSessionGate);
+        protocol.robinhoodStockOracleFeedAddr = address(stockOracleFeed);
+        protocol.erc4626OracleFeedAddr = address(erc4626OracleFeed);
+        protocol.timelockAddr = address(timelock);
+        protocol.governorAddr = address(governor);
 
         chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
         erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
@@ -1745,17 +1734,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         chainlinkOracleFeed.transferOwnership(address(harness));
         erc4626OracleFeed.transferOwnership(address(harness));
 
-        harness.seedRobinhoodTestnetDemoAssetsHarness(
-            address(factory),
-            _proxyImplementation(address(factory)),
-            address(poolImplementation),
-            address(compositeOracle),
-            address(chainlinkOracleFeed),
-            address(marketSessionGate),
-            address(erc4626OracleFeed),
-            address(timelock),
-            address(governor)
-        );
+        harness.seedRobinhoodTestnetDemoAssetsHarness(protocol);
 
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);
@@ -1773,32 +1752,12 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(faucet.dripAmount(harness.currentDeploymentAddressHarness("RobinhoodTestSGOV")), 25e18);
         assertFalse(faucet.enabledTokens(harness.currentDeploymentAddressHarness("RobinhoodTestTSLA")));
 
-        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
-            address(factory),
-            _proxyImplementation(address(factory)),
-            address(poolImplementation),
-            address(compositeOracle),
-            address(chainlinkOracleFeed),
-            address(marketSessionGate),
-            address(erc4626OracleFeed),
-            address(timelock),
-            address(governor),
-            address(harness)
-        );
-        harness.validateProductionChainlinkProtocolFinalizedHarness(
-            address(factory),
-            _proxyImplementation(address(factory)),
-            address(poolImplementation),
-            address(compositeOracle),
-            address(chainlinkOracleFeed),
-            address(marketSessionGate),
-            address(erc4626OracleFeed),
-            address(timelock),
-            address(governor)
-        );
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(protocol, address(harness));
+        harness.validateProductionChainlinkProtocolFinalizedHarness(protocol);
 
         assertEq(factory.owner(), address(timelock));
         assertEq(compositeOracle.owner(), address(factory));
+        assertEq(compositeOracle.robinhoodStockOracleFeed(), address(stockOracleFeed));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.owner(), address(timelock));
         assertEq(marketSessionGate.emergencyGuardian(), guardian);

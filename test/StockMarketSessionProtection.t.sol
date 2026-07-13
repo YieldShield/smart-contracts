@@ -48,6 +48,7 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
         marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         stockFeed = new RobinhoodStockOracleFeed(address(chainlink), address(marketGate));
         composite = new CompositeOracle();
+        composite.setRobinhoodStockOracleFeed(address(stockFeed));
 
         SplitRiskPool implementation = new SplitRiskPool();
         factory = _deployFactory(address(this), governance, address(implementation));

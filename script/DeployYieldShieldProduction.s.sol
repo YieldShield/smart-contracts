@@ -31,6 +31,8 @@ interface IProductionOwnable {
 
 interface IProductionCompositeOracle is IProductionOwnable {
     function authorizedCallerCount() external view returns (uint256);
+    function robinhoodStockOracleFeed() external view returns (address);
+    function setRobinhoodStockOracleFeed(address oracleFeed) external;
 }
 
 interface IProductionERC4626OracleFeed is IProductionOwnable {
@@ -40,6 +42,11 @@ interface IProductionERC4626OracleFeed is IProductionOwnable {
 interface IProductionMarketSessionGate is IProductionOwnable {
     function emergencyGuardian() external view returns (address);
     function setEmergencyGuardian(address newGuardian) external;
+}
+
+interface IProductionRobinhoodStockOracleFeed {
+    function innerFeed() external view returns (address);
+    function marketSessionGate() external view returns (address);
 }
 
 interface IProductionMintableERC20 {
@@ -67,6 +74,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address pythOracleAddr;
         address chainlinkOracleFeedAddr;
         address marketSessionGateAddr;
+        address robinhoodStockOracleFeedAddr;
         address erc4626OracleFeedAddr;
         address timelockAddr;
         address governorAddr;
@@ -158,6 +166,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_CHAINLINK_ORACLE_FEED = "ChainlinkOracleFeed";
     bytes32 private constant NAME_ROBINHOOD_SEQUENCER_FEED = "RobinhoodSequencerFeed";
     bytes32 private constant NAME_US_MARKET_SESSION_GATE = "USMarketSessionGate";
+    bytes32 private constant NAME_ROBINHOOD_STOCK_ORACLE_FEED = "RobinhoodStockOracleFeed";
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
     bytes32 private constant NAME_GOVERNOR = "YSGovernor";
@@ -173,6 +182,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_PYTH_ORACLE_CODEHASH = "YS_PRODUCTION_PYTH_ORACLE_CODEHASH";
     string private constant ENV_CHAINLINK_ORACLE_CODEHASH = "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH";
     string private constant ENV_US_MARKET_SESSION_GATE_CODEHASH = "YS_PRODUCTION_US_MARKET_SESSION_GATE_CODEHASH";
+    string private constant ENV_ROBINHOOD_STOCK_ORACLE_CODEHASH = "YS_PRODUCTION_ROBINHOOD_STOCK_ORACLE_CODEHASH";
     string private constant ENV_CHAINLINK_MAX_PRICE_AGE = "YS_PRODUCTION_CHAINLINK_MAX_PRICE_AGE";
     string private constant ENV_MARKET_SESSION_GUARDIAN = "YS_PRODUCTION_MARKET_SESSION_GUARDIAN";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
@@ -202,6 +212,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_FACTORY_IMPLEMENTATION = "factory.proxyImplementation";
     bytes32 private constant FIELD_POOL_IMPLEMENTATION = "factory.poolImplementation";
     bytes32 private constant FIELD_MARKET_SESSION_GUARDIAN = "marketSession.guardian";
+    bytes32 private constant FIELD_ROBINHOOD_STOCK_ORACLE = "composite.stockOracle";
+    bytes32 private constant FIELD_ROBINHOOD_STOCK_INNER_FEED = "stockOracle.innerFeed";
+    bytes32 private constant FIELD_ROBINHOOD_STOCK_MARKET_GATE = "stockOracle.marketGate";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED = "robinhoodSequencerUptimeFeed";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE = "robinhoodSequencerUptimeFeedSource";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_CODEHASH = "robinhoodSequencerUptimeFeedCodehash";
@@ -307,6 +320,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -332,6 +346,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address compositeOracleAddr,
         address chainlinkOracleFeedAddr,
         address marketSessionGateAddr,
+        address robinhoodStockOracleFeedAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr
@@ -354,6 +369,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 pythOracleAddr: address(0),
                 chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
                 marketSessionGateAddr: marketSessionGateAddr,
+                robinhoodStockOracleFeedAddr: robinhoodStockOracleFeedAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -366,6 +382,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         deployments.push(Deployment("YSGovernor", governorAddr));
         deployments.push(Deployment("ChainlinkOracleFeed", chainlinkOracleFeedAddr));
         deployments.push(Deployment("USMarketSessionGate", marketSessionGateAddr));
+        deployments.push(Deployment("RobinhoodStockOracleFeed", robinhoodStockOracleFeedAddr));
         deployments.push(Deployment("ERC4626OracleFeed", erc4626OracleFeedAddr));
         deployments.push(Deployment("CompositeOracle", compositeOracleAddr));
         deployments.push(Deployment("SplitRiskPoolFactoryImplementation", factoryImplementationAddr));
@@ -392,6 +409,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -406,6 +424,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address compositeOracleAddr,
         address chainlinkOracleFeedAddr,
         address marketSessionGateAddr,
+        address robinhoodStockOracleFeedAddr,
         address erc4626OracleFeedAddr,
         address timelockAddr,
         address governorAddr
@@ -419,6 +438,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 pythOracleAddr: address(0),
                 chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
                 marketSessionGateAddr: marketSessionGateAddr,
+                robinhoodStockOracleFeedAddr: robinhoodStockOracleFeedAddr,
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -576,6 +596,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 pythOracleAddr: pythOracleAddr,
                 chainlinkOracleFeedAddr: address(0),
                 marketSessionGateAddr: address(0),
+                robinhoodStockOracleFeedAddr: address(0),
                 erc4626OracleFeedAddr: erc4626OracleFeedAddr,
                 timelockAddr: timelockAddr,
                 governorAddr: governorAddr
@@ -624,6 +645,12 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         console.log("USMarketSessionGate deployed at:", marketSessionGateAddr);
         console.log("USMarketSessionGate emergency guardian:", marketSessionGate.emergencyGuardian());
 
+        // The corporate-action/session-aware wrapper is a core Robinhood component, not a
+        // demo-only fixture. Pin it before CompositeOracle ownership moves to the factory.
+        address robinhoodStockOracleFeedAddr =
+            _deployRobinhoodStockOracleFeed(chainlinkOracleFeedAddr, marketSessionGateAddr);
+        compositeOracle.setRobinhoodStockOracleFeed(robinhoodStockOracleFeedAddr);
+
         // Testnet demo seeding is intentionally given only the current UTC day. Mainnet and
         // future days remain fail-closed until governance loads a reviewed exchange calendar.
         if (_isRobinhoodTestnet() && _robinhoodTestnetDemoAssetsRequested()) {
@@ -658,6 +685,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             pythOracleAddr: address(0),
             chainlinkOracleFeedAddr: chainlinkOracleFeedAddr,
             marketSessionGateAddr: marketSessionGateAddr,
+            robinhoodStockOracleFeedAddr: robinhoodStockOracleFeedAddr,
             erc4626OracleFeedAddr: erc4626OracleFeedAddr,
             timelockAddr: timelockAddr,
             governorAddr: governorAddr
@@ -937,6 +965,14 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         CompositeOracle compositeOracle = CompositeOracle(d.compositeOracleAddr);
         ERC4626OracleFeed erc4626OracleFeed = ERC4626OracleFeed(d.erc4626OracleFeedAddr);
 
+        address configuredStockOracleFeed = compositeOracle.robinhoodStockOracleFeed();
+        if (configuredStockOracleFeed == address(0)) {
+            compositeOracle.setRobinhoodStockOracleFeed(d.robinhoodStockOracleFeedAddr);
+        } else {
+            _requireProductionAddress(
+                FIELD_ROBINHOOD_STOCK_ORACLE, configuredStockOracleFeed, d.robinhoodStockOracleFeedAddr
+            );
+        }
         if (compositeOracle.owner() != d.factoryAddr) {
             compositeOracle.transferOwnership(d.factoryAddr);
         }
@@ -951,8 +987,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         RobinhoodDemoAssets memory assets = _deployRobinhoodDemoAssets();
         RobinhoodDemoFeeds memory feeds = _deployRobinhoodDemoFeeds();
         _configureRobinhoodDemoFeeds(chainlinkOracleFeed, assets, feeds);
-        address stockOracleFeed = _deployRobinhoodStockOracleFeed(d.chainlinkOracleFeedAddr, d.marketSessionGateAddr);
-        _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr, stockOracleFeed);
+        _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr, d.robinhoodStockOracleFeedAddr);
         _mintRobinhoodDemoBalances(assets);
         _deployRobinhoodDemoAssetFaucet(assets);
         RobinhoodDemoPools memory pools = _createRobinhoodDemoPools(factory, assets);
@@ -1335,6 +1370,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _requireMandatoryProductionCodehash(
                 NAME_US_MARKET_SESSION_GATE, d.marketSessionGateAddr, ENV_US_MARKET_SESSION_GATE_CODEHASH
             );
+            _requireMandatoryProductionCodehash(
+                NAME_ROBINHOOD_STOCK_ORACLE_FEED, d.robinhoodStockOracleFeedAddr, ENV_ROBINHOOD_STOCK_ORACLE_CODEHASH
+            );
+            _validateRobinhoodStockOracleWiring(d);
         } else {
             _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         }
@@ -1372,6 +1411,23 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         address configuredERC4626OracleFeed = factory.erc4626OracleFeed();
         if (configuredERC4626OracleFeed != address(0)) {
             _requireProductionAddress(FIELD_ERC4626_ORACLE_FEED, configuredERC4626OracleFeed, d.erc4626OracleFeedAddr);
+        }
+
+        if (_isChainlinkProtocolDeployment(d)) {
+            IProductionCompositeOracle compositeOracle = IProductionCompositeOracle(d.compositeOracleAddr);
+            address configuredStockOracleFeed = compositeOracle.robinhoodStockOracleFeed();
+            if (configuredStockOracleFeed == address(0)) {
+                if (compositeOracle.owner() != bootstrapAdmin) {
+                    revert ProductionProtocolAddressMismatch(
+                        FIELD_ROBINHOOD_STOCK_ORACLE, configuredStockOracleFeed, d.robinhoodStockOracleFeedAddr
+                    );
+                }
+                compositeOracle.setRobinhoodStockOracleFeed(d.robinhoodStockOracleFeedAddr);
+            } else {
+                _requireProductionAddress(
+                    FIELD_ROBINHOOD_STOCK_ORACLE, configuredStockOracleFeed, d.robinhoodStockOracleFeedAddr
+                );
+            }
         }
 
         _transferOwnershipToFactoryIfNeeded(NAME_COMPOSITE_ORACLE, d.compositeOracleAddr, d.factoryAddr, bootstrapAdmin);
@@ -1457,6 +1513,10 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _requireMandatoryProductionCodehash(
                 NAME_US_MARKET_SESSION_GATE, d.marketSessionGateAddr, ENV_US_MARKET_SESSION_GATE_CODEHASH
             );
+            _requireMandatoryProductionCodehash(
+                NAME_ROBINHOOD_STOCK_ORACLE_FEED, d.robinhoodStockOracleFeedAddr, ENV_ROBINHOOD_STOCK_ORACLE_CODEHASH
+            );
+            _validateRobinhoodStockOracleWiring(d);
         } else {
             _requireMandatoryProductionCodehash(NAME_PYTH_ORACLE, d.pythOracleAddr, ENV_PYTH_ORACLE_CODEHASH);
         }
@@ -1499,6 +1559,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 d.compositeOracleAddr, compositeOracleAuthorizedCallerCount
             );
         }
+        _requireProductionAddress(
+            FIELD_ROBINHOOD_STOCK_ORACLE,
+            IProductionCompositeOracle(d.compositeOracleAddr).robinhoodStockOracleFeed(),
+            _isChainlinkProtocolDeployment(d) ? d.robinhoodStockOracleFeedAddr : address(0)
+        );
         if (_isChainlinkProtocolDeployment(d)) {
             address expectedMarketSessionGuardian = _readProductionMarketSessionGuardian(d.timelockAddr);
             _requireProductionOwner(
@@ -1555,6 +1620,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         IProductionOwnable(contractAddress).transferOwnership(expectedOwner);
     }
 
+    function _validateRobinhoodStockOracleWiring(ProtocolDeployment memory d) internal view {
+        IProductionRobinhoodStockOracleFeed stockOracle =
+            IProductionRobinhoodStockOracleFeed(d.robinhoodStockOracleFeedAddr);
+        _requireProductionAddress(FIELD_ROBINHOOD_STOCK_INNER_FEED, stockOracle.innerFeed(), d.chainlinkOracleFeedAddr);
+        _requireProductionAddress(
+            FIELD_ROBINHOOD_STOCK_MARKET_GATE, stockOracle.marketSessionGate(), d.marketSessionGateAddr
+        );
+    }
+
     function _isChainlinkProtocolDeployment(ProtocolDeployment memory d) internal pure returns (bool) {
         return d.chainlinkOracleFeedAddr != address(0);
     }
@@ -1588,6 +1662,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         if (usesChainlink) {
             _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
             _readRequiredProductionCodehash(NAME_US_MARKET_SESSION_GATE, ENV_US_MARKET_SESSION_GATE_CODEHASH);
+            _readRequiredProductionCodehash(NAME_ROBINHOOD_STOCK_ORACLE_FEED, ENV_ROBINHOOD_STOCK_ORACLE_CODEHASH);
             if (_isRobinhoodChain() && !_isRobinhoodTestnet()) {
                 _readRequiredProductionCodehash(NAME_ROBINHOOD_SEQUENCER_FEED, ENV_ROBINHOOD_SEQUENCER_FEED_CODEHASH);
             }

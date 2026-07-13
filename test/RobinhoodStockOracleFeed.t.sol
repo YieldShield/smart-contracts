@@ -10,6 +10,7 @@ import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggrega
 import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { ICorporateActionPauseGuard } from "../contracts/interfaces/ICorporateActionPauseGuard.sol";
+import { ICompositeOracle } from "../contracts/interfaces/ICompositeOracle.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { OracleValidationLib } from "../contracts/libraries/OracleValidationLib.sol";
 
@@ -437,8 +438,13 @@ contract RobinhoodStockOracleFeedTest is Test {
 
     // ============ CompositeOracle integration ============
 
+    function _newPinnedComposite() internal returns (CompositeOracle composite) {
+        composite = new CompositeOracle();
+        composite.setRobinhoodStockOracleFeed(address(stockFeed));
+    }
+
     function test_compositeOracle_DetectsChainlinkStockTypeForWrapper() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
 
         composite.setTokenOracleFeed(address(tsla), address(stockFeed));
         assertEq(composite.getOracleType(address(tsla)), "chainlink-stock");
@@ -458,7 +464,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedPrimaryGateAppliesWhileBackupIsActive() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupFeed = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
         backupFeed.setTokenFeed(address(tsla), address(backupAggregator));
@@ -479,7 +485,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_RejectsDualRouteWhenOnlyPrimaryHasCorporateActionPauseGuard() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -493,11 +499,11 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_RejectsDualRouteWhenOnlyBackupHasCorporateActionPauseGuard() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CompositeOracle.CorporateActionPauseGuardMismatch.selector,
+                ICompositeOracle.RobinhoodStockOracleFeedRequired.selector,
                 address(tsla),
                 address(chainlinkFeed),
                 address(stockFeed)
@@ -507,7 +513,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_RejectsDualRouteWithClosedSessionCapabilityMismatch() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         CorporateGuardWithoutClosedSessionExitFeed backup = new CorporateGuardWithoutClosedSessionExitFeed();
 
         vm.expectRevert(
@@ -522,7 +528,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedSessionExitPreservesPendingChallengeGate() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
         backupInner.setTokenFeed(address(tsla), address(backupAggregator));
@@ -538,7 +544,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedSessionDualRouteSucceedsWhenExtendedPricesAgree() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE);
         backupInner.setTokenFeed(address(tsla), address(backupAggregator));
@@ -552,7 +558,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedSessionDualRouteRejectsExtendedPriceDeviation() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
         backupInner.setTokenFeed(address(tsla), address(backupAggregator));
@@ -567,7 +573,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedSessionActiveBackupSurvivesUnavailablePrimary() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
         backupInner.setTokenFeed(address(tsla), address(backupAggregator));
@@ -588,7 +594,7 @@ contract RobinhoodStockOracleFeedTest is Test {
     }
 
     function test_compositeOracle_ClosedSessionActivePrimaryRejectsUnavailableBackup() public {
-        CompositeOracle composite = new CompositeOracle();
+        CompositeOracle composite = _newPinnedComposite();
         ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE);
         backupInner.setTokenFeed(address(tsla), address(backupAggregator));

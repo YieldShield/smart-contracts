@@ -40,6 +40,7 @@ const CHAINLINK_CORE_INVENTORY = Object.freeze([
     "YSGovernor",
     "ChainlinkOracleFeed",
     "USMarketSessionGate",
+    "RobinhoodStockOracleFeed",
     "ERC4626OracleFeed",
     "CompositeOracle",
     "SplitRiskPoolFactoryImplementation",
@@ -68,6 +69,10 @@ const PYTH_REVIEWED_CODEHASH_PINS = Object.freeze([
 const CHAINLINK_REVIEWED_CODEHASH_PINS = Object.freeze([
     ["ChainlinkOracleFeed", "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH"],
     ["USMarketSessionGate", "YS_PRODUCTION_US_MARKET_SESSION_GATE_CODEHASH"],
+    [
+        "RobinhoodStockOracleFeed",
+        "YS_PRODUCTION_ROBINHOOD_STOCK_ORACLE_CODEHASH",
+    ],
 ]);
 
 function reviewedCodehashPinSpecs(oracleMode) {
@@ -123,7 +128,6 @@ const DEMO_POOL_NAMES = Object.freeze([
 const DEMO_EXTRA_INVENTORY = Object.freeze([
     ...DEMO_TOKEN_NAMES,
     ...Object.values(DEMO_FEEDS),
-    "RobinhoodStockOracleFeed",
     "RobinhoodDemoAssetFaucet",
     ...DEMO_POOL_NAMES,
 ]);
@@ -154,6 +158,11 @@ const GOVERNOR_INTERFACE = new ethers.Interface([
 const COMPOSITE_INTERFACE = new ethers.Interface([
     "function owner() view returns (address)",
     "function authorizedCallerCount() view returns (uint256)",
+    "function robinhoodStockOracleFeed() view returns (address)",
+]);
+const ROBINHOOD_STOCK_ORACLE_INTERFACE = new ethers.Interface([
+    "function innerFeed() view returns (address)",
+    "function marketSessionGate() view returns (address)",
 ]);
 const ERC4626_INTERFACE = new ethers.Interface([
     "function owner() view returns (address)",
@@ -888,6 +897,12 @@ async function readLiveProtocolState(
         composite,
         "authorizedCallerCount",
     );
+    const [robinhoodStockOracleFeed] = await contractCall(
+        provider,
+        COMPOSITE_INTERFACE,
+        composite,
+        "robinhoodStockOracleFeed",
+    );
     const [erc4626Owner] = await contractCall(
         provider,
         ERC4626_INTERFACE,
@@ -946,6 +961,7 @@ async function readLiveProtocolState(
         );
     }
     let marketSessionGuardian = null;
+    let robinhoodStockOracle = null;
     if (oracleMode === "chainlink") {
         [marketSessionGuardian] = await contractCall(
             provider,
@@ -953,6 +969,20 @@ async function readLiveProtocolState(
             byName.get("USMarketSessionGate"),
             "emergencyGuardian",
         );
+        const stockOracleAddress = byName.get("RobinhoodStockOracleFeed");
+        const [innerFeed] = await contractCall(
+            provider,
+            ROBINHOOD_STOCK_ORACLE_INTERFACE,
+            stockOracleAddress,
+            "innerFeed",
+        );
+        const [marketSessionGate] = await contractCall(
+            provider,
+            ROBINHOOD_STOCK_ORACLE_INTERFACE,
+            stockOracleAddress,
+            "marketSessionGate",
+        );
+        robinhoodStockOracle = { innerFeed, marketSessionGate };
     }
     const timelockRoles = {};
     for (const [key, functionName] of [
@@ -1007,10 +1037,12 @@ async function readLiveProtocolState(
         composite: {
             owner: compositeOwner,
             authorizedCallerCount: Number(authorizedCallerCount),
+            robinhoodStockOracleFeed,
         },
         erc4626: { owner: erc4626Owner, underlyingPriceOracle },
         sequencer,
         marketSessionGuardian,
+        robinhoodStockOracle,
         oracleOwners,
         timelockRoles,
     };
@@ -1100,6 +1132,13 @@ function validateProtocolWiring(
     requireAddress(state.composite.owner, factory, "Composite oracle owner");
     if (state.composite.authorizedCallerCount !== 0)
         throw new Error("Composite oracle retains authorized callers.");
+    requireAddress(
+        state.composite.robinhoodStockOracleFeed,
+        oracleMode === "chainlink"
+            ? byName.get("RobinhoodStockOracleFeed")
+            : ethers.ZeroAddress,
+        "Composite Robinhood stock oracle pin",
+    );
     requireAddress(state.erc4626.owner, factory, "ERC4626 oracle owner");
     if (oracleMode === "pyth") {
         requireAddress(
@@ -1145,6 +1184,21 @@ function validateProtocolWiring(
             );
         }
     } else {
+        if (!state.robinhoodStockOracle) {
+            throw new Error(
+                "Robinhood stock oracle wiring evidence is missing.",
+            );
+        }
+        requireAddress(
+            state.robinhoodStockOracle.innerFeed,
+            byName.get("ChainlinkOracleFeed"),
+            "Robinhood stock oracle inner feed",
+        );
+        requireAddress(
+            state.robinhoodStockOracle.marketSessionGate,
+            byName.get("USMarketSessionGate"),
+            "Robinhood stock oracle market-session gate",
+        );
         requireAddress(
             state.factory.pythOracle,
             ethers.ZeroAddress,

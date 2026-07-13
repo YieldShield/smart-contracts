@@ -154,6 +154,13 @@ Chainlink path (including the US market-session gate for Chainlink). Pin the exa
 deployed governor runtime: its token and timelock immutable addresses make a generic
 `type(YSGovernor).runtimeCode` hash unsuitable.
 
+Robinhood Chainlink deployments also include `RobinhoodStockOracleFeed` as a core
+contract, even when demo seeding is disabled. Set
+`YS_PRODUCTION_ROBINHOOD_STOCK_ORACLE_CODEHASH` to the exact rehearsed runtime;
+the wrapper embeds the Chainlink feed and US market-session gate as immutables, so
+its hash is deployment-specific. Deployment finalization and manifest promotion
+verify those immutable addresses and the CompositeOracle's one-time wrapper pin.
+
 Every Robinhood deployment also requires
 `YS_PRODUCTION_MARKET_SESSION_GUARDIAN`. Use a nonzero operational signer or
 multisig distinct from the governance timelock. The deployed gate records this

@@ -20,6 +20,10 @@ interface ICompositeOracle is IPriceOracle {
     /// @param token The token address
     event TokenOracleFeedRemoved(address indexed token);
 
+    /// @notice Emitted when the immutable production route for Robinhood stock tokens is pinned
+    /// @param oracleFeed The reviewed RobinhoodStockOracleFeed wrapper
+    event RobinhoodStockOracleFeedPinned(address indexed oracleFeed);
+
     // ============ Custom Errors ============
 
     /// @notice Custom error for unsupported token (no oracle feed registered)
@@ -34,6 +38,15 @@ interface ICompositeOracle is IPriceOracle {
     /// @param token The invalid token address
     error InvalidTokenAddress(address token);
 
+    /// @notice Custom error when the Robinhood stock wrapper is zero or has no code
+    error InvalidRobinhoodStockOracleFeed(address oracleFeed);
+
+    /// @notice Custom error when the one-time Robinhood stock wrapper pin is already set
+    error RobinhoodStockOracleFeedAlreadyPinned(address oracleFeed);
+
+    /// @notice Custom error when a token exposing oraclePaused() bypasses the pinned wrapper
+    error RobinhoodStockOracleFeedRequired(address token, address providedFeed, address requiredFeed);
+
     // ============ Single-Feed Configuration ============
 
     /// @notice Set the oracle feed for a token (single-feed mode)
@@ -41,6 +54,14 @@ interface ICompositeOracle is IPriceOracle {
     /// @param token The token address
     /// @param oracleFeed The oracle feed address (must implement IOracleFeed)
     function setTokenOracleFeed(address token, address oracleFeed) external;
+
+    /// @notice Pin the only primary feed accepted for tokens exposing `oraclePaused()`
+    /// @dev One-time operation callable by the owner or an authorized caller. Production
+    ///      deployment pins the reviewed RobinhoodStockOracleFeed before ownership transfer.
+    function setRobinhoodStockOracleFeed(address oracleFeed) external;
+
+    /// @notice The one-time pinned RobinhoodStockOracleFeed, or zero before deployment wiring
+    function robinhoodStockOracleFeed() external view returns (address oracleFeed);
 
     /// @notice Remove the oracle feed for a token
     /// @dev Only callable by owner or authorized callers

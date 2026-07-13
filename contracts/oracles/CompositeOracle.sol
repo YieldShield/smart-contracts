@@ -50,6 +50,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Tokens that require every configured feed to support circuit-breaker pricing
     mapping(address => bool) public override strictCircuitBreakerRequired;
 
+    /// @notice One-time production pin for the corporate-action-aware Robinhood stock wrapper
+    address public override robinhoodStockOracleFeed;
+
     /// @notice Authorized callers that can set token oracle feeds (e.g., factory)
     mapping(address => bool) public authorizedCallers;
 
@@ -257,12 +260,25 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         _;
     }
 
+    /// @inheritdoc ICompositeOracle
+    function setRobinhoodStockOracleFeed(address oracleFeed) external onlyAuthorized {
+        if (oracleFeed == address(0) || oracleFeed.code.length == 0) {
+            revert InvalidRobinhoodStockOracleFeed(oracleFeed);
+        }
+        if (robinhoodStockOracleFeed != address(0)) {
+            revert RobinhoodStockOracleFeedAlreadyPinned(robinhoodStockOracleFeed);
+        }
+        robinhoodStockOracleFeed = oracleFeed;
+        emit RobinhoodStockOracleFeedPinned(oracleFeed);
+    }
+
     // ============ ICompositeOracle Implementation ============
 
     /// @inheritdoc ICompositeOracle
     function setTokenOracleFeed(address token, address oracleFeed) external onlyAuthorized {
         if (token == address(0)) revert InvalidTokenAddress(token);
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
+        _validateRobinhoodStockOracleRoute(token, oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
 
         // Codex P2 follow-up: any reconfiguration of the token oracle
@@ -310,6 +326,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     {
         if (token == address(0)) revert InvalidTokenAddress(token);
         if (oracleFeed == address(0)) revert InvalidOracleFeed(oracleFeed);
+        _validateRobinhoodStockOracleRoute(token, oracleFeed);
         _validateStrictCircuitBreakerConfig(token, oracleFeed, address(0));
         _clearScheduledRemoval(token);
 
@@ -344,6 +361,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (backupFeed == address(0)) revert InvalidOracleFeed(backupFeed);
         // BUG-1 FIX: Validate that primary and backup feeds are different
         if (primaryFeed == backupFeed) revert SameFeedNotAllowed(primaryFeed);
+        _validateRobinhoodStockOracleRoute(token, primaryFeed);
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
         _validateFeeAccrualBasisCompatibility(token, primaryFeed, backupFeed);
         _validateCorporateActionPauseGuardCompatibility(token, primaryFeed, backupFeed);
@@ -1271,6 +1289,26 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         bool backupSupported = _supportsClosedSessionExitPrice(backupFeed, token);
         if (primarySupported != backupSupported) {
             revert ClosedSessionExitPriceMismatch(token, primaryFeed, backupFeed);
+        }
+    }
+
+    /// @dev A successful ABI-valid `oraclePaused()` probe marks the token as a Robinhood
+    ///      stock/equity route. Such a token can never be configured with the raw Chainlink
+    ///      feed (or any other unpinned primary), across single, explicitly typed, or dual
+    ///      configuration paths. Standard tokens that do not expose the marker are unaffected.
+    function _validateRobinhoodStockOracleRoute(address token, address primaryFeed) internal view {
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
+        if (!success || data.length < 32) return;
+
+        uint256 encodedBool;
+        assembly ("memory-safe") {
+            encodedBool := mload(add(data, 32))
+        }
+        if (encodedBool > 1) return;
+
+        address requiredFeed = robinhoodStockOracleFeed;
+        if (requiredFeed == address(0) || primaryFeed != requiredFeed) {
+            revert RobinhoodStockOracleFeedRequired(token, primaryFeed, requiredFeed);
         }
     }
 

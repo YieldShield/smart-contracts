@@ -9,6 +9,7 @@ import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
+import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
 import { ICompositeOracle } from "../contracts/interfaces/ICompositeOracle.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { IProtectionOpeningEligibility } from "../contracts/interfaces/IProtectionOpeningEligibility.sol";
@@ -82,6 +83,7 @@ contract CompositeOracleTest is Test {
     MockERC20 public tokenB;
     MockUSDC public token6;
     MockERC20Decimals public token8;
+    MockRobinhoodStockToken public stockToken;
 
     address public owner = address(this);
     address public authorizedCaller = address(0x1);
@@ -93,6 +95,7 @@ contract CompositeOracleTest is Test {
         tokenB = new MockERC20("Token B", "TKNB");
         token6 = new MockUSDC();
         token8 = new MockERC20Decimals("Token 8", "TKN8", 8);
+        stockToken = new MockRobinhoodStockToken("Stock Token", "STOCK");
 
         // Deploy mock oracle and set prices
         mockOracle = new MockOracle();
@@ -100,6 +103,7 @@ contract CompositeOracleTest is Test {
         mockOracle.setPrice(address(tokenB), 2e8); // $2 per token
         mockOracle.setPrice(address(token6), 1e8);
         mockOracle.setPrice(address(token8), 1e8);
+        mockOracle.setPrice(address(stockToken), 1e8);
 
         // Deploy composite oracle
         compositeOracle = new CompositeOracle();
@@ -222,6 +226,83 @@ contract CompositeOracleTest is Test {
         compositeOracle.setTokenOracleFeed(address(tokenA), address(mockOracle));
 
         assertTrue(compositeOracle.isTokenSupported(address(tokenA)));
+    }
+
+    function testRobinhoodStockOracleFeedPinIsOneTimeAndRejectsInvalidAddresses() public {
+        vm.expectRevert(abi.encodeWithSelector(ICompositeOracle.InvalidRobinhoodStockOracleFeed.selector, address(0)));
+        compositeOracle.setRobinhoodStockOracleFeed(address(0));
+
+        address noCode = address(0xBEEF);
+        vm.expectRevert(abi.encodeWithSelector(ICompositeOracle.InvalidRobinhoodStockOracleFeed.selector, noCode));
+        compositeOracle.setRobinhoodStockOracleFeed(noCode);
+
+        vm.expectEmit(true, false, false, true);
+        emit ICompositeOracle.RobinhoodStockOracleFeedPinned(address(mockOracle));
+        compositeOracle.setRobinhoodStockOracleFeed(address(mockOracle));
+        assertEq(compositeOracle.robinhoodStockOracleFeed(), address(mockOracle));
+
+        MockOracle otherFeed = new MockOracle();
+        vm.expectRevert(
+            abi.encodeWithSelector(ICompositeOracle.RobinhoodStockOracleFeedAlreadyPinned.selector, address(mockOracle))
+        );
+        compositeOracle.setRobinhoodStockOracleFeed(address(otherFeed));
+    }
+
+    function testAuthorizedCallerCanPinRobinhoodStockOracleFeed() public {
+        compositeOracle.setAuthorizedCaller(authorizedCaller, true);
+
+        vm.prank(authorizedCaller);
+        compositeOracle.setRobinhoodStockOracleFeed(address(mockOracle));
+
+        assertEq(compositeOracle.robinhoodStockOracleFeed(), address(mockOracle));
+    }
+
+    function testRobinhoodStockTokenRequiresPinnedPrimaryAcrossEveryConfigurationPath() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ICompositeOracle.RobinhoodStockOracleFeedRequired.selector,
+                address(stockToken),
+                address(mockOracle),
+                address(0)
+            )
+        );
+        compositeOracle.setTokenOracleFeed(address(stockToken), address(mockOracle));
+
+        compositeOracle.setRobinhoodStockOracleFeed(address(mockOracle));
+        compositeOracle.setTokenOracleFeed(address(stockToken), address(mockOracle));
+        assertEq(compositeOracle.getTokenOracleFeed(address(stockToken)), address(mockOracle));
+
+        MockOracle rawFeed = new MockOracle();
+        rawFeed.setPrice(address(stockToken), 1e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ICompositeOracle.RobinhoodStockOracleFeedRequired.selector,
+                address(stockToken),
+                address(rawFeed),
+                address(mockOracle)
+            )
+        );
+        compositeOracle.setTokenOracleFeedWithType(address(stockToken), address(rawFeed), "chainlink");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ICompositeOracle.RobinhoodStockOracleFeedRequired.selector,
+                address(stockToken),
+                address(rawFeed),
+                address(mockOracle)
+            )
+        );
+        compositeOracle.setTokenOracleFeedDual(address(stockToken), address(rawFeed), address(mockOracle));
+    }
+
+    function testStandardTokenMayUseRawFeedAfterRobinhoodStockPin() public {
+        compositeOracle.setRobinhoodStockOracleFeed(address(mockOracle));
+        MockOracle rawFeed = new MockOracle();
+        rawFeed.setPrice(address(tokenA), 1e8);
+
+        compositeOracle.setTokenOracleFeed(address(tokenA), address(rawFeed));
+
+        assertEq(compositeOracle.getTokenOracleFeed(address(tokenA)), address(rawFeed));
     }
 
     function testClearAuthorizedCallers() public {

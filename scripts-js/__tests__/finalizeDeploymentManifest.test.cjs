@@ -310,6 +310,10 @@ async function fixture({
         composite: {
             owner: byName.get("SplitRiskPoolFactory"),
             authorizedCallerCount: 0,
+            robinhoodStockOracleFeed:
+                oracleMode === "chainlink"
+                    ? byName.get("RobinhoodStockOracleFeed")
+                    : ZERO_ADDRESS,
         },
         erc4626: {
             owner: byName.get("SplitRiskPoolFactory"),
@@ -320,6 +324,13 @@ async function fixture({
         },
         marketSessionGuardian:
             oracleMode === "chainlink" ? candidate.marketSessionGuardian : null,
+        robinhoodStockOracle:
+            oracleMode === "chainlink"
+                ? {
+                      innerFeed: byName.get("ChainlinkOracleFeed"),
+                      marketSessionGate: byName.get("USMarketSessionGate"),
+                  }
+                : null,
         sequencer: {
             primaryOracleName:
                 oracleMode === "pyth" ? "PythOracle" : "ChainlinkOracleFeed",
@@ -1051,6 +1062,41 @@ test("market session guardian metadata must be distinct and match live wiring", 
         ),
         /emergency guardian wiring mismatch/u,
     );
+});
+
+test("Robinhood stock wrapper pin and immutable wiring are finalized", async () => {
+    for (const [mutate, pattern] of [
+        [
+            (state) => {
+                state.composite.robinhoodStockOracleFeed = addressFor(901);
+            },
+            /Composite Robinhood stock oracle pin wiring mismatch/u,
+        ],
+        [
+            (state) => {
+                state.robinhoodStockOracle.innerFeed = addressFor(902);
+            },
+            /Robinhood stock oracle inner feed wiring mismatch/u,
+        ],
+        [
+            (state) => {
+                state.robinhoodStockOracle.marketSessionGate = addressFor(903);
+            },
+            /Robinhood stock oracle market-session gate wiring mismatch/u,
+        ],
+    ]) {
+        const item = await fixture();
+        const wrongState = structuredClone(item.protocolState);
+        mutate(wrongState);
+        await assert.rejects(
+            item.validateAndBuildManifest(
+                validationArgs(item, {
+                    readProtocolState: async () => wrongState,
+                }),
+            ),
+            pattern,
+        );
+    }
 });
 
 test("Pyth mode requires ERC4626 to use the Pyth oracle", async () => {
