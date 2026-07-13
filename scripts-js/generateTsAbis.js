@@ -9,6 +9,11 @@ import {
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { format } from "prettier";
+import {
+    CHAINLINK_CORE_INVENTORY,
+    DEMO_EXTRA_INVENTORY,
+    PYTH_CORE_INVENTORY,
+} from "./finalizeDeploymentManifest.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -41,6 +46,114 @@ function normalizeChainId(chainId) {
     }
 
     return String(chainId);
+}
+
+const STRICT_MANIFEST_CHAIN_IDS = new Set(["4663", "46630"]);
+
+function validateActiveDeploymentManifest(chainId, manifest) {
+    const normalizedChainId = normalizeChainId(chainId);
+    if (!STRICT_MANIFEST_CHAIN_IDS.has(normalizedChainId)) return manifest;
+
+    if (
+        String(manifest?.schemaVersion) !== "2" ||
+        manifest?.status !== "active" ||
+        String(manifest?.chainId) !== normalizedChainId
+    ) {
+        throw new Error(
+            `Deployment ${normalizedChainId} is not a promoted schema-v2 active manifest`,
+        );
+    }
+
+    for (const field of [
+        "deploymentId",
+        "configurationDigest",
+        "validatedAt",
+    ]) {
+        if (
+            typeof manifest[field] !== "string" ||
+            manifest[field].length === 0
+        ) {
+            throw new Error(
+                `Deployment ${normalizedChainId} is missing ${field} evidence`,
+            );
+        }
+    }
+    const evidenceObjects = [
+        manifest.codehashEvidence,
+        manifest.addressEvidence,
+        manifest.reviewedCodehashPins,
+    ];
+    if (
+        !Array.isArray(manifest.transactionHashes) ||
+        manifest.transactionHashes.length === 0 ||
+        evidenceObjects.some(
+            (value) =>
+                value === null ||
+                typeof value !== "object" ||
+                Array.isArray(value),
+        )
+    ) {
+        throw new Error(
+            `Deployment ${normalizedChainId} is missing promotion evidence`,
+        );
+    }
+
+    const addressEntries = Object.entries(manifest).filter(
+        ([key, value]) => isAddressKey(key) && typeof value === "string",
+    );
+    const addressNames = addressEntries.map(([, value]) => value).sort();
+    const hasPyth = addressNames.includes("PythOracle");
+    const hasChainlink = addressNames.includes("ChainlinkOracleFeed");
+    if (hasPyth === hasChainlink) {
+        throw new Error(
+            `Deployment ${normalizedChainId} must select exactly one production oracle inventory`,
+        );
+    }
+    const expectedNames = [
+        ...(hasPyth ? PYTH_CORE_INVENTORY : CHAINLINK_CORE_INVENTORY),
+        ...(manifest.robinhoodDemoAssetsEnabled === "true"
+            ? DEMO_EXTRA_INVENTORY
+            : []),
+    ].sort();
+    if (JSON.stringify(addressNames) !== JSON.stringify(expectedNames)) {
+        throw new Error(
+            `Deployment ${normalizedChainId} does not match the reviewed production inventory`,
+        );
+    }
+
+    const evidencedAddresses = new Set(
+        Object.keys(manifest.codehashEvidence).map((address) =>
+            address.toLowerCase(),
+        ),
+    );
+    const sourcedAddresses = new Set(
+        Object.keys(manifest.addressEvidence).map((address) =>
+            address.toLowerCase(),
+        ),
+    );
+    for (const [address] of addressEntries) {
+        if (
+            !evidencedAddresses.has(address.toLowerCase()) ||
+            !sourcedAddresses.has(address.toLowerCase())
+        ) {
+            throw new Error(
+                `Deployment ${normalizedChainId} has incomplete address or codehash evidence`,
+            );
+        }
+    }
+
+    const requiredPins = [
+        "SplitRiskPoolFactoryImplementation",
+        "SplitRiskPoolImplementation",
+        hasPyth ? "PythOracle" : "ChainlinkOracleFeed",
+    ];
+    if (requiredPins.some((name) => !manifest.reviewedCodehashPins[name])) {
+        throw new Error(
+            `Deployment ${normalizedChainId} has incomplete reviewed codehash pins`,
+        );
+    }
+
+    return manifest;
 }
 
 function getExplicitTargetChainId() {
@@ -581,7 +694,10 @@ async function main() {
         var deploymentObject = JSON.parse(
             readFileSync(`${current_path_to_deployments}/${chain}.json`),
         );
-        deployments[chain] = deploymentObject;
+        deployments[chain] = validateActiveDeploymentManifest(
+            chain,
+            deploymentObject,
+        );
     });
 
     // Process all deployments from all script folders
@@ -751,7 +867,9 @@ if (process.argv[1] === __filename) {
 }
 
 export {
+    CHAINLINK_CORE_INVENTORY,
     deploymentJsonNameForAddress,
     selectPonderDeployment,
     sortChainIdsForSelection,
+    validateActiveDeploymentManifest,
 };

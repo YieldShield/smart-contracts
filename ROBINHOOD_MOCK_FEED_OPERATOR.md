@@ -4,6 +4,12 @@ This tool monitors and refreshes only the promoted ten-feed synthetic fixture on
 Robinhood testnet (chain 46630). It does not fetch live market data, change adapter
 maximum ages, update bounds, or operate on Robinhood mainnet.
 
+> **No active chain-46630 manifest is currently checked in.** The pre-hardening
+> generation was quarantined on 2026-07-13 because it predates the schema-v2,
+> market-session, sequencer, and codehash validation requirements. Do not operate
+> that generation with current ABIs. The commands below become available again only
+> after an authorized redeployment promotes a new `deployments/46630.json` manifest.
+
 ## Required manifest metadata
 
 The deployment manifest must contain this exact object at
