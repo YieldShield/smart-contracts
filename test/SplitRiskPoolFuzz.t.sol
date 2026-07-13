@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { Test, console2 } from "forge-std/Test.sol";
+import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
 import { ConstantsLib } from "../contracts/libraries/ConstantsLib.sol";
@@ -22,6 +23,29 @@ import { TestTimelockHelper } from "./helpers/TestTimelockHelper.sol";
 /// @notice Comprehensive fuzz tests to validate protocol behavior under extreme and randomized conditions
 /// @dev Tests deposit amount boundaries, fee accumulation limits, and multi-protector commission fairness
 contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
+    using stdStorage for StdStorage;
+
+    enum FeeBucket {
+        Pool,
+        Protocol,
+        Commission
+    }
+
+    struct FeeClaimState {
+        uint256 poolFee;
+        uint256 protocolFee;
+        uint256 commissions;
+        uint256 rewardPerShare;
+        uint256 pendingRewardDust;
+        uint256 currentEpochReserve;
+        uint256 totalCommissionsEver;
+        uint256 feeBaseline;
+        uint256 lastClaimRewardsTime;
+        uint256 totalShieldedTokens;
+        uint256 positionAmount;
+        uint64 positionLastFeeClaimTime;
+    }
+
     SplitRiskPool public pool;
     MockERC4626 public shieldedToken;
     MockERC4626 public backingToken;
@@ -215,6 +239,181 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
         pool.claimRewards(tokenId);
     }
 
+    function _feeClaimState(uint256 tokenId) internal view returns (FeeClaimState memory state) {
+        IShieldReceiptNFT.ShieldPosition memory position = IShieldReceiptNFT(address(shieldNFT)).getPosition(tokenId);
+        state = FeeClaimState({
+            poolFee: pool.accumulatedPoolFee(),
+            protocolFee: pool.accumulatedProtocolFee(),
+            commissions: pool.accumulatedCommissions(),
+            rewardPerShare: pool.rewardPerShareAccumulated(),
+            pendingRewardDust: pool.pendingProtectorRewardDust(),
+            currentEpochReserve: pool.currentEpochCommissionReserve(),
+            totalCommissionsEver: pool.totalCommissionsEverAccumulated(),
+            feeBaseline: pool.feeValueBaselineUsd(tokenId),
+            lastClaimRewardsTime: pool.lastClaimRewardsTime(tokenId),
+            totalShieldedTokens: pool.totalShieldedTokens(),
+            positionAmount: position.amount,
+            positionLastFeeClaimTime: position.lastFeeClaimTime
+        });
+    }
+
+    function _assertFeeClaimStateEq(FeeClaimState memory actual, FeeClaimState memory expected) internal pure {
+        assertEq(actual.poolFee, expected.poolFee, "pool fee changed");
+        assertEq(actual.protocolFee, expected.protocolFee, "protocol fee changed");
+        assertEq(actual.commissions, expected.commissions, "commissions changed");
+        assertEq(actual.rewardPerShare, expected.rewardPerShare, "reward per share changed");
+        assertEq(actual.pendingRewardDust, expected.pendingRewardDust, "pending reward dust changed");
+        assertEq(actual.currentEpochReserve, expected.currentEpochReserve, "current epoch reserve changed");
+        assertEq(actual.totalCommissionsEver, expected.totalCommissionsEver, "total commissions changed");
+        assertEq(actual.feeBaseline, expected.feeBaseline, "fee baseline changed");
+        assertEq(actual.lastClaimRewardsTime, expected.lastClaimRewardsTime, "claim timestamp changed");
+        assertEq(actual.totalShieldedTokens, expected.totalShieldedTokens, "total shielded tokens changed");
+        assertEq(actual.positionAmount, expected.positionAmount, "position amount changed");
+        assertEq(actual.positionLastFeeClaimTime, expected.positionLastFeeClaimTime, "position fee timestamp changed");
+    }
+
+    function _writeFeeBucket(FeeBucket bucket, uint256 value) internal {
+        if (bucket == FeeBucket.Pool) {
+            stdstore.target(address(pool)).sig("accumulatedPoolFee()").checked_write(value);
+        } else if (bucket == FeeBucket.Protocol) {
+            stdstore.target(address(pool)).sig("accumulatedProtocolFee()").checked_write(value);
+        } else {
+            stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(value);
+        }
+    }
+
+    function _feeBucketValue(FeeBucket bucket, FeeClaimState memory state) internal pure returns (uint256) {
+        if (bucket == FeeBucket.Pool) return state.poolFee;
+        if (bucket == FeeBucket.Protocol) return state.protocolFee;
+        return state.commissions;
+    }
+
+    function _feeBucketIncrement(
+        FeeBucket bucket,
+        uint256 poolFeeIncrement,
+        uint256 protocolFeeIncrement,
+        uint256 commissionIncrement
+    ) internal pure returns (uint256) {
+        if (bucket == FeeBucket.Pool) return poolFeeIncrement;
+        if (bucket == FeeBucket.Protocol) return protocolFeeIncrement;
+        return commissionIncrement;
+    }
+
+    function _assertExactFeeBoundary(
+        uint256 tokenId,
+        FeeBucket bucket,
+        uint256 poolFeeIncrement,
+        uint256 protocolFeeIncrement,
+        uint256 commissionIncrement
+    ) internal {
+        uint256 targetIncrement = _feeBucketIncrement(
+            bucket, poolFeeIncrement, protocolFeeIncrement, commissionIncrement
+        );
+        _writeFeeBucket(bucket, ConstantsLib.MAX_SAFE_ACCUMULATION - targetIncrement);
+        FeeClaimState memory beforeState = _feeClaimState(tokenId);
+
+        _claimRewardsAsOwner(tokenId);
+
+        FeeClaimState memory afterState = _feeClaimState(tokenId);
+        assertEq(_feeBucketValue(bucket, afterState), ConstantsLib.MAX_SAFE_ACCUMULATION, "bucket must reach exact cap");
+        assertEq(afterState.poolFee - beforeState.poolFee, poolFeeIncrement, "pool fee increment mismatch");
+        assertEq(
+            afterState.protocolFee - beforeState.protocolFee, protocolFeeIncrement, "protocol fee increment mismatch"
+        );
+        assertEq(afterState.commissions - beforeState.commissions, commissionIncrement, "commission increment mismatch");
+
+        uint256 totalFeeIncrement = poolFeeIncrement + protocolFeeIncrement + commissionIncrement;
+        assertEq(
+            beforeState.positionAmount - afterState.positionAmount,
+            totalFeeIncrement,
+            "position fee conservation mismatch"
+        );
+        assertEq(
+            beforeState.totalShieldedTokens - afterState.totalShieldedTokens,
+            totalFeeIncrement,
+            "pool fee conservation mismatch"
+        );
+
+        uint256 rewardPerShareIncrement =
+            Math.mulDiv(commissionIncrement, REWARD_PRECISION, pool.totalProtectorShares());
+        uint256 representedCommission =
+            Math.mulDiv(rewardPerShareIncrement, pool.totalProtectorShares(), REWARD_PRECISION);
+        assertEq(
+            afterState.rewardPerShare - beforeState.rewardPerShare,
+            rewardPerShareIncrement,
+            "reward-per-share reference mismatch"
+        );
+        assertEq(
+            afterState.pendingRewardDust - beforeState.pendingRewardDust,
+            commissionIncrement - representedCommission,
+            "commission dust reference mismatch"
+        );
+        assertEq(
+            afterState.currentEpochReserve - beforeState.currentEpochReserve,
+            commissionIncrement,
+            "epoch reserve increment mismatch"
+        );
+        assertEq(
+            afterState.totalCommissionsEver - beforeState.totalCommissionsEver,
+            commissionIncrement,
+            "lifetime commission increment mismatch"
+        );
+    }
+
+    function _assertFeeBoundaryRevertIsAtomic(
+        uint256 tokenId,
+        FeeBucket bucket,
+        uint256 poolFeeIncrement,
+        uint256 protocolFeeIncrement,
+        uint256 commissionIncrement
+    ) internal {
+        uint256 targetIncrement = _feeBucketIncrement(
+            bucket, poolFeeIncrement, protocolFeeIncrement, commissionIncrement
+        );
+        uint256 accumulatedBefore = ConstantsLib.MAX_SAFE_ACCUMULATION - targetIncrement + 1;
+        _writeFeeBucket(bucket, accumulatedBefore);
+        FeeClaimState memory beforeState = _feeClaimState(tokenId);
+
+        vm.prank(shieldNFT.ownerOf(tokenId));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ErrorsLib.RewardAccumulationIncomplete.selector, targetIncrement, accumulatedBefore, uint256(0)
+            )
+        );
+        pool.claimRewards(tokenId);
+
+        _assertFeeClaimStateEq(_feeClaimState(tokenId), beforeState);
+    }
+
+    function _testFuzz_FeeAccumulationExactBoundary(FeeBucket bucket, uint256 yieldSeed) internal {
+        uint256 protectorDeposit = 1_000_000e18;
+        uint256 shieldedDeposit = 600_000e18;
+        _createProtectorPosition(protectors[0], protectorDeposit);
+        uint256 shieldTokenId = _createShieldedPosition(shielded, shieldedDeposit);
+
+        uint256 yieldBps = bound(yieldSeed, 1, 5000);
+        _generateYield(yieldBps);
+
+        // Probe the actual fee path so every boundary is based on the real,
+        // fuzz-derived increment, including all production rounding behavior.
+        uint256 pristineState = vm.snapshotState();
+        _claimRewardsAsOwner(shieldTokenId);
+        uint256 poolFeeIncrement = pool.accumulatedPoolFee();
+        uint256 protocolFeeIncrement = pool.accumulatedProtocolFee();
+        uint256 commissionIncrement = pool.accumulatedCommissions();
+        assertGt(poolFeeIncrement, 0, "fuzzed pool fee increment must be non-zero");
+        assertGt(protocolFeeIncrement, 0, "fuzzed protocol fee increment must be non-zero");
+        assertGt(commissionIncrement, 0, "fuzzed commission increment must be non-zero");
+        assertTrue(vm.revertToState(pristineState), "failed to restore pristine fee state");
+
+        _assertExactFeeBoundary(shieldTokenId, bucket, poolFeeIncrement, protocolFeeIncrement, commissionIncrement);
+        assertTrue(vm.revertToState(pristineState), "failed to restore boundary probe state");
+
+        _assertFeeBoundaryRevertIsAtomic(
+            shieldTokenId, bucket, poolFeeIncrement, protocolFeeIncrement, commissionIncrement
+        );
+    }
+
     // ============ 1. Extreme Deposit Amount Fuzz Tests ============
 
     /// @notice Test shielded deposits within valid bounds succeed
@@ -342,33 +541,19 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
     // ============ 2. Fee Accumulation Limit Tests ============
 
-    /// @notice Test fee accumulation near uint128 limit
-    function testFuzz_FeeAccumulationNearUint128Limit(uint256 yieldAmount) public {
-        // Setup pool with large deposits
-        uint256 protectorDeposit = 1_000_000e18;
-        uint256 shieldedDeposit = 600_000e18; // ~60% of protector for 150% collateral ratio
+    /// @notice The pool-fee bucket accepts the exact cap and rejects one wei above it atomically.
+    function testFuzz_FeeAccumulationPoolBoundary(uint256 yieldSeed) public {
+        _testFuzz_FeeAccumulationExactBoundary(FeeBucket.Pool, yieldSeed);
+    }
 
-        _createProtectorPosition(protectors[0], protectorDeposit);
-        uint256 shieldTokenId = _createShieldedPosition(shielded, shieldedDeposit);
+    /// @notice The protocol-fee bucket is tested independently so the earlier pool-fee check cannot mask it.
+    function testFuzz_FeeAccumulationProtocolBoundary(uint256 yieldSeed) public {
+        _testFuzz_FeeAccumulationExactBoundary(FeeBucket.Protocol, yieldSeed);
+    }
 
-        // Generate yield that approaches type(uint128).max accumulation
-        yieldAmount = bound(yieldAmount, 1e18, type(uint64).max);
-
-        // Set oracle price to generate yield
-        uint256 yieldBps = bound(yieldAmount, 1, 5000); // Up to 50% yield
-        _generateYield(yieldBps);
-
-        // Claim rewards to accumulate fees
-        _claimRewardsAsOwner(shieldTokenId);
-
-        // Verify fees are capped at maxSafeAccumulation
-        uint256 accumulatedCommissions = pool.accumulatedCommissions();
-        uint256 accumulatedPoolFee = pool.accumulatedPoolFee();
-        uint256 accumulatedProtocolFee = pool.accumulatedProtocolFee();
-
-        assertLe(accumulatedCommissions, type(uint128).max, "Commissions should be within uint128");
-        assertLe(accumulatedPoolFee, type(uint128).max, "Pool fee should be within uint128");
-        assertLe(accumulatedProtocolFee, type(uint128).max, "Protocol fee should be within uint128");
+    /// @notice The commission bucket is tested independently so both earlier fee checks remain below their caps.
+    function testFuzz_FeeAccumulationCommissionBoundary(uint256 yieldSeed) public {
+        _testFuzz_FeeAccumulationExactBoundary(FeeBucket.Commission, yieldSeed);
     }
 
     /// @notice Test multiple yield cycles accumulation
@@ -423,18 +608,24 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
         // Generate extreme yield to test fee scaling
         _generateYield(yieldPercent);
 
+        IShieldReceiptNFT.ShieldPosition memory positionBefore =
+            IShieldReceiptNFT(address(shieldNFT)).getPosition(shieldTokenId);
+        uint256 totalShieldedBefore = pool.totalShieldedTokens();
+
         // Claim rewards - should handle gracefully with fee scaling
         _claimRewardsAsOwner(shieldTokenId);
 
         // Get position after fee calculation
         IShieldReceiptNFT.ShieldPosition memory pos = IShieldReceiptNFT(address(shieldNFT)).getPosition(shieldTokenId);
 
-        // Verify position amount is non-negative (fees were scaled if needed)
-        assertGe(pos.amount, 0, "Position amount should be non-negative after fee scaling");
-
-        // Verify fees are reasonable
+        // Fee extraction must conserve the position and pool-level shielded accounting.
         uint256 totalFees = pool.accumulatedCommissions() + pool.accumulatedPoolFee() + pool.accumulatedProtocolFee();
-        assertLe(totalFees, depositAmount, "Total fees should not exceed original deposit");
+        assertEq(positionBefore.amount - pos.amount, totalFees, "position amount must decrease by accumulated fees");
+        assertEq(
+            totalShieldedBefore - pool.totalShieldedTokens(),
+            totalFees,
+            "total shielded accounting must decrease by accumulated fees"
+        );
     }
 
     /// @notice Test reward per share accumulator precision
@@ -455,15 +646,23 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
         uint256 shieldTokenId = _createShieldedPosition(shielded, shieldedAmount);
 
         uint256 rewardPerShareBefore = pool.rewardPerShareAccumulated();
+        uint256 commissionsBefore = pool.accumulatedCommissions();
+        uint256 totalProtectorShares = pool.totalProtectorShares();
 
         _generateYield(yieldBps);
         _claimRewardsAsOwner(shieldTokenId);
 
         uint256 rewardPerShareAfter = pool.rewardPerShareAccumulated();
 
-        // Reward per share should increase after yield
-        assertGe(rewardPerShareAfter, rewardPerShareBefore, "Reward per share should not decrease");
-        assertLe(rewardPerShareAfter, type(uint256).max, "Reward per share should not overflow");
+        uint256 commissionIncrement = pool.accumulatedCommissions() - commissionsBefore;
+        uint256 expectedRewardPerShareIncrement =
+            Math.mulDiv(commissionIncrement, REWARD_PRECISION, totalProtectorShares);
+        assertGt(commissionIncrement, 0, "yield must produce a commission increment");
+        assertEq(
+            rewardPerShareAfter - rewardPerShareBefore,
+            expectedRewardPerShareIncrement,
+            "reward per share must match the commission reference model"
+        );
     }
 
     // ============ 3. Multi-Protector Commission Distribution Tests ============
