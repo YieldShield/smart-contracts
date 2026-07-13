@@ -29,6 +29,7 @@ const PRODUCTION_DEPLOY_SCRIPT = "DeployYieldShieldProduction.s.sol";
 const DEFAULT_NETWORK = "localhost";
 const ROBINHOOD_TESTNET_NETWORK = "robinhoodTestnet";
 const ROBINHOOD_NETWORKS = new Set(["robinhood", "robinhoodTestnet"]);
+const ARBITRUM_SEQUENCER_FEED_ENV = "YS_ARBITRUM_SEQUENCER_FEED";
 const DEPLOYMENT_TARGET_SIZE_CHECK_SCRIPT = join(
     __dirname,
     "checkDeploymentTargetSizes.js",
@@ -439,6 +440,34 @@ function deploymentFinalityPolicyForNetwork(
     return { chainId, policy };
 }
 
+function validatePythSequencerPolicyInput(
+    { chainId, policy },
+    env = process.env,
+) {
+    const configuredFeed = env[ARBITRUM_SEQUENCER_FEED_ENV];
+    if (!hasNonBlankEnvValue(configuredFeed)) return null;
+
+    const sequencerPolicy = policy?.pythSequencerUptimeGuard;
+    if (!sequencerPolicy) return null;
+
+    if (sequencerPolicy.mode !== "configured") {
+        throw new Error(
+            `${ARBITRUM_SEQUENCER_FEED_ENV} must be unset for chain ${chainId}; its checked-in Pyth sequencer policy is ${sequencerPolicy.mode}.`,
+        );
+    }
+
+    if (
+        configuredFeed.trim().toLowerCase() !==
+        sequencerPolicy.feed.toLowerCase()
+    ) {
+        throw new Error(
+            `${ARBITRUM_SEQUENCER_FEED_ENV} must exactly match the checked-in feed ${sequencerPolicy.feed} for chain ${chainId}.`,
+        );
+    }
+
+    return sequencerPolicy.feed;
+}
+
 async function preflightPublicDeploymentPromotion(
     { fileName, network, env = process.env },
     {
@@ -451,10 +480,12 @@ async function preflightPublicDeploymentPromotion(
         return null;
     }
 
-    const { chainId } = deploymentFinalityPolicyForNetwork(
+    const deploymentPolicy = deploymentFinalityPolicyForNetwork(
         network,
         finalityPolicy,
     );
+    const { chainId } = deploymentPolicy;
+    validatePythSequencerPolicyInput(deploymentPolicy, env);
     const primaryRpcUrl = resolveRpcUrlFn(network, env);
     const validationRpcInput = env.YS_DEPLOYMENT_VALIDATION_RPC_URL;
     const validationRpcUrl = validationRpcInput
@@ -807,6 +838,7 @@ export {
     formatRobinhoodProductionDeploymentMode,
     robinhoodProductionDeploymentMode,
     usesRelaxedRobinhoodTestnetGuards,
+    validatePythSequencerPolicyInput,
     validateDeployScriptFileName,
     validateNetworkExists,
 };

@@ -187,6 +187,11 @@ feed with the requirement enabled on both `PythOracle` and
 requirement-disabled exception because no canonical Chainlink feed is
 published there. Promotion reads both adapters at the agreed finalized block;
 for a nonzero feed, both RPCs must also agree on its runtime code.
+The production Solidity script always uses the checked-in Arbitrum One feed and
+does not permit a broadcast-time override. If `YS_ARBITRUM_SEQUENCER_FEED` is
+set for Arbitrum One, the CLI treats it only as an assertion and requires an
+exact match before constructing either RPC provider. The variable must remain
+unset for Arbitrum Sepolia's disabled-feed policy.
 
 Robinhood mainnet has no canonical sequencer uptime feed identified in the
 current Chainlink registry. It therefore remains operationally blocked until an

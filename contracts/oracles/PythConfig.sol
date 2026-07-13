@@ -12,6 +12,10 @@ library PythConfig {
     /// @notice Chain ID for Arbitrum mainnet
     uint256 public constant ARBITRUM_MAINNET_CHAIN_ID = 42161;
 
+    /// @notice Canonical Chainlink sequencer uptime feed on Arbitrum mainnet
+    /// @dev This is a deployment safety policy, not an operator-overridable input.
+    address public constant ARBITRUM_MAINNET_SEQUENCER_UPTIME_FEED = 0xFdB631F5EE196F0ed6FAa767959853A9F217697D;
+
     /// @notice Pyth contract address on Arbitrum Sepolia
     /// @dev Get the latest address from: https://docs.pyth.network/price-feeds/contract-addresses/evm
     /// @dev Official upgraded Arbitrum Sepolia address: 0x0B73614636C855Bf23F342F307FB981A3e47f42B

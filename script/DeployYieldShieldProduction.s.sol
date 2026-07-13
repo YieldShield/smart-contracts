@@ -529,17 +529,17 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         // One 42161 / Sepolia 421614). Configure the gate while the deployer is
         // still the owner — otherwise every subsequent price read reverts.
         if (block.chainid == PythConfig.ARBITRUM_MAINNET_CHAIN_ID) {
-            // Chainlink Arbitrum One sequencer uptime feed. Verify against
-            // Chainlink docs before mainnet; override with YS_ARBITRUM_SEQUENCER_FEED.
-            address sequencerFeed =
-                vm.envOr("YS_ARBITRUM_SEQUENCER_FEED", address(0xFdB631F5EE196F0ed6FAa767959853A9F217697D));
+            // The canonical feed is policy-pinned and intentionally cannot be
+            // overridden at broadcast time. The CLI accepts
+            // YS_ARBITRUM_SEQUENCER_FEED only as an exact preflight assertion.
+            address sequencerFeed = PythConfig.ARBITRUM_MAINNET_SEQUENCER_UPTIME_FEED;
             pythOracle.setSequencerUptimeFeed(sequencerFeed);
             erc4626OracleFeed.setSequencerUptimeFeed(sequencerFeed);
             console.log("Sequencer uptime feed set:", sequencerFeed);
         } else {
             // Arbitrum Sepolia has no official Chainlink sequencer-uptime feed.
-            // Disable the requirement so testnet pricing is usable; an operator can
-            // enable it later via setSequencerUptimeFeed once a feed is available.
+            // Its checked-in deployment policy requires a disabled zero-feed state,
+            // so the CLI rejects YS_ARBITRUM_SEQUENCER_FEED on this chain.
             pythOracle.setSequencerUptimeFeedRequired(false);
             erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
             console.log("Sequencer uptime requirement disabled (no feed on this chain)");

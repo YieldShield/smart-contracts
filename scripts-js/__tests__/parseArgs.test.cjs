@@ -418,6 +418,101 @@ test("production deployment finality policy supports only reviewed public aliase
     );
 });
 
+test("Arbitrum sequencer input is only an exact policy assertion", async () => {
+    const {
+        deploymentFinalityPolicyForNetwork,
+        validatePythSequencerPolicyInput,
+    } = await import("../parseArgs.js");
+    const canonicalFeed = "0xFdB631F5EE196F0ed6FAa767959853A9F217697D";
+    const mainnet = deploymentFinalityPolicyForNetwork("arbitrum");
+    const sepolia = deploymentFinalityPolicyForNetwork("arbitrumSepolia");
+
+    assert.equal(
+        validatePythSequencerPolicyInput(mainnet, {
+            YS_ARBITRUM_SEQUENCER_FEED: canonicalFeed.toLowerCase(),
+        }),
+        canonicalFeed,
+    );
+    assert.throws(
+        () =>
+            validatePythSequencerPolicyInput(mainnet, {
+                YS_ARBITRUM_SEQUENCER_FEED:
+                    "0x0000000000000000000000000000000000000bad",
+            }),
+        /must exactly match the checked-in feed/u,
+    );
+    assert.equal(validatePythSequencerPolicyInput(sepolia, {}), null);
+    assert.throws(
+        () =>
+            validatePythSequencerPolicyInput(sepolia, {
+                YS_ARBITRUM_SEQUENCER_FEED: canonicalFeed,
+            }),
+        /must be unset for chain 421614/u,
+    );
+});
+
+test("invalid Arbitrum sequencer input fails before RPC, size, or Make work", async () => {
+    const { preflightPublicDeploymentPromotion, runDeploymentGatesAndSpawn } =
+        await import("../parseArgs.js");
+    const cases = [
+        {
+            network: "arbitrum",
+            feed: "0x0000000000000000000000000000000000000bad",
+            error: /must exactly match the checked-in feed/u,
+        },
+        {
+            network: "arbitrumSepolia",
+            feed: "0xFdB631F5EE196F0ed6FAa767959853A9F217697D",
+            error: /must be unset for chain 421614/u,
+        },
+    ];
+
+    for (const testCase of cases) {
+        const calls = [];
+        const request = {
+            fileName: "DeployYieldShieldProduction.s.sol",
+            network: testCase.network,
+            env: {
+                YS_ARBITRUM_SEQUENCER_FEED: testCase.feed,
+            },
+            makeArgs: ["deploy-and-generate-abis"],
+            childEnv: {},
+        };
+
+        await assert.rejects(
+            runDeploymentGatesAndSpawn(request, {
+                preflight: async (preflightRequest) => {
+                    calls.push("preflight");
+                    return preflightPublicDeploymentPromotion(
+                        preflightRequest,
+                        {
+                            resolveRpcUrlFn: () => {
+                                calls.push("resolve-rpc");
+                                return "https://must-not-run.example";
+                            },
+                            providerFactory: () => {
+                                calls.push("provider");
+                                return {};
+                            },
+                        },
+                    );
+                },
+                runSizeCheck: () => {
+                    calls.push("size");
+                    return 0;
+                },
+                spawn: () => {
+                    calls.push("make");
+                    return { status: 0 };
+                },
+                log: () => {},
+            }),
+            testCase.error,
+        );
+        assert.deepEqual(calls, ["preflight"]);
+    }
+});
+
 test("public deployment preflight verifies both chains and their agreed finalized block", async () => {
     const { preflightPublicDeploymentPromotion } =
         await import("../parseArgs.js");
