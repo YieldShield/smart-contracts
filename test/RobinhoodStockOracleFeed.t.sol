@@ -161,6 +161,10 @@ contract RobinhoodStockOracleFeedTest is Test {
         assertFalse(stockFeed.supportsStrictProtectedPrice(address(tsla)));
     }
 
+    function test_supportsCorporateActionPauseGuard_ReportsTrue() public view {
+        assertTrue(stockFeed.supportsCorporateActionPauseGuard(address(tsla)));
+    }
+
     // ============ Protection opening eligibility ============
 
     function test_openingEligibility_AllowsConfiguredOpenSession() public view {
@@ -245,7 +249,9 @@ contract RobinhoodStockOracleFeedTest is Test {
         ChainlinkOracleFeed backupFeed = new ChainlinkOracleFeed(MAX_PRICE_AGE);
         MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
         backupFeed.setTokenFeed(address(tsla), address(backupAggregator));
-        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backupFeed));
+        RobinhoodStockOracleFeed guardedBackupFeed =
+            new RobinhoodStockOracleFeed(address(backupFeed), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(guardedBackupFeed));
 
         composite.challengeForToken(address(tsla));
         vm.warp(block.timestamp + composite.challengeDurationSec() + 1);
@@ -257,5 +263,33 @@ contract RobinhoodStockOracleFeedTest is Test {
         // Opening policy must still come from the primary stock wrapper rather than the
         // now-active plain backup feed.
         assertFalse(composite.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_compositeOracle_RejectsDualRouteWhenOnlyPrimaryHasCorporateActionPauseGuard() public {
+        CompositeOracle composite = new CompositeOracle();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CorporateActionPauseGuardMismatch.selector,
+                address(tsla),
+                address(stockFeed),
+                address(chainlinkFeed)
+            )
+        );
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(chainlinkFeed));
+    }
+
+    function test_compositeOracle_RejectsDualRouteWhenOnlyBackupHasCorporateActionPauseGuard() public {
+        CompositeOracle composite = new CompositeOracle();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.CorporateActionPauseGuardMismatch.selector,
+                address(tsla),
+                address(chainlinkFeed),
+                address(stockFeed)
+            )
+        );
+        composite.setTokenOracleFeedDual(address(tsla), address(chainlinkFeed), address(stockFeed));
     }
 }

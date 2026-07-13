@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
+import { ICorporateActionPauseGuard } from "../interfaces/ICorporateActionPauseGuard.sol";
 import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
 
 interface IUSMarketSessionGate {
@@ -39,7 +40,7 @@ interface IChainlinkOracleFeedOptional {
 ///      ChainlinkOracleFeed, including the optional capability functions CompositeOracle probes
 ///      (`getPriceUnsafe`, `supportsCircuitBreaker`, `supportsStrictProtectedPrice`,
 ///      `isPriceStale`), so wrapping does not weaken the inner feed's protections.
-contract RobinhoodStockOracleFeed is IOracleFeed, IProtectionOpeningEligibility {
+contract RobinhoodStockOracleFeed is IOracleFeed, ICorporateActionPauseGuard, IProtectionOpeningEligibility {
     /// @notice The wrapped ChainlinkOracleFeed that performs the actual price reads
     address public immutable innerFeed;
 
@@ -116,6 +117,11 @@ contract RobinhoodStockOracleFeed is IOracleFeed, IProtectionOpeningEligibility 
     /// @return supported True if the inner feed supports strict protected pricing for the token
     function supportsStrictProtectedPrice(address token) external view returns (bool supported) {
         return IChainlinkOracleFeedOptional(innerFeed).supportsStrictProtectedPrice(token);
+    }
+
+    /// @inheritdoc ICorporateActionPauseGuard
+    function supportsCorporateActionPauseGuard(address) external pure returns (bool supported) {
+        return true;
     }
 
     /// @notice Check if a price is stale for a given token

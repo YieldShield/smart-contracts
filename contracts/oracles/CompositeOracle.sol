@@ -5,6 +5,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
+import { ICorporateActionPauseGuard } from "../interfaces/ICorporateActionPauseGuard.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
@@ -146,6 +147,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @notice Custom error when dual feeds disagree on fee-accrual price support
     error FeeAccrualBasisMismatch(address token, address primaryFeed, address backupFeed);
+
+    /// @notice Custom error when only one leg of a dual route enforces corporate-action pauses
+    error CorporateActionPauseGuardMismatch(address token, address primaryFeed, address backupFeed);
 
     /// @notice Custom error when a strict circuit-breaker price is requested from an unsupported feed
     error CircuitBreakerNotSupported(address token, address feed);
@@ -338,6 +342,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (primaryFeed == backupFeed) revert SameFeedNotAllowed(primaryFeed);
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
         _validateFeeAccrualBasisCompatibility(token, primaryFeed, backupFeed);
+        _validateCorporateActionPauseGuardCompatibility(token, primaryFeed, backupFeed);
         _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
@@ -1189,6 +1194,32 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
         if (primarySupportsFeeAccrual != backupSupportsFeeAccrual) {
             revert FeeAccrualBasisMismatch(token, primaryFeed, backupFeed);
+        }
+    }
+
+    function _supportsCorporateActionPauseGuard(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) {
+            return false;
+        }
+
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeCall(ICorporateActionPauseGuard.supportsCorporateActionPauseGuard, (token)));
+
+        if (!success || data.length < 32) {
+            return false;
+        }
+        return abi.decode(data, (bool));
+    }
+
+    function _validateCorporateActionPauseGuardCompatibility(address token, address primaryFeed, address backupFeed)
+        internal
+        view
+    {
+        bool primaryGuarded = _supportsCorporateActionPauseGuard(primaryFeed, token);
+        bool backupGuarded = _supportsCorporateActionPauseGuard(backupFeed, token);
+
+        if (primaryGuarded != backupGuarded) {
+            revert CorporateActionPauseGuardMismatch(token, primaryFeed, backupFeed);
         }
     }
 
