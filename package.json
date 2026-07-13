@@ -25,6 +25,7 @@
     "clean": "forge clean",
     "compile": "make compile",
     "check:foundry-lock": "node scripts-js/check-foundry-lock.cjs",
+    "coverage-check": "node scripts-js/checkCoverage.js lcov.info",
     "deploy": "node scripts-js/parseArgs.js",
     "flatten": "make flatten",
     "finalize:deployment-manifest": "node scripts-js/finalizeDeploymentManifest.js",

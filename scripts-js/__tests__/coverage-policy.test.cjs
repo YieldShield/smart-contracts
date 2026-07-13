@@ -22,6 +22,17 @@ test("coverage excludes instrumentation-sensitive gas benchmarks only", () => {
     );
     assert.match(
         coverage,
-        /forge coverage .* --no-match-path "test\/FactoryLinearScanGas\.t\.sol"/u,
+        /forge coverage .* --report lcov --exclude-tests --no-match-path "test\/FactoryLinearScanGas\.t\.sol"/u,
+    );
+    assert.match(coverage, /run: npm run coverage-check/u);
+});
+
+test("package exposes the enforcing coverage command", () => {
+    const packageJson = JSON.parse(
+        readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"),
+    );
+    assert.equal(
+        packageJson.scripts["coverage-check"],
+        "node scripts-js/checkCoverage.js lcov.info",
     );
 });
