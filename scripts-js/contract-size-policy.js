@@ -6,14 +6,14 @@ export const DEFAULT_INITCODE_LIMIT = 49_152;
 // requires an explicit budget change.
 export const TRACKED_SIZE_BUDGETS = Object.freeze({
     SplitRiskPool: Object.freeze({
-        runtimeLimit: 45_988,
-        initcodeLimit: 46_255,
-        reason: "Robinhood-targeted monolith pending module split",
+        runtimeLimit: 48_384,
+        initcodeLimit: 48_651,
+        reason: "reviewed July 13 exit-liveness and owner-escrow remediation; module split required before further growth",
     }),
     SplitRiskPoolFactory: Object.freeze({
-        runtimeLimit: 41_258,
-        initcodeLimit: 41_525,
-        reason: "Robinhood-targeted monolith pending module split",
+        runtimeLimit: 41_385,
+        initcodeLimit: 41_652,
+        reason: "reviewed July 13 factory lifecycle remediation; module split required before further growth",
     }),
 });
 
