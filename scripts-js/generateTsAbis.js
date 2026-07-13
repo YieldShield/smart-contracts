@@ -51,6 +51,92 @@ function normalizeChainId(chainId) {
 
 const STRICT_MANIFEST_CHAIN_IDS = new Set(["4663", "46630"]);
 
+function isStrictManifestChain(chainId) {
+    return STRICT_MANIFEST_CHAIN_IDS.has(normalizeChainId(chainId));
+}
+
+function requirePromotedManifestForStrictTarget(chainId, deployments) {
+    const normalizedChainId = normalizeChainId(chainId);
+    if (!isStrictManifestChain(normalizedChainId)) return null;
+
+    const manifest = deployments?.[normalizedChainId];
+    if (!manifest) {
+        throw new Error(
+            `Deployment ${normalizedChainId} has no promoted active manifest; raw broadcasts remain quarantined`,
+        );
+    }
+
+    return validateActiveDeploymentManifest(normalizedChainId, manifest);
+}
+
+function constrainStrictChainContracts(allGeneratedContracts, deployments) {
+    const constrainedContracts = {};
+
+    for (const [chainId, chainContracts] of Object.entries(
+        allGeneratedContracts,
+    )) {
+        if (!isStrictManifestChain(chainId)) {
+            constrainedContracts[chainId] = { ...chainContracts };
+            continue;
+        }
+
+        const manifest = deployments?.[chainId];
+        if (!manifest) {
+            continue;
+        }
+        validateActiveDeploymentManifest(chainId, manifest);
+
+        const manifestAddressByName = new Map(
+            Object.entries(manifest)
+                .filter(
+                    ([address, name]) =>
+                        isAddressKey(address) && typeof name === "string",
+                )
+                .map(([address, name]) => [name, address]),
+        );
+        const permittedContracts = {};
+
+        for (const [contractName, contractData] of Object.entries(
+            chainContracts,
+        )) {
+            const manifestAddress = manifestAddressByName.get(contractName);
+            if (
+                !manifestAddress ||
+                typeof contractData?.address !== "string" ||
+                contractData.address.toLowerCase() !==
+                    manifestAddress.toLowerCase()
+            ) {
+                continue;
+            }
+
+            permittedContracts[contractName] = {
+                ...contractData,
+                address: manifestAddress,
+            };
+        }
+
+        if (Object.keys(permittedContracts).length > 0) {
+            constrainedContracts[chainId] = permittedContracts;
+        }
+    }
+
+    return constrainedContracts;
+}
+
+function remapContractNamesByManifest(chainContracts, manifest) {
+    const remappedContracts = {};
+
+    for (const [contractName, contractData] of Object.entries(chainContracts)) {
+        const manifestName = deploymentJsonNameForAddress(
+            manifest,
+            contractData.address,
+        );
+        remappedContracts[manifestName || contractName] = contractData;
+    }
+
+    return remappedContracts;
+}
+
 function validateActiveDeploymentManifest(chainId, manifest) {
     const normalizedChainId = normalizeChainId(chainId);
     if (!STRICT_MANIFEST_CHAIN_IDS.has(normalizedChainId)) return manifest;
@@ -671,18 +757,44 @@ function generatedContractBlockFor(chainContracts, contractName) {
 function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
     for (const chainId of chainIds) {
         const chainContracts = allGeneratedContracts[chainId] || {};
+        const strictManifest = isStrictManifestChain(chainId)
+            ? deployments?.[chainId]
+            : null;
+        if (isStrictManifestChain(chainId) && !strictManifest) {
+            continue;
+        }
+        if (strictManifest) {
+            validateActiveDeploymentManifest(chainId, strictManifest);
+        }
+        const generatedFactoryAddress = generatedContractAddressFor(
+            chainContracts,
+            "SplitRiskPoolFactory",
+        );
+        const generatedGovernorAddress = generatedContractAddressFor(
+            chainContracts,
+            "YSGovernor",
+        );
+        const manifestFactoryAddress = deploymentJsonAddressFor(
+            deployments[chainId],
+            "SplitRiskPoolFactory",
+        );
+        const manifestGovernorAddress = deploymentJsonAddressFor(
+            deployments[chainId],
+            "YSGovernor",
+        );
+        if (
+            strictManifest &&
+            (generatedFactoryAddress?.toLowerCase() !==
+                manifestFactoryAddress?.toLowerCase() ||
+                generatedGovernorAddress?.toLowerCase() !==
+                    manifestGovernorAddress?.toLowerCase())
+        ) {
+            continue;
+        }
         const factoryAddress =
-            generatedContractAddressFor(
-                chainContracts,
-                "SplitRiskPoolFactory",
-            ) ||
-            deploymentJsonAddressFor(
-                deployments[chainId],
-                "SplitRiskPoolFactory",
-            );
+            generatedFactoryAddress || manifestFactoryAddress;
         const governorAddress =
-            generatedContractAddressFor(chainContracts, "YSGovernor") ||
-            deploymentJsonAddressFor(deployments[chainId], "YSGovernor");
+            generatedGovernorAddress || manifestGovernorAddress;
 
         if (!factoryAddress || !governorAddress) {
             continue;
@@ -728,7 +840,7 @@ async function main() {
     });
 
     // Process all deployments from all script folders
-    const allGeneratedContracts = processAllDeployments(
+    let allGeneratedContracts = processAllDeployments(
         current_path_to_broadcast,
     );
     const latestRunDeployments = getLatestRunDeployments(
@@ -760,34 +872,29 @@ async function main() {
         };
     });
 
+    requirePromotedManifestForStrictTarget(explicitTargetChainId, deployments);
     // Update contract keys based on deployments if they exist
     Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {
-        Object.entries(contracts).forEach(([contractName, contractData]) => {
-            const deployedName = deploymentJsonNameForAddress(
-                deployments[chainId],
-                contractData.address,
-            );
-            if (deployedName && deployedName !== contractName) {
-                const deployedArtifact = getArtifactOfContract(deployedName);
-                const deployedContractData = deployedArtifact
-                    ? {
-                          ...contractData,
-                          abi: deployedArtifact.abi,
-                          inheritedFunctions:
-                              getInheritedFunctions(deployedArtifact),
-                      }
-                    : contractData;
-
-                // If we have a deployment name, use it instead of the contract name
-                allGeneratedContracts[chainId][deployedName] =
-                    deployedContractData;
-                delete allGeneratedContracts[chainId][contractName];
-            }
-        });
+        allGeneratedContracts[chainId] = remapContractNamesByManifest(
+            contracts,
+            deployments[chainId],
+        );
+        Object.entries(allGeneratedContracts[chainId]).forEach(
+            ([contractName, contractData]) => {
+                const artifact = getArtifactOfContract(contractName);
+                if (artifact) {
+                    allGeneratedContracts[chainId][contractName] = {
+                        ...contractData,
+                        abi: artifact.abi,
+                        inheritedFunctions: getInheritedFunctions(artifact),
+                    };
+                }
+            },
+        );
 
         // Also update deployment-mapped contract addresses from deployments JSON.
         // This keeps local generated addresses aligned with the latest deploy entrypoint.
-        if (deployments[chainId]) {
+        if (deployments[chainId] && !isStrictManifestChain(chainId)) {
             for (const [address, name] of Object.entries(
                 deployments[chainId],
             )) {
@@ -800,6 +907,11 @@ async function main() {
             }
         }
     });
+
+    allGeneratedContracts = constrainStrictChainContracts(
+        allGeneratedContracts,
+        deployments,
+    );
 
     const NEXTJS_TARGET_DIR = "../nextjs/contracts/";
 
@@ -895,7 +1007,10 @@ if (process.argv[1] === __filename) {
 
 export {
     CHAINLINK_CORE_INVENTORY,
+    constrainStrictChainContracts,
     deploymentJsonNameForAddress,
+    remapContractNamesByManifest,
+    requirePromotedManifestForStrictTarget,
     requiredReviewedCodehashPinNames,
     selectPonderDeployment,
     sortChainIdsForSelection,
