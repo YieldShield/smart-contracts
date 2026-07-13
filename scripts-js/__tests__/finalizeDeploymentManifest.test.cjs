@@ -22,6 +22,11 @@ const FINALIZED_BLOCK_HASH = `0x${"fa".repeat(32)}`;
 const RECEIPT_BLOCK_HASH = `0x${"bc".repeat(32)}`;
 const PRIMARY_RPC_URL = "https://deployment-rpc.example/v1";
 const VALIDATION_RPC_URL = "https://validation-rpc.example/v1";
+const ARBITRUM_MAINNET_CHAIN_ID = "42161";
+const ARBITRUM_SEPOLIA_CHAIN_ID = "421614";
+const PYTH_MAINNET_SEQUENCER_FEED =
+    "0xFdB631F5EE196F0ed6FAa767959853A9F217697D";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const FACTORY_CREATED_OUTPUTS = new Set([
     "RobinhoodSGOVUSDGPool",
     "RobinhoodSPYUSDGPool",
@@ -51,10 +56,11 @@ function transactionHashFor(index) {
 }
 
 async function fixture({
-    chainId = CHAIN_ID,
+    chainId,
     demo = false,
     oracleMode = "chainlink",
 } = {}) {
+    chainId ??= oracleMode === "pyth" ? ARBITRUM_SEPOLIA_CHAIN_ID : CHAIN_ID;
     const module = await import("../finalizeDeploymentManifest.js");
     const { keccak256 } = await import("ethers");
     const names = [
@@ -70,9 +76,14 @@ async function fixture({
         chainId,
         deployer: DEPLOYER,
         configurationDigest: CONFIGURATION_DIGEST,
-        networkName: "robinhood-testnet",
+        networkName:
+            chainId === ARBITRUM_MAINNET_CHAIN_ID
+                ? "arbitrum-mainnet"
+                : chainId === ARBITRUM_SEPOLIA_CHAIN_ID
+                  ? "arbitrum-sepolia"
+                  : "robinhood-testnet",
         robinhoodDemoAssetsEnabled: demo ? "true" : "false",
-        productionGuardMode: "relaxed",
+        productionGuardMode: chainId === "46630" ? "relaxed" : "strict",
         recovery: "false",
     };
     names.forEach((name, index) => {
@@ -309,15 +320,22 @@ async function fixture({
         },
         marketSessionGuardian:
             oracleMode === "chainlink" ? candidate.marketSessionGuardian : null,
-        sequencer:
-            oracleMode === "chainlink"
-                ? {
-                      chainlinkFeed: addressFor(0),
-                      chainlinkRequired: false,
-                      erc4626Feed: addressFor(0),
-                      erc4626Required: false,
-                  }
-                : null,
+        sequencer: {
+            primaryOracleName:
+                oracleMode === "pyth" ? "PythOracle" : "ChainlinkOracleFeed",
+            primaryOracleFeed:
+                oracleMode === "pyth" && chainId === ARBITRUM_MAINNET_CHAIN_ID
+                    ? PYTH_MAINNET_SEQUENCER_FEED
+                    : ZERO_ADDRESS,
+            primaryOracleRequired:
+                oracleMode === "pyth" && chainId === ARBITRUM_MAINNET_CHAIN_ID,
+            erc4626Feed:
+                oracleMode === "pyth" && chainId === ARBITRUM_MAINNET_CHAIN_ID
+                    ? PYTH_MAINNET_SEQUENCER_FEED
+                    : ZERO_ADDRESS,
+            erc4626Required:
+                oracleMode === "pyth" && chainId === ARBITRUM_MAINNET_CHAIN_ID,
+        },
         oracleOwners:
             oracleMode === "pyth"
                 ? { PythOracle: byName.get("SplitRiskPoolFactory") }
@@ -433,8 +451,9 @@ function configureSequencer(
     item.candidate.robinhoodSequencerUptimeFeedSource = candidateSource;
     item.candidate.robinhoodSequencerUptimeFeedCodehash = item.runtimeCodehash;
     item.protocolState.sequencer = {
-        chainlinkFeed: address,
-        chainlinkRequired: true,
+        primaryOracleName: "ChainlinkOracleFeed",
+        primaryOracleFeed: address,
+        primaryOracleRequired: true,
         erc4626Feed: address,
         erc4626Required: true,
     };
@@ -1046,6 +1065,137 @@ test("Pyth mode requires ERC4626 to use the Pyth oracle", async () => {
             }),
         ),
         /ERC4626 underlying oracle wiring mismatch/u,
+    );
+});
+
+test("Arbitrum Sepolia Pyth promotion attests the explicit disabled sequencer exception", async () => {
+    const item = await fixture({
+        chainId: ARBITRUM_SEPOLIA_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+
+    const manifest = await item.validateAndBuildManifest(validationArgs(item));
+
+    assert.deepEqual(manifest.pythSequencerUptimeGuardEvidence, {
+        erc4626Required: false,
+        feed: ZERO_ADDRESS,
+        mode: "disabled-no-canonical-feed",
+        primaryOracle: "PythOracle",
+        primaryOracleRequired: false,
+        runtimeCodehash: `0x${"00".repeat(32)}`,
+        source: "chainlink-no-arbitrum-sepolia-sequencer-feed",
+    });
+});
+
+test("Arbitrum Sepolia Pyth promotion rejects missing, wrong, or enabled sequencer wiring", async () => {
+    const missing = await fixture({ oracleMode: "pyth" });
+    missing.protocolState.sequencer = null;
+    await assert.rejects(
+        missing.validateAndBuildManifest(validationArgs(missing)),
+        /Pyth sequencer uptime wiring evidence is missing/u,
+    );
+
+    const wrongFeed = await fixture({ oracleMode: "pyth" });
+    wrongFeed.protocolState.sequencer.primaryOracleFeed = addressFor(950);
+    await assert.rejects(
+        wrongFeed.validateAndBuildManifest(validationArgs(wrongFeed)),
+        /Pyth sequencer uptime feed wiring mismatch/u,
+    );
+
+    const unexpectedlyRequired = await fixture({ oracleMode: "pyth" });
+    unexpectedlyRequired.protocolState.sequencer.erc4626Required = true;
+    await assert.rejects(
+        unexpectedlyRequired.validateAndBuildManifest(
+            validationArgs(unexpectedlyRequired),
+        ),
+        /Pyth sequencer uptime requirement wiring mismatch/u,
+    );
+});
+
+test("Arbitrum mainnet Pyth promotion requires the exact documented feed on both adapters", async () => {
+    const item = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+
+    const manifest = await item.validateAndBuildManifest(validationArgs(item));
+    assert.deepEqual(manifest.pythSequencerUptimeGuardEvidence, {
+        erc4626Required: true,
+        feed: PYTH_MAINNET_SEQUENCER_FEED,
+        mode: "configured",
+        primaryOracle: "PythOracle",
+        primaryOracleRequired: true,
+        runtimeCodehash: item.runtimeCodehash,
+        source: "https://docs.chain.link/data-feeds/l2-sequencer-feeds",
+    });
+
+    const missingFeed = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+    missingFeed.protocolState.sequencer.primaryOracleFeed = ZERO_ADDRESS;
+    await assert.rejects(
+        missingFeed.validateAndBuildManifest(validationArgs(missingFeed)),
+        /Pyth sequencer uptime feed wiring mismatch/u,
+    );
+
+    const wrongAdapter = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+    wrongAdapter.protocolState.sequencer.erc4626Feed = addressFor(951);
+    await assert.rejects(
+        wrongAdapter.validateAndBuildManifest(validationArgs(wrongAdapter)),
+        /ERC4626 sequencer uptime feed wiring mismatch/u,
+    );
+
+    const disabled = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+    disabled.protocolState.sequencer.primaryOracleRequired = false;
+    await assert.rejects(
+        disabled.validateAndBuildManifest(validationArgs(disabled)),
+        /Pyth sequencer uptime requirement wiring mismatch/u,
+    );
+});
+
+test("Arbitrum mainnet Pyth promotion rejects missing or disagreeing finalized sequencer code", async () => {
+    const missingCode = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+    missingCode.missingCode.add(PYTH_MAINNET_SEQUENCER_FEED.toLowerCase());
+    await assert.rejects(
+        missingCode.validateAndBuildManifest(validationArgs(missingCode)),
+        /No Pyth sequencer uptime feed code/u,
+    );
+
+    const codeMismatch = await fixture({
+        chainId: ARBITRUM_MAINNET_CHAIN_ID,
+        oracleMode: "pyth",
+    });
+    const originalValidationGetCode =
+        codeMismatch.validationProvider.getCode.bind(
+            codeMismatch.validationProvider,
+        );
+    const validationProvider = {
+        ...codeMismatch.validationProvider,
+        async getCode(address, blockTag) {
+            if (
+                address.toLowerCase() ===
+                PYTH_MAINNET_SEQUENCER_FEED.toLowerCase()
+            ) {
+                return "0x6001";
+            }
+            return originalValidationGetCode(address, blockTag);
+        },
+    };
+    await assert.rejects(
+        codeMismatch.validateAndBuildManifest(
+            validationArgs(codeMismatch, { validationProvider }),
+        ),
+        /disagree on finalized Pyth sequencer uptime feed code/u,
     );
 });
 

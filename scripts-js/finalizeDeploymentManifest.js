@@ -288,6 +288,45 @@ function chainFinalityPolicy(chainId, policy = CHAIN_FINALITY_POLICY) {
     return chainPolicy;
 }
 
+function pythSequencerPolicyForChain(
+    chainId,
+    finalityPolicy = CHAIN_FINALITY_POLICY,
+) {
+    const chainPolicy = chainFinalityPolicy(chainId, finalityPolicy);
+    const policy = chainPolicy.pythSequencerUptimeGuard;
+    if (
+        !policy ||
+        !ethers.isAddress(policy.feed) ||
+        typeof policy.required !== "boolean" ||
+        typeof policy.source !== "string" ||
+        policy.source.trim().length === 0
+    ) {
+        throw new Error(
+            `Chain ${chainId} has no valid checked-in Pyth sequencer uptime policy.`,
+        );
+    }
+
+    const feed = ethers.getAddress(policy.feed);
+    const configured = policy.mode === "configured";
+    const disabled = policy.mode === "disabled-no-canonical-feed";
+    if (
+        (!configured && !disabled) ||
+        (configured && (feed === ethers.ZeroAddress || !policy.required)) ||
+        (disabled && (feed !== ethers.ZeroAddress || policy.required))
+    ) {
+        throw new Error(
+            `Chain ${chainId} has an inconsistent checked-in Pyth sequencer uptime policy.`,
+        );
+    }
+
+    return {
+        feed,
+        mode: policy.mode,
+        required: policy.required,
+        source: policy.source,
+    };
+}
+
 function canonicalRpcUrl(value, label) {
     if (typeof value !== "string" || value.trim() === "") {
         throw new Error(`${label} is required for public manifest promotion.`);
@@ -673,6 +712,42 @@ async function validateFinalizedSequencerCode({
     return metadata;
 }
 
+async function buildPythSequencerUptimeGuardEvidence({
+    policy,
+    state,
+    provider,
+    validationProvider,
+}) {
+    let runtimeCodehash = ZERO_CODEHASH;
+    if (policy.feed !== ethers.ZeroAddress) {
+        const [code, validationCode] = await Promise.all([
+            provider.getCode(policy.feed),
+            validationProvider.getCode(policy.feed),
+        ]);
+        if (typeof code !== "string" || code === "0x") {
+            throw new Error(
+                `No Pyth sequencer uptime feed code at ${policy.feed} in finalized state.`,
+            );
+        }
+        if (code.toLowerCase() !== validationCode?.toLowerCase()) {
+            throw new Error(
+                "Deployment RPC providers disagree on finalized Pyth sequencer uptime feed code.",
+            );
+        }
+        runtimeCodehash = ethers.keccak256(code).toLowerCase();
+    }
+
+    return {
+        erc4626Required: state.sequencer.erc4626Required,
+        feed: policy.feed,
+        mode: policy.mode,
+        primaryOracle: "PythOracle",
+        primaryOracleRequired: state.sequencer.primaryOracleRequired,
+        runtimeCodehash,
+        source: policy.source,
+    };
+}
+
 async function contractCall(
     provider,
     contractInterface,
@@ -825,40 +900,40 @@ async function readLiveProtocolState(
         erc4626,
         "underlyingPriceOracle",
     );
-    let sequencer = null;
-    if (oracleMode === "chainlink") {
-        const chainlink = byName.get("ChainlinkOracleFeed");
-        const [chainlinkFeed] = await contractCall(
-            provider,
-            SEQUENCER_GUARD_INTERFACE,
-            chainlink,
-            "sequencerUptimeFeed",
-        );
-        const [chainlinkRequired] = await contractCall(
-            provider,
-            SEQUENCER_GUARD_INTERFACE,
-            chainlink,
-            "sequencerUptimeFeedRequired",
-        );
-        const [erc4626Feed] = await contractCall(
-            provider,
-            ERC4626_INTERFACE,
-            erc4626,
-            "sequencerUptimeFeed",
-        );
-        const [erc4626Required] = await contractCall(
-            provider,
-            ERC4626_INTERFACE,
-            erc4626,
-            "sequencerUptimeFeedRequired",
-        );
-        sequencer = {
-            chainlinkFeed,
-            chainlinkRequired,
-            erc4626Feed,
-            erc4626Required,
-        };
-    }
+    const primaryOracleName =
+        oracleMode === "pyth" ? "PythOracle" : "ChainlinkOracleFeed";
+    const primaryOracle = byName.get(primaryOracleName);
+    const [primaryOracleFeed] = await contractCall(
+        provider,
+        SEQUENCER_GUARD_INTERFACE,
+        primaryOracle,
+        "sequencerUptimeFeed",
+    );
+    const [primaryOracleRequired] = await contractCall(
+        provider,
+        SEQUENCER_GUARD_INTERFACE,
+        primaryOracle,
+        "sequencerUptimeFeedRequired",
+    );
+    const [erc4626Feed] = await contractCall(
+        provider,
+        ERC4626_INTERFACE,
+        erc4626,
+        "sequencerUptimeFeed",
+    );
+    const [erc4626Required] = await contractCall(
+        provider,
+        ERC4626_INTERFACE,
+        erc4626,
+        "sequencerUptimeFeedRequired",
+    );
+    const sequencer = {
+        primaryOracleName,
+        primaryOracleFeed,
+        primaryOracleRequired,
+        erc4626Feed,
+        erc4626Required,
+    };
     const oracleOwners = {};
     for (const name of oracleMode === "pyth"
         ? ["PythOracle"]
@@ -957,7 +1032,14 @@ function sortedAddresses(values) {
 
 function validateProtocolWiring(
     state,
-    { byName, candidate, demoEnabled, oracleMode, sequencerMetadata },
+    {
+        byName,
+        candidate,
+        demoEnabled,
+        oracleMode,
+        pythSequencerPolicy,
+        sequencerMetadata,
+    },
 ) {
     const timelock = byName.get("TimelockController");
     const factory = byName.get("SplitRiskPoolFactory");
@@ -1035,6 +1117,33 @@ function validateProtocolWiring(
             factory,
             "Pyth oracle owner",
         );
+        if (!pythSequencerPolicy || !state.sequencer) {
+            throw new Error(
+                "Pyth sequencer uptime wiring evidence is missing.",
+            );
+        }
+        if (state.sequencer.primaryOracleName !== "PythOracle") {
+            throw new Error("Pyth primary oracle sequencer identity mismatch.");
+        }
+        requireAddress(
+            state.sequencer.primaryOracleFeed,
+            pythSequencerPolicy.feed,
+            "Pyth sequencer uptime feed",
+        );
+        requireAddress(
+            state.sequencer.erc4626Feed,
+            pythSequencerPolicy.feed,
+            "ERC4626 sequencer uptime feed",
+        );
+        if (
+            state.sequencer.primaryOracleRequired !==
+                pythSequencerPolicy.required ||
+            state.sequencer.erc4626Required !== pythSequencerPolicy.required
+        ) {
+            throw new Error(
+                "Pyth sequencer uptime requirement wiring mismatch.",
+            );
+        }
     } else {
         requireAddress(
             state.factory.pythOracle,
@@ -1064,8 +1173,13 @@ function validateProtocolWiring(
         if (!sequencerMetadata || !state.sequencer) {
             throw new Error("Robinhood sequencer wiring evidence is missing.");
         }
+        if (state.sequencer.primaryOracleName !== "ChainlinkOracleFeed") {
+            throw new Error(
+                "Chainlink primary oracle sequencer identity mismatch.",
+            );
+        }
         requireAddress(
-            state.sequencer.chainlinkFeed,
+            state.sequencer.primaryOracleFeed,
             sequencerMetadata.address,
             "Chainlink sequencer uptime feed",
         );
@@ -1076,7 +1190,7 @@ function validateProtocolWiring(
         );
         const expectedRequired = sequencerMetadata.mode === "configured";
         if (
-            state.sequencer.chainlinkRequired !== expectedRequired ||
+            state.sequencer.primaryOracleRequired !== expectedRequired ||
             state.sequencer.erc4626Required !== expectedRequired
         ) {
             throw new Error(
@@ -1511,6 +1625,10 @@ async function validateAndBuildManifest({
         oracleMode === "chainlink"
             ? validateCandidateSequencerMetadata({ candidate, chainId, env })
             : null;
+    const pythSequencerPolicy =
+        oracleMode === "pyth"
+            ? pythSequencerPolicyForChain(chainId, finalityPolicy)
+            : null;
     const finalityEvidence = await resolveFinalityEvidence({
         chainId,
         provider,
@@ -1619,8 +1737,17 @@ async function validateAndBuildManifest({
         candidate,
         demoEnabled,
         oracleMode,
+        pythSequencerPolicy,
         sequencerMetadata,
     });
+    const pythSequencerUptimeGuardEvidence = pythSequencerPolicy
+        ? await buildPythSequencerUptimeGuardEvidence({
+              policy: pythSequencerPolicy,
+              state: protocolState,
+              provider: finalizedProvider,
+              validationProvider: finalizedValidationProvider,
+          })
+        : null;
 
     const manifest = {
         ...candidate,
@@ -1634,6 +1761,10 @@ async function validateAndBuildManifest({
     };
     if (sequencerUptimeFeedEvidence) {
         manifest.sequencerUptimeFeedEvidence = sequencerUptimeFeedEvidence;
+    }
+    if (pythSequencerUptimeGuardEvidence) {
+        manifest.pythSequencerUptimeGuardEvidence =
+            pythSequencerUptimeGuardEvidence;
     }
     if (demoEnabled) {
         if (String(chainId) !== "46630") {
@@ -1858,6 +1989,7 @@ export {
     PYTH_REVIEWED_CODEHASH_PINS,
     buildFixtureMetadata,
     chainFinalityPolicy,
+    pythSequencerPolicyForChain,
     promoteDeploymentManifest,
     requiredReviewedCodehashPinNames,
     reviewedCodehashPinSpecs,

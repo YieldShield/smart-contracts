@@ -180,6 +180,14 @@ both RPCs and requires them to report the policy's chain ID and the same
 explicit finalized block. Other public aliases fail closed before deployment;
 supporting another chain requires a reviewed finality-policy entry first.
 
+The Arbitrum Pyth policies also pin both sequencer adapters. Arbitrum One must
+use Chainlink's documented `0xFdB631F5EE196F0ed6FAa767959853A9F217697D`
+feed with the requirement enabled on both `PythOracle` and
+`ERC4626OracleFeed`. Arbitrum Sepolia records an explicit zero-address,
+requirement-disabled exception because no canonical Chainlink feed is
+published there. Promotion reads both adapters at the agreed finalized block;
+for a nonzero feed, both RPCs must also agree on its runtime code.
+
 Robinhood mainnet has no canonical sequencer uptime feed identified in the
 current Chainlink registry. It therefore remains operationally blocked until an
 operator supplies a documented `YS_ROBINHOOD_SEQUENCER_FEED`, its public

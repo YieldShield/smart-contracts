@@ -13,6 +13,7 @@ import {
     CHAINLINK_CORE_INVENTORY,
     DEMO_EXTRA_INVENTORY,
     PYTH_CORE_INVENTORY,
+    pythSequencerPolicyForChain,
     requiredReviewedCodehashPinNames,
     requireIndependentRpcOperators,
 } from "./finalizeDeploymentManifest.js";
@@ -51,6 +52,7 @@ function normalizeChainId(chainId) {
 }
 
 const STRICT_MANIFEST_CHAIN_IDS = new Set(["4663", "46630"]);
+const PYTH_SEQUENCER_POLICY_CHAIN_IDS = new Set(["42161", "421614"]);
 const ZERO_CODEHASH = `0x${"00".repeat(32)}`;
 const TESTNET_SEQUENCER_EXCEPTION_SOURCES = new Set([
     "robinhood-testnet-explicit-exception",
@@ -116,6 +118,39 @@ function validateSequencerUptimeFeedEvidence(chainId, manifest) {
     ) {
         throw new Error(
             "Robinhood testnet sequencer exception evidence is invalid",
+        );
+    }
+}
+
+function validatePythSequencerUptimeGuardEvidence(chainId, manifest) {
+    const policy = pythSequencerPolicyForChain(chainId);
+    const evidence = manifest.pythSequencerUptimeGuardEvidence;
+    const expectedKeys = [
+        "erc4626Required",
+        "feed",
+        "mode",
+        "primaryOracle",
+        "primaryOracleRequired",
+        "runtimeCodehash",
+        "source",
+    ];
+    if (
+        !evidence ||
+        Object.keys(evidence).sort().join(",") !== expectedKeys.join(",") ||
+        !/^0x[0-9a-f]{40}$/iu.test(evidence.feed ?? "") ||
+        evidence.feed.toLowerCase() !== policy.feed.toLowerCase() ||
+        evidence.mode !== policy.mode ||
+        evidence.source !== policy.source ||
+        evidence.primaryOracle !== "PythOracle" ||
+        evidence.primaryOracleRequired !== policy.required ||
+        evidence.erc4626Required !== policy.required ||
+        !/^0x[0-9a-f]{64}$/iu.test(evidence.runtimeCodehash ?? "") ||
+        (policy.feed === "0x0000000000000000000000000000000000000000"
+            ? evidence.runtimeCodehash.toLowerCase() !== ZERO_CODEHASH
+            : evidence.runtimeCodehash.toLowerCase() === ZERO_CODEHASH)
+    ) {
+        throw new Error(
+            `Deployment ${chainId} has incomplete Pyth sequencer uptime guard evidence`,
         );
     }
 }
@@ -208,7 +243,17 @@ function remapContractNamesByManifest(chainContracts, manifest) {
 
 function validateActiveDeploymentManifest(chainId, manifest) {
     const normalizedChainId = normalizeChainId(chainId);
-    if (!STRICT_MANIFEST_CHAIN_IDS.has(normalizedChainId)) return manifest;
+    const hasPromotionMetadata =
+        manifest?.schemaVersion !== undefined || manifest?.status !== undefined;
+    if (
+        !STRICT_MANIFEST_CHAIN_IDS.has(normalizedChainId) &&
+        !(
+            PYTH_SEQUENCER_POLICY_CHAIN_IDS.has(normalizedChainId) &&
+            hasPromotionMetadata
+        )
+    ) {
+        return manifest;
+    }
 
     if (
         String(manifest?.schemaVersion) !== "2" ||
@@ -296,10 +341,18 @@ function validateActiveDeploymentManifest(chainId, manifest) {
     }
     if (hasChainlink) {
         validateSequencerUptimeFeedEvidence(normalizedChainId, manifest);
-    } else if (manifest.sequencerUptimeFeedEvidence !== undefined) {
-        throw new Error(
-            `Deployment ${normalizedChainId} has sequencer evidence without a Chainlink deployment`,
-        );
+        if (manifest.pythSequencerUptimeGuardEvidence !== undefined) {
+            throw new Error(
+                `Deployment ${normalizedChainId} has Pyth sequencer evidence without a Pyth deployment`,
+            );
+        }
+    } else {
+        if (manifest.sequencerUptimeFeedEvidence !== undefined) {
+            throw new Error(
+                `Deployment ${normalizedChainId} has Robinhood sequencer evidence without a Chainlink deployment`,
+            );
+        }
+        validatePythSequencerUptimeGuardEvidence(normalizedChainId, manifest);
     }
     const expectedNames = [
         ...(hasPyth ? PYTH_CORE_INVENTORY : CHAINLINK_CORE_INVENTORY),
@@ -1100,6 +1153,7 @@ if (process.argv[1] === __filename) {
 
 export {
     CHAINLINK_CORE_INVENTORY,
+    PYTH_CORE_INVENTORY,
     constrainStrictChainContracts,
     deploymentJsonNameForAddress,
     remapContractNamesByManifest,

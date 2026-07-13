@@ -1,9 +1,15 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-async function makePromotedManifest(chainId = "46630") {
-    const { CHAINLINK_CORE_INVENTORY, requiredReviewedCodehashPinNames } =
-        await import("../generateTsAbis.js");
+async function makePromotedManifest(
+    chainId = "46630",
+    oracleMode = ["42161", "421614"].includes(chainId) ? "pyth" : "chainlink",
+) {
+    const {
+        CHAINLINK_CORE_INVENTORY,
+        PYTH_CORE_INVENTORY,
+        requiredReviewedCodehashPinNames,
+    } = await import("../generateTsAbis.js");
     const manifest = {
         schemaVersion: "2",
         status: "active",
@@ -28,7 +34,24 @@ async function makePromotedManifest(chainId = "46630") {
         addressEvidence: {},
         reviewedCodehashPins: {},
     };
-    if (chainId === "4663") {
+    if (oracleMode === "pyth") {
+        const isMainnet = chainId === "42161";
+        manifest.pythSequencerUptimeGuardEvidence = {
+            erc4626Required: isMainnet,
+            feed: isMainnet
+                ? "0xFdB631F5EE196F0ed6FAa767959853A9F217697D"
+                : "0x0000000000000000000000000000000000000000",
+            mode: isMainnet ? "configured" : "disabled-no-canonical-feed",
+            primaryOracle: "PythOracle",
+            primaryOracleRequired: isMainnet,
+            runtimeCodehash: isMainnet
+                ? `0x${"cc".repeat(32)}`
+                : `0x${"00".repeat(32)}`,
+            source: isMainnet
+                ? "https://docs.chain.link/data-feeds/l2-sequencer-feeds"
+                : "chainlink-no-arbitrum-sepolia-sequencer-feed",
+        };
+    } else if (chainId === "4663") {
         const sequencerAddress = "0x0000000000000000000000000000000000000abc";
         const sequencerCodehash = `0x${"cc".repeat(32)}`;
         manifest.robinhoodSequencerUptimeFeed = sequencerAddress;
@@ -57,7 +80,9 @@ async function makePromotedManifest(chainId = "46630") {
             source: "robinhood-testnet-relaxed-guards",
         };
     }
-    CHAINLINK_CORE_INVENTORY.forEach((name, index) => {
+    const inventory =
+        oracleMode === "pyth" ? PYTH_CORE_INVENTORY : CHAINLINK_CORE_INVENTORY;
+    inventory.forEach((name, index) => {
         const address = `0x${(index + 1).toString(16).padStart(40, "0")}`;
         manifest[address] = name;
         manifest.codehashEvidence[address] = `0x${(index + 1)
@@ -65,7 +90,7 @@ async function makePromotedManifest(chainId = "46630") {
             .padStart(64, "0")}`;
         manifest.addressEvidence[address] = "broadcast-create";
     });
-    for (const name of requiredReviewedCodehashPinNames("chainlink")) {
+    for (const name of requiredReviewedCodehashPinNames(oracleMode)) {
         const [address] = Object.entries(manifest).find(
             ([key, value]) => /^0x[0-9a-f]{40}$/iu.test(key) && value === name,
         );
@@ -238,6 +263,64 @@ test("Robinhood manifests require chain-appropriate sequencer evidence", async (
         () => validateActiveDeploymentManifest("4663", tampered),
         /incomplete sequencer uptime feed evidence/u,
     );
+});
+
+test("schema-v2 Pyth manifests require exact chain-policy sequencer evidence", async () => {
+    const { validateActiveDeploymentManifest } =
+        await import("../generateTsAbis.js");
+    const sepolia = await makePromotedManifest("421614");
+    const mainnet = await makePromotedManifest("42161");
+
+    assert.equal(validateActiveDeploymentManifest("421614", sepolia), sepolia);
+    assert.equal(validateActiveDeploymentManifest("42161", mainnet), mainnet);
+
+    const withoutEvidence = structuredClone(sepolia);
+    delete withoutEvidence.pythSequencerUptimeGuardEvidence;
+    assert.throws(
+        () => validateActiveDeploymentManifest("421614", withoutEvidence),
+        /incomplete Pyth sequencer uptime guard evidence/u,
+    );
+
+    const wrongFeed = structuredClone(sepolia);
+    wrongFeed.pythSequencerUptimeGuardEvidence.feed =
+        "0x0000000000000000000000000000000000000bad";
+    assert.throws(
+        () => validateActiveDeploymentManifest("421614", wrongFeed),
+        /incomplete Pyth sequencer uptime guard evidence/u,
+    );
+
+    const wrongRequirement = structuredClone(mainnet);
+    wrongRequirement.pythSequencerUptimeGuardEvidence.erc4626Required = false;
+    assert.throws(
+        () => validateActiveDeploymentManifest("42161", wrongRequirement),
+        /incomplete Pyth sequencer uptime guard evidence/u,
+    );
+
+    const zeroMainnetCodehash = structuredClone(mainnet);
+    zeroMainnetCodehash.pythSequencerUptimeGuardEvidence.runtimeCodehash = `0x${"00".repeat(32)}`;
+    assert.throws(
+        () => validateActiveDeploymentManifest("42161", zeroMainnetCodehash),
+        /incomplete Pyth sequencer uptime guard evidence/u,
+    );
+
+    const unexpectedField = structuredClone(sepolia);
+    unexpectedField.pythSequencerUptimeGuardEvidence.rpcUrl =
+        "https://must-not-be-present.example";
+    assert.throws(
+        () => validateActiveDeploymentManifest("421614", unexpectedField),
+        /incomplete Pyth sequencer uptime guard evidence/u,
+    );
+});
+
+test("legacy Arbitrum address maps remain outside this Pyth-evidence-only change", async () => {
+    const { validateActiveDeploymentManifest } =
+        await import("../generateTsAbis.js");
+    const legacy = {
+        "0x0000000000000000000000000000000000000001": "PythOracle",
+        networkName: "arbitrum-sepolia",
+    };
+
+    assert.equal(validateActiveDeploymentManifest("421614", legacy), legacy);
 });
 
 test("strict-chain broadcasts are excluded without a promoted manifest", async () => {

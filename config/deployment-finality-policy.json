@@ -17,13 +17,25 @@
       "network": "arbitrum-mainnet",
       "rpcAlias": "arbitrum",
       "blockTag": "finalized",
-      "requireIndependentValidationRpc": true
+      "requireIndependentValidationRpc": true,
+      "pythSequencerUptimeGuard": {
+        "mode": "configured",
+        "feed": "0xFdB631F5EE196F0ed6FAa767959853A9F217697D",
+        "required": true,
+        "source": "https://docs.chain.link/data-feeds/l2-sequencer-feeds"
+      }
     },
     "421614": {
       "network": "arbitrum-sepolia",
       "rpcAlias": "arbitrumSepolia",
       "blockTag": "finalized",
-      "requireIndependentValidationRpc": true
+      "requireIndependentValidationRpc": true,
+      "pythSequencerUptimeGuard": {
+        "mode": "disabled-no-canonical-feed",
+        "feed": "0x0000000000000000000000000000000000000000",
+        "required": false,
+        "source": "chainlink-no-arbitrum-sepolia-sequencer-feed"
+      }
     }
   }
 }
