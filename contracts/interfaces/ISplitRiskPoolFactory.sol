@@ -93,6 +93,7 @@ interface ISplitRiskPoolFactory {
     function deactivateDustPool(address pool) external;
     function deactivateProtectorOnlyPool(address pool) external;
     function closePool(address pool) external;
+    function closePoolTo(address pool, address bondRecipient) external;
     function setMinimumCreationBondUsd(uint256 newMinUsd) external;
     function setMaxActivePools(uint256 newMaxActivePools) external;
     function setPoolImplementation(address newImplementation) external;

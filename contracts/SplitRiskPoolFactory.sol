@@ -1196,16 +1196,36 @@ contract SplitRiskPoolFactory is
     // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
     // slither-disable-next-line reentrancy-eth
     function closePool(address pool) external nonReentrant {
+        _closePool(pool, msg.sender);
+    }
+
+    /**
+     * @notice Closes an empty pool and returns the active-slot stake to a creator-selected recipient
+     * @dev The caller must remain the immutable pool creator. This redirect lets a creator recover
+     *      the creation bond when the bond token cannot transfer to the creator directly.
+     * @param pool Address of the pool to close
+     * @param bondRecipient Address that receives the returned creation bond
+     */
+    // Slither reentrancy-eth false positive: guarded by nonReentrant and/or governance-only access (or internal, reached only via such guarded entrypoints); external calls are to trusted protocol contracts.
+    // slither-disable-next-line reentrancy-eth
+    function closePoolTo(address pool, address bondRecipient) external nonReentrant {
+        _closePool(pool, bondRecipient);
+    }
+
+    function _closePool(address pool, address bondRecipient) internal {
         ISplitRiskPoolFactory.PoolInfo memory info = _poolInfo[pool];
         if (info.shieldedToken == address(0)) revert ErrorsLib.PoolDoesNotExist();
         if (!isPoolActive[pool]) revert ErrorsLib.PoolAlreadyInactive();
         if (msg.sender != info.creator) {
             revert ErrorsLib.AccessControlDenied(msg.sender, "closePool");
         }
+        if (bondRecipient == address(0) || bondRecipient == address(this)) {
+            revert ErrorsLib.InvalidAssetAddress();
+        }
 
         _pauseAndRequirePoolEmpty(pool);
         _removeActivePool(pool);
-        _returnCreationBond(pool, info.creator);
+        _returnCreationBond(pool, bondRecipient);
         emit EventsLib.PoolClosed(pool, info.creator);
     }
 

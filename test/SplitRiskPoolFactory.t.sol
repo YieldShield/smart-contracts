@@ -147,6 +147,23 @@ contract SenderFeeToken is ERC20, Ownable {
     }
 }
 
+contract RecipientBlockingToken is MockERC20 {
+    error RecipientBlocked(address recipient);
+
+    mapping(address => bool) public isRecipientBlocked;
+
+    constructor() MockERC20("Recipient Blocking Token", "BLOCK") { }
+
+    function setRecipientBlocked(address recipient, bool blocked) external onlyOwner {
+        isRecipientBlocked[recipient] = blocked;
+    }
+
+    function _update(address from, address to, uint256 amount) internal override {
+        if (from != address(0) && isRecipientBlocked[to]) revert RecipientBlocked(to);
+        super._update(from, to, amount);
+    }
+}
+
 contract ScaledBalanceToken is MockERC20 {
     constructor() MockERC20("Scaled Balance Token", "SBT") { }
 
@@ -1968,6 +1985,59 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         vm.prank(user2);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, user2, "closePool"));
         factory.closePool(poolAddress);
+    }
+
+    function testClosePoolToReturnsCreationBondToCreatorSelectedRecipient() public {
+        RecipientBlockingToken blockingToken = new RecipientBlockingToken();
+        oracle.setPrice(address(blockingToken), 1e8);
+        compositeOracle.setTokenOracleFeedWithType(address(blockingToken), address(oracle), "mock");
+        factory.addTokenInitial(
+            address(blockingToken), "Recipient Blocking Token", "BLOCK", address(oracle), address(0), 10_000, true
+        );
+
+        uint256 expectedBondAmount = _defaultCreationBondAmount(address(blockingToken));
+        blockingToken.approve(address(factory), expectedBondAmount);
+        address poolAddress = factory.createPool(
+            address(tokenA), "TKNA", address(blockingToken), "BLOCK", 500, 200, 15_000, expectedBondAmount
+        );
+        blockingToken.setRecipientBlocked(address(this), true);
+
+        vm.expectRevert(abi.encodeWithSelector(RecipientBlockingToken.RecipientBlocked.selector, address(this)));
+        factory.closePool(poolAddress);
+
+        uint256 recipientBalanceBefore = blockingToken.balanceOf(user1);
+        factory.closePoolTo(poolAddress, user1);
+
+        assertEq(
+            blockingToken.balanceOf(user1) - recipientBalanceBefore,
+            expectedBondAmount,
+            "selected recipient should receive the locked creation bond"
+        );
+        (address creator,, uint256 amount) = factory.creationBonds(poolAddress);
+        assertEq(creator, address(0), "creation bond should be cleared after redirected return");
+        assertEq(amount, 0, "creation bond amount should be cleared after redirected return");
+        assertEq(factory.activePoolCount(), 0, "redirected close should free the active slot");
+        assertFalse(factory.isPoolActive(poolAddress), "redirected close should deactivate the pool");
+    }
+
+    function testClosePoolToRevertsWhenCallerIsNotCreator() public {
+        address poolAddress = createPoolAs(user1, address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15_000);
+
+        vm.prank(user2);
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, user2, "closePool"));
+        factory.closePoolTo(poolAddress, user2);
+    }
+
+    function testClosePoolToRejectsInvalidRecipient() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15_000);
+
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.closePoolTo(poolAddress, address(0));
+
+        vm.expectRevert(ErrorsLib.InvalidAssetAddress.selector);
+        factory.closePoolTo(poolAddress, address(factory));
+
+        assertTrue(factory.isPoolActive(poolAddress), "invalid recipients should leave pool active");
     }
 
     function testClosePoolRevertsWhenPoolHasTrackedBalances() public {
