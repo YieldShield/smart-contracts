@@ -925,6 +925,14 @@ async function validateAndBuildManifest({
 
     const { byName, demoEnabled, oracleMode } =
         validateExactInventory(candidate);
+    if (
+        oracleMode === "chainlink" &&
+        !["4663", "46630"].includes(String(chainId))
+    ) {
+        throw new Error(
+            "Chainlink production mode is valid only on Robinhood chain IDs 4663 and 46630.",
+        );
+    }
     if (oracleMode === "chainlink") {
         if (
             !ethers.isAddress(candidate.marketSessionGuardian) ||

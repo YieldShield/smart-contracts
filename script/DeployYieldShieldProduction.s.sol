@@ -1205,6 +1205,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     }
 
     function _finalizeProductionProtocolBootstrap(ProtocolDeployment memory d, address bootstrapAdmin) internal {
+        if (_isChainlinkProtocolDeployment(d) && !_isRobinhoodChain()) {
+            revert ProductionRobinhoodUnsupportedChain(block.chainid);
+        }
         _requireProductionContract(NAME_FACTORY, d.factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr);
         _requireMandatoryProductionCodehash(
@@ -1324,6 +1327,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     }
 
     function _validateProductionProtocolFinalized(ProtocolDeployment memory d) internal view {
+        if (_isChainlinkProtocolDeployment(d) && !_isRobinhoodChain()) {
+            revert ProductionRobinhoodUnsupportedChain(block.chainid);
+        }
         _requireProductionContract(NAME_FACTORY, d.factoryAddr);
         _requireProductionImplementation(NAME_FACTORY_IMPLEMENTATION, d.factoryImplementationAddr);
         _requireMandatoryProductionCodehash(

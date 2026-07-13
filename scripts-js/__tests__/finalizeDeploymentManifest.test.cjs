@@ -673,6 +673,60 @@ test("relaxed guards and demo mode are rejected outside Robinhood", async () => 
     );
 });
 
+test("Chainlink production mode is rejected outside Robinhood chains", async () => {
+    const item = await fixture();
+    const candidate = {
+        ...item.candidate,
+        chainId: "1",
+        productionGuardMode: "strict",
+    };
+    const broadcast = { ...item.broadcast, chain: "1" };
+    const provider = {
+        ...item.provider,
+        async getNetwork() {
+            return { chainId: 1n };
+        },
+    };
+
+    await assert.rejects(
+        item.validateAndBuildManifest(
+            validationArgs(item, {
+                broadcast,
+                candidate,
+                chainId: "1",
+                provider,
+            }),
+        ),
+        /Chainlink production mode is valid only on Robinhood chain IDs 4663 and 46630/u,
+    );
+});
+
+test("Chainlink production mode accepts Robinhood mainnet", async () => {
+    const item = await fixture();
+    const candidate = {
+        ...item.candidate,
+        chainId: "4663",
+        productionGuardMode: "strict",
+    };
+    const broadcast = { ...item.broadcast, chain: "4663" };
+    const provider = {
+        ...item.provider,
+        async getNetwork() {
+            return { chainId: 4663n };
+        },
+    };
+
+    const manifest = await item.validateAndBuildManifest(
+        validationArgs(item, {
+            broadcast,
+            candidate,
+            chainId: "4663",
+            provider,
+        }),
+    );
+    assert.equal(manifest.chainId, "4663");
+});
+
 test("additional-contract metadata cannot bind an address to a deployment generation", async () => {
     const item = await fixture();
     const broadcast = structuredClone(item.broadcast);

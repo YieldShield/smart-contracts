@@ -1449,6 +1449,8 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
     }
 
     function test_ProductionProtocol_FinalizerRecoversPauseOnlyChainlinkGuardian() public {
+        vm.chainId(ROBINHOOD_MAINNET_CHAIN_ID);
+
         (, TimelockController timelock, YSGovernor governor) = _deployGovernance();
         ProductionDeployHarness harness = new ProductionDeployHarness();
         address guardian = address(0xA11CE);
@@ -1518,6 +1520,43 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         vm.prank(guardian);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, guardian));
         marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+    }
+
+    function test_ProductionProtocol_ChainlinkFinalizerRejectsUnsupportedChain() public {
+        vm.chainId(1);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        address chainlinkOracleFeed = address(0xC11);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployYieldShieldProduction.ProductionRobinhoodUnsupportedChain.selector, uint256(1))
+        );
+        harness.finalizeProductionChainlinkProtocolBootstrapHarness(
+            address(0),
+            address(0),
+            address(0),
+            address(0),
+            chainlinkOracleFeed,
+            address(0),
+            address(0),
+            address(0),
+            address(0),
+            address(harness)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployYieldShieldProduction.ProductionRobinhoodUnsupportedChain.selector, uint256(1))
+        );
+        harness.validateProductionChainlinkProtocolFinalizedHarness(
+            address(0),
+            address(0),
+            address(0),
+            address(0),
+            chainlinkOracleFeed,
+            address(0),
+            address(0),
+            address(0),
+            address(0)
+        );
     }
 
     function test_ProductionProtocol_RobinhoodTestnetSeedCreatesPoolsAndFinalizes() public {
