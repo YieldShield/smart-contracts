@@ -85,6 +85,12 @@ depth = 64
 fail_on_revert = true
 show_metrics = true
 
+[profile.invariant-reachability.invariant]
+runs = 4
+depth = 1024
+fail_on_revert = true
+show_metrics = true
+
 [fmt]
 line_length = 120
 tab_width = 4

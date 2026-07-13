@@ -75,9 +75,10 @@ jobs:
       - name: Run tests
         run: forge test
 
-      - name: Run strict path-effective invariant profile
+      - name: Require randomized invariant path reachability
         env:
-          FOUNDRY_PROFILE: invariant-strict
+          FOUNDRY_PROFILE: invariant-reachability
+          INVARIANT_REQUIRE_RANDOM_REACHABILITY: "true"
         run: forge test --match-contract SplitRiskPoolInvariantTest
 
       - name: Check high-severity npm advisories
