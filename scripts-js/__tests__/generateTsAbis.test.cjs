@@ -40,8 +40,11 @@ test("Robinhood deployments must be promoted schema-v2 active manifests", async 
 });
 
 test("Robinhood promoted manifests require exact inventory and evidence", async () => {
-    const { CHAINLINK_CORE_INVENTORY, validateActiveDeploymentManifest } =
-        await import("../generateTsAbis.js");
+    const {
+        CHAINLINK_CORE_INVENTORY,
+        requiredReviewedCodehashPinNames,
+        validateActiveDeploymentManifest,
+    } = await import("../generateTsAbis.js");
     const manifest = {
         schemaVersion: "2",
         status: "active",
@@ -60,11 +63,7 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
         transactionHashes: ["0x01"],
         codehashEvidence: {},
         addressEvidence: {},
-        reviewedCodehashPins: {
-            SplitRiskPoolFactoryImplementation: "0x01",
-            SplitRiskPoolImplementation: "0x02",
-            ChainlinkOracleFeed: "0x03",
-        },
+        reviewedCodehashPins: {},
     };
     CHAINLINK_CORE_INVENTORY.forEach((name, index) => {
         const address = `0x${(index + 1).toString(16).padStart(40, "0")}`;
@@ -74,6 +73,13 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
             .padStart(64, "0")}`;
         manifest.addressEvidence[address] = "broadcast-create";
     });
+    for (const name of requiredReviewedCodehashPinNames("chainlink")) {
+        const [address] = Object.entries(manifest).find(
+            ([key, value]) => /^0x[0-9a-f]{40}$/iu.test(key) && value === name,
+        );
+        manifest.reviewedCodehashPins[name] =
+            manifest.codehashEvidence[address];
+    }
 
     assert.equal(validateActiveDeploymentManifest("46630", manifest), manifest);
 
@@ -83,6 +89,31 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
         () =>
             validateActiveDeploymentManifest("46630", withoutFinalityEvidence),
         /missing finalized-state promotion evidence/u,
+    );
+
+    const withoutTokenPin = structuredClone(manifest);
+    delete withoutTokenPin.reviewedCodehashPins.YSToken;
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", withoutTokenPin),
+        /incomplete reviewed codehash pins/u,
+    );
+
+    const withUnexpectedPin = structuredClone(manifest);
+    withUnexpectedPin.reviewedCodehashPins.UnreviewedContract = `0x${"ff".repeat(32)}`;
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", withUnexpectedPin),
+        /incomplete reviewed codehash pins/u,
+    );
+
+    const withMismatchedGovernorPin = structuredClone(manifest);
+    withMismatchedGovernorPin.reviewedCodehashPins.YSGovernor = `0x${"ff".repeat(32)}`;
+    assert.throws(
+        () =>
+            validateActiveDeploymentManifest(
+                "46630",
+                withMismatchedGovernorPin,
+            ),
+        /incomplete reviewed codehash pins/u,
     );
 
     delete manifest["0x0000000000000000000000000000000000000001"];

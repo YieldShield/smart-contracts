@@ -1,6 +1,29 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
+const COMMON_RUNTIME_PIN_NAMES = [
+    "YS_PRODUCTION_FACTORY_PROXY_CODEHASH",
+    "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
+    "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
+    "YS_PRODUCTION_YS_TOKEN_CODEHASH",
+    "YS_PRODUCTION_TIMELOCK_CODEHASH",
+    "YS_PRODUCTION_GOVERNOR_CODEHASH",
+    "YS_PRODUCTION_COMPOSITE_ORACLE_CODEHASH",
+    "YS_PRODUCTION_ERC4626_ORACLE_CODEHASH",
+];
+const CHAINLINK_RUNTIME_PIN_NAMES = [
+    "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH",
+    "YS_PRODUCTION_US_MARKET_SESSION_GATE_CODEHASH",
+];
+const RUNTIME_PIN_ENV = Object.fromEntries(
+    [...COMMON_RUNTIME_PIN_NAMES, ...CHAINLINK_RUNTIME_PIN_NAMES].map(
+        (name, index) => [
+            name,
+            `0x${(index + 1).toString(16).padStart(64, "0")}`,
+        ],
+    ),
+);
+
 test("parseCliArgs parses public-network deploy options", async () => {
     const { parseCliArgs } = await import("../parseArgs.js");
 
@@ -79,7 +102,7 @@ test("configuredKeystore prefers network-specific env defaults", async () => {
     );
 });
 
-test("missingProductionEnv relaxes production pins but still requires the Robinhood guardian", async () => {
+test("missingProductionEnv keeps reviewed runtime pins mandatory in relaxed Robinhood mode", async () => {
     const { missingProductionEnv, usesRelaxedRobinhoodTestnetGuards } =
         await import("../parseArgs.js");
 
@@ -95,7 +118,11 @@ test("missingProductionEnv relaxes production pins but still requires the Robinh
             },
             {},
         ),
-        ["YS_PRODUCTION_MARKET_SESSION_GUARDIAN"],
+        [
+            ...COMMON_RUNTIME_PIN_NAMES,
+            ...CHAINLINK_RUNTIME_PIN_NAMES,
+            "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
+        ],
     );
     assert.deepEqual(
         missingProductionEnv(
@@ -104,6 +131,7 @@ test("missingProductionEnv relaxes production pins but still requires the Robinh
                 network: "robinhoodTestnet",
             },
             {
+                ...RUNTIME_PIN_ENV,
                 YS_PRODUCTION_MARKET_SESSION_GUARDIAN:
                     "0x0000000000000000000000000000000000000009",
             },
@@ -137,9 +165,8 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
             "YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON",
             "YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD",
             "YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH",
-            "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
-            "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
-            "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH",
+            ...COMMON_RUNTIME_PIN_NAMES,
+            ...CHAINLINK_RUNTIME_PIN_NAMES,
             "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
             "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED or YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED=true",
         ],
@@ -149,6 +176,7 @@ test("missingProductionEnv keeps Robinhood testnet strict mode fail-closed", asy
 test("missingProductionEnv limits the missing-sequencer exception to Robinhood testnet", async () => {
     const { missingProductionEnv } = await import("../parseArgs.js");
     const productionEnv = {
+        ...RUNTIME_PIN_ENV,
         YS_PRODUCTION_BOOTSTRAP_HOLDER:
             "0x0000000000000000000000000000000000000001",
         YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: `0x${"11".repeat(32)}`,
@@ -189,6 +217,7 @@ test("missingProductionEnv limits the missing-sequencer exception to Robinhood t
 test("missingProductionEnv requires nonblank mainnet sequencer provenance", async () => {
     const { missingProductionEnv } = await import("../parseArgs.js");
     const env = {
+        ...RUNTIME_PIN_ENV,
         YS_PRODUCTION_BOOTSTRAP_HOLDER:
             "0x0000000000000000000000000000000000000001",
         YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: `0x${"11".repeat(32)}`,

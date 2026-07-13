@@ -52,6 +52,7 @@ function transactionHashFor(index) {
 
 async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     const module = await import("../finalizeDeploymentManifest.js");
+    const { keccak256 } = await import("ethers");
     const names = [
         ...(oracleMode === "pyth"
             ? module.PYTH_CORE_INVENTORY
@@ -120,6 +121,12 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     const missingCode = new Set();
     const callBlockTags = [];
     const codeBlockTags = [];
+    const runtimeCodehash = keccak256("0x6000");
+    const env = Object.fromEntries(
+        module
+            .reviewedCodehashPinSpecs(oracleMode)
+            .map(([, envName]) => [envName, runtimeCodehash]),
+    );
     const provider = {
         async call(transaction) {
             callBlockTags.push(transaction.blockTag);
@@ -315,6 +322,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         callBlockTags,
         candidate,
         codeBlockTags,
+        env,
         liveReceipts,
         missingCode,
         provider,
@@ -367,6 +375,7 @@ function promotionArgs(rootDir, item, overrides = {}) {
         primaryRpcUrl: PRIMARY_RPC_URL,
         validationRpcUrl: VALIDATION_RPC_URL,
         readProtocolState: item.readProtocolState,
+        env: item.env,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
     };
@@ -384,6 +393,7 @@ function validationArgs(item, overrides = {}) {
         primaryRpcUrl: PRIMARY_RPC_URL,
         validationRpcUrl: VALIDATION_RPC_URL,
         readProtocolState: item.readProtocolState,
+        env: item.env,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
     };
@@ -641,6 +651,7 @@ test("candidate validation rejects wrong chain, deployer, digest, inventory, and
         validationRpcUrl: VALIDATION_RPC_URL,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         readProtocolState: item.readProtocolState,
+        env: item.env,
     };
 
     await assert.rejects(
@@ -676,6 +687,37 @@ test("candidate validation rejects wrong chain, deployer, digest, inventory, and
     );
 });
 
+test("promotion requires and verifies every reviewed core runtime codehash pin", async () => {
+    for (const oracleMode of ["chainlink", "pyth"]) {
+        const item = await fixture({ oracleMode });
+        const specs = item.reviewedCodehashPinSpecs(oracleMode);
+
+        for (const [name, envName] of specs) {
+            const missingEnv = { ...item.env };
+            delete missingEnv[envName];
+            await assert.rejects(
+                item.validateAndBuildManifest(
+                    validationArgs(item, { env: missingEnv }),
+                ),
+                new RegExp(`${envName} is required`, "u"),
+                `${name} accepted without ${envName}`,
+            );
+
+            const mismatchedEnv = {
+                ...item.env,
+                [envName]: `0x${"ff".repeat(32)}`,
+            };
+            await assert.rejects(
+                item.validateAndBuildManifest(
+                    validationArgs(item, { env: mismatchedEnv }),
+                ),
+                new RegExp(`${name} runtime codehash does not match`, "u"),
+                `${name} accepted a mismatched reviewed pin`,
+            );
+        }
+    }
+});
+
 test("demo fixture metadata rejects an unexpected feed owner", async () => {
     const item = await fixture({ demo: true });
     await assert.rejects(
@@ -689,6 +731,7 @@ test("demo fixture metadata rejects an unexpected feed owner", async () => {
             validationProvider: item.validationProvider,
             primaryRpcUrl: PRIMARY_RPC_URL,
             validationRpcUrl: VALIDATION_RPC_URL,
+            env: item.env,
             readProtocolState: item.readProtocolState,
             readFeed: async () => ({
                 decimals: 8,

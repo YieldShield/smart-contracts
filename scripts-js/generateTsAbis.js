@@ -13,6 +13,7 @@ import {
     CHAINLINK_CORE_INVENTORY,
     DEMO_EXTRA_INVENTORY,
     PYTH_CORE_INVENTORY,
+    requiredReviewedCodehashPinNames,
 } from "./finalizeDeploymentManifest.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -154,12 +155,26 @@ function validateActiveDeploymentManifest(chainId, manifest) {
         }
     }
 
-    const requiredPins = [
-        "SplitRiskPoolFactoryImplementation",
-        "SplitRiskPoolImplementation",
-        hasPyth ? "PythOracle" : "ChainlinkOracleFeed",
-    ];
-    if (requiredPins.some((name) => !manifest.reviewedCodehashPins[name])) {
+    const requiredPins = requiredReviewedCodehashPinNames(
+        hasPyth ? "pyth" : "chainlink",
+    );
+    const addressByName = new Map(
+        addressEntries.map(([address, name]) => [name, address]),
+    );
+    const pinNames = Object.keys(manifest.reviewedCodehashPins).sort();
+    if (
+        JSON.stringify(pinNames) !== JSON.stringify([...requiredPins].sort()) ||
+        requiredPins.some(
+            (name) =>
+                !/^0x[0-9a-f]{64}$/iu.test(
+                    manifest.reviewedCodehashPins[name] ?? "",
+                ) ||
+                manifest.reviewedCodehashPins[name].toLowerCase() !==
+                    manifest.codehashEvidence[
+                        addressByName.get(name)
+                    ]?.toLowerCase(),
+        )
+    ) {
         throw new Error(
             `Deployment ${normalizedChainId} has incomplete reviewed codehash pins`,
         );
@@ -881,6 +896,7 @@ if (process.argv[1] === __filename) {
 export {
     CHAINLINK_CORE_INVENTORY,
     deploymentJsonNameForAddress,
+    requiredReviewedCodehashPinNames,
     selectPonderDeployment,
     sortChainIdsForSelection,
     validateActiveDeploymentManifest,

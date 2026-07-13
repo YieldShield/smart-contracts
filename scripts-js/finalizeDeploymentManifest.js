@@ -46,6 +46,45 @@ const CHAINLINK_CORE_INVENTORY = Object.freeze([
     "SplitRiskPoolImplementation",
     "SplitRiskPoolFactory",
 ]);
+const COMMON_REVIEWED_CODEHASH_PINS = Object.freeze([
+    ["SplitRiskPoolFactory", "YS_PRODUCTION_FACTORY_PROXY_CODEHASH"],
+    [
+        "SplitRiskPoolFactoryImplementation",
+        "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
+    ],
+    [
+        "SplitRiskPoolImplementation",
+        "YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH",
+    ],
+    ["YSToken", "YS_PRODUCTION_YS_TOKEN_CODEHASH"],
+    ["TimelockController", "YS_PRODUCTION_TIMELOCK_CODEHASH"],
+    ["YSGovernor", "YS_PRODUCTION_GOVERNOR_CODEHASH"],
+    ["CompositeOracle", "YS_PRODUCTION_COMPOSITE_ORACLE_CODEHASH"],
+    ["ERC4626OracleFeed", "YS_PRODUCTION_ERC4626_ORACLE_CODEHASH"],
+]);
+const PYTH_REVIEWED_CODEHASH_PINS = Object.freeze([
+    ["PythOracle", "YS_PRODUCTION_PYTH_ORACLE_CODEHASH"],
+]);
+const CHAINLINK_REVIEWED_CODEHASH_PINS = Object.freeze([
+    ["ChainlinkOracleFeed", "YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH"],
+    ["USMarketSessionGate", "YS_PRODUCTION_US_MARKET_SESSION_GATE_CODEHASH"],
+]);
+
+function reviewedCodehashPinSpecs(oracleMode) {
+    if (oracleMode !== "pyth" && oracleMode !== "chainlink") {
+        throw new Error(`Unsupported oracle mode ${oracleMode}.`);
+    }
+    return [
+        ...COMMON_REVIEWED_CODEHASH_PINS,
+        ...(oracleMode === "pyth"
+            ? PYTH_REVIEWED_CODEHASH_PINS
+            : CHAINLINK_REVIEWED_CODEHASH_PINS),
+    ];
+}
+
+function requiredReviewedCodehashPinNames(oracleMode) {
+    return reviewedCodehashPinSpecs(oracleMode).map(([name]) => name);
+}
 const DEMO_TOKEN_NAMES = Object.freeze([
     "RobinhoodTestUSDG",
     "RobinhoodTestWETH",
@@ -1247,26 +1286,16 @@ async function validateAndBuildManifest({
         }
     }
 
-    const expectedCodehashes = [
-        [
-            "SplitRiskPoolFactoryImplementation",
-            env.YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH,
-        ],
-        [
-            "SplitRiskPoolImplementation",
-            env.YS_PRODUCTION_POOL_IMPLEMENTATION_CODEHASH,
-        ],
-        [
-            oracleMode === "pyth" ? "PythOracle" : "ChainlinkOracleFeed",
-            oracleMode === "pyth"
-                ? env.YS_PRODUCTION_PYTH_ORACLE_CODEHASH
-                : env.YS_PRODUCTION_CHAINLINK_ORACLE_CODEHASH,
-        ],
-    ];
     const reviewedCodehashPins = {};
-    for (const [name, expected] of expectedCodehashes) {
-        if (!expected) continue;
+    for (const [name, envName] of reviewedCodehashPinSpecs(oracleMode)) {
+        const expected = env[envName];
+        if (!/^0x[0-9a-f]{64}$/iu.test(expected ?? "")) {
+            throw new Error(`${envName} is required as a bytes32 codehash.`);
+        }
         const address = byName.get(name);
+        if (!address || !codehashes[address]) {
+            throw new Error(`${name} is missing runtime-codehash evidence.`);
+        }
         if (codehashes[address].toLowerCase() !== expected.toLowerCase()) {
             throw new Error(
                 `${name} runtime codehash does not match the reviewed configuration.`,
@@ -1527,12 +1556,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 export {
     CHAIN_FINALITY_POLICY,
     CHAINLINK_CORE_INVENTORY,
+    CHAINLINK_REVIEWED_CODEHASH_PINS,
+    COMMON_REVIEWED_CODEHASH_PINS,
     DEMO_EXTRA_INVENTORY,
     DEMO_FEEDS,
     PYTH_CORE_INVENTORY,
+    PYTH_REVIEWED_CODEHASH_PINS,
     buildFixtureMetadata,
     chainFinalityPolicy,
     promoteDeploymentManifest,
+    requiredReviewedCodehashPinNames,
+    reviewedCodehashPinSpecs,
     requireIndependentRpcUrls,
     resolveFinalityEvidence,
     resolveRpcUrl,
