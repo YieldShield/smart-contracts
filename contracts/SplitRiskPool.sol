@@ -881,8 +881,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return poolState.shieldedTokenBalance > reserved ? poolState.shieldedTokenBalance - reserved : 0;
     }
 
-    function _requireAccountingBalanceCovered(address token, uint256 accountedBalance) internal view {
-        uint256 actualBalance = IERC20(token).balanceOf(address(this));
+    function _requireAccountingBalanceCovered(address token, uint256 accountedBalance)
+        internal
+        view
+        returns (uint256 actualBalance)
+    {
+        actualBalance = IERC20(token).balanceOf(address(this));
         if (actualBalance < accountedBalance) {
             revert ErrorsLib.AccountedBalanceExceedsTokenBalance(token, accountedBalance, actualBalance);
         }
@@ -3115,7 +3119,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      `probeAmount` must be nonzero and must round-trip exactly from the pool through
     ///      a third-party probe and back. This proves the pool/probe transfer path, not that
     ///      every arbitrary user transfer amount is untaxed.
-    function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external onlyGovernance {
+    function resetShieldedTokenTransferIntegrity(uint256 probeAmount) external nonReentrant onlyGovernance {
         if (!shieldedTokenTransferIntegrityBroken) {
             return;
         }
@@ -3125,8 +3129,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             if (probeAmount == 0) {
                 revert ErrorsLib.TransferIntegrityProbeRequired(SHIELDED_TOKEN);
             }
-            _requireAccountingBalanceCovered(SHIELDED_TOKEN, accountedShieldedBalance);
-            if (probeAmount > IERC20(SHIELDED_TOKEN).balanceOf(address(this))) {
+            uint256 actualShieldedBalance = _requireAccountingBalanceCovered(SHIELDED_TOKEN, accountedShieldedBalance);
+            if (probeAmount > actualShieldedBalance) {
                 revert ErrorsLib.InsufficientTokenBalance();
             }
             _requireUntaxedShieldedRoundTrip(probeAmount);

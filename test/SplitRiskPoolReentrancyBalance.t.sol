@@ -5,14 +5,14 @@ import { Test } from "forge-std/Test.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { ProtocolAccessControlUpgradeable } from "../contracts/base/ProtocolAccessControlUpgradeable.sol";
 
 contract SplitRiskPoolRoundTripHarness is SplitRiskPool {
-    function setShieldedTokenForHarness(address token) external {
+    function configureResetHarness(address token, uint256 accountedBalance) external {
         SHIELDED_TOKEN = token;
-    }
-
-    function probeRoundTrip(uint256 amount) external nonReentrant {
-        _requireUntaxedShieldedRoundTrip(amount);
+        poolState.shieldedTokenBalance = accountedBalance;
+        shieldedTokenTransferIntegrityBroken = true;
+        _governanceTimelock = msg.sender;
     }
 }
 
@@ -68,27 +68,34 @@ contract ReentrantBalanceToken is ERC20 {
 }
 
 contract SplitRiskPoolReentrancyBalanceTest is Test {
-    function test_roundTripRejectsTokenCallbackReentrancyAndPreservesBalances() public {
+    function test_resetRejectsTokenCallbackReentrancyAndPreservesBalances() public {
         SplitRiskPoolRoundTripHarness pool = new SplitRiskPoolRoundTripHarness();
         ReentrantBalanceToken token = new ReentrantBalanceToken();
-        pool.setShieldedTokenForHarness(address(token));
         token.mint(address(pool), 10e18);
+        pool.configureResetHarness(address(token), 10e18);
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.UnauthorizedGovernance.selector, address(0xBEEF))
+        );
+        pool.resetShieldedTokenTransferIntegrity(1e18);
 
         token.armCallback({
             recipient: address(pool),
             target: address(pool),
-            data: abi.encodeCall(SplitRiskPoolRoundTripHarness.probeRoundTrip, (1e18))
+            data: abi.encodeCall(SplitRiskPool.resetShieldedTokenTransferIntegrity, (1e18))
         });
 
-        pool.probeRoundTrip(5e18);
+        pool.resetShieldedTokenTransferIntegrity(5e18);
 
         assertTrue(token.callbackAttempted(), "return transfer did not invoke callback");
-        assertFalse(token.callbackSucceeded(), "callback re-entered round-trip path");
+        assertFalse(token.callbackSucceeded(), "callback re-entered production reset path");
         assertEq(
             token.callbackRevertSelector(),
             ReentrancyGuard.ReentrancyGuardReentrantCall.selector,
             "unexpected callback failure"
         );
+        assertFalse(pool.shieldedTokenTransferIntegrityBroken(), "successful outer reset did not clear flag");
         assertEq(token.balanceOf(address(pool)), 10e18, "pool balance changed across probe");
         assertEq(token.balanceOf(address(pool.shieldedTransferIntegrityProbe())), 0, "probe retained tokens");
     }
