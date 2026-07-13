@@ -125,6 +125,48 @@ test("checker rejects zero-hit commission escrow coverage despite a passing aggr
     );
 });
 
+test("checker rejects zeroed receipt NFT line and branch coverage", async () => {
+    const { COVERAGE_POLICY, checkCoverage } = await coverageModule();
+    const receiptFloors = [
+        {
+            sourcePath: "contracts/ProtectorReceiptNFT.sol",
+            lines: 85,
+            branches: 59,
+        },
+        {
+            sourcePath: "contracts/ShieldReceiptNFT.sol",
+            lines: 94,
+            branches: 69,
+        },
+    ];
+
+    for (const { sourcePath, lines, branches } of receiptFloors) {
+        for (const metricName of ["lines", "branches"]) {
+            const report = Object.keys(COVERAGE_POLICY.critical)
+                .map((criticalPath) =>
+                    lcovRecord(criticalPath, {
+                        lineHit:
+                            criticalPath !== sourcePath ||
+                            metricName !== "lines",
+                        branchHit:
+                            criticalPath !== sourcePath ||
+                            metricName !== "branches",
+                    }),
+                )
+                .join("\n");
+            const floor = metricName === "lines" ? lines : branches;
+
+            assert.throws(
+                () => checkCoverage(report),
+                new RegExp(
+                    `${sourcePath.replaceAll("/", "\\/")} ${metricName} 0\\.00% is below ${floor}\\.00%`,
+                    "u",
+                ),
+            );
+        }
+    }
+});
+
 test("checker fails closed for missing critical entries", async () => {
     const { COVERAGE_POLICY, checkCoverage } = await coverageModule();
     const critical = Object.keys(COVERAGE_POLICY.critical);

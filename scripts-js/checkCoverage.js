@@ -9,6 +9,8 @@ const PROJECT_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // a corresponding per-contract coverage floor (or vice versa).
 const SECURITY_CRITICAL_CONTRACTS = Object.freeze([
     "contracts/ProtectorCommissionEscrow.sol",
+    "contracts/ProtectorReceiptNFT.sol",
+    "contracts/ShieldReceiptNFT.sol",
     "contracts/SplitRiskPool.sol",
     "contracts/SplitRiskPoolFactory.sol",
     "contracts/YSGovernor.sol",
@@ -31,6 +33,16 @@ const COVERAGE_POLICY = Object.freeze({
         "contracts/ProtectorCommissionEscrow.sol": Object.freeze({
             lines: 90,
             branches: 49,
+        }),
+        // Reviewed 2026-07-13 LCOV: 85.71% lines / 59.09% branches.
+        "contracts/ProtectorReceiptNFT.sol": Object.freeze({
+            lines: 85,
+            branches: 59,
+        }),
+        // Reviewed 2026-07-13 LCOV: 94.67% lines / 70.00% branches.
+        "contracts/ShieldReceiptNFT.sol": Object.freeze({
+            lines: 94,
+            branches: 69,
         }),
         "contracts/SplitRiskPool.sol": Object.freeze({
             lines: 84,
