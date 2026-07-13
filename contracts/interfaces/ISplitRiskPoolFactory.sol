@@ -106,7 +106,7 @@ interface ISplitRiskPoolFactory {
         address primaryOracleFeed,
         address backupOracleFeed,
         uint256 minCollateralRatioBp,
-        bool staticBalanceAcknowledged
+        bool tokenBehaviorAcknowledged
     ) external;
     function updateMinimumCollateral(address token, uint256 newMinCollateralRatioBp) external;
     function setTokenRequiresStrictProtectedPrice(address token, bool required) external;
@@ -167,6 +167,6 @@ interface ISplitRiskPoolFactory {
         address primaryOracleFeed,
         address backupOracleFeed,
         uint256 minCollateralRatioBp,
-        bool staticBalanceAcknowledged
+        bool tokenBehaviorAcknowledged
     ) external;
 }

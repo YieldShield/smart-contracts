@@ -118,6 +118,34 @@ layout checks gate changes in CI. If upgradeability is ever re-enabled for live
 proxies, this base must be migrated deliberately and checked with a storage
 layout diff before deployment.
 
+### Supported-token behavior attestation
+
+`SplitRiskPoolFactory.addToken` and `addTokenInitial` retain their existing
+selectors, but their final boolean is an explicit governance attestation of
+all token behavior required by nominal pool accounting. Before acknowledging a
+token, governance must establish that:
+
+- balances held by external accounts are static (no rebasing, reflection,
+  elastic-balance, or share-indexed representation),
+- `transfer` and `transferFrom` never debit the sender by more than the requested
+  amount in any context the factory, a pool, or an escrow can exercise, and
+- those properties cannot be enabled, disabled, upgraded, or otherwise changed
+  while any pool using the token remains active.
+
+The acknowledgement is a reviewed governance decision, not an on-chain proof.
+The factory probes a small set of common rebasing/share-token interface markers,
+but absence of those markers does not establish safe transfer behavior. Tokens
+with recipient-deducted transfer fees can be handled by balance-delta accounting;
+tokens that charge an additional sender-paid amount are unsupported.
+
+Pool and creation-bond outbound transfers independently compare the contract's
+balance delta with the requested amount. If an admitted token later changes to
+sender-extra-debit behavior, affected operations fail closed instead of silently
+breaking accounting. That defense can make withdrawals or bond settlement
+temporarily unavailable, so the token issuer, proxy administrator, and any
+transfer-policy controller remain part of the governance onboarding trust
+boundary.
+
 ### NFT secondary-market cooldown carryover
 
 The 24h `CLAIM_REWARDS_COOLDOWN` is keyed by tokenId, not owner — fee baselines

@@ -125,7 +125,7 @@ contract CloseOnTransferToken is ERC20, Ownable {
 }
 
 contract SenderFeeToken is ERC20, Ownable {
-    uint256 public immutable senderFeeBps;
+    uint256 public senderFeeBps;
 
     constructor(uint256 senderFeeBps_) ERC20("Sender Fee Token", "SFEE") Ownable(msg.sender) {
         senderFeeBps = senderFeeBps_;
@@ -134,6 +134,11 @@ contract SenderFeeToken is ERC20, Ownable {
 
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
+    }
+
+    function setSenderFeeBps(uint256 senderFeeBps_) external onlyOwner {
+        require(senderFeeBps_ <= 1_000, "fee too high");
+        senderFeeBps = senderFeeBps_;
     }
 
     function _update(address from, address to, uint256 amount) internal override {
@@ -432,7 +437,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         internal
         returns (SenderFeeToken feeToken, address poolAddress, uint256 bondAmount, uint256 extraDebit)
     {
-        feeToken = new SenderFeeToken(1_000);
+        feeToken = new SenderFeeToken(0);
         oracle.setPrice(address(feeToken), 1e8);
         compositeOracle.setTokenOracleFeedWithType(address(feeToken), address(oracle), "mock");
         factory.addTokenInitial(
@@ -440,10 +445,11 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         );
 
         bondAmount = _defaultCreationBondAmount(address(feeToken));
-        extraDebit = (bondAmount * feeToken.senderFeeBps()) / 10_000;
         feeToken.approve(address(factory), bondAmount);
         poolAddress =
             factory.createPool(address(tokenA), "TKNA", address(feeToken), "SFEE", 500, 200, 15_000, bondAmount);
+        feeToken.setSenderFeeBps(1_000);
+        extraDebit = (bondAmount * feeToken.senderFeeBps()) / 10_000;
     }
 
     function _createCommissionEscrowPool()
@@ -1332,25 +1338,27 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         assertTrue(factory.isWhitelisted(address(tokenC)), "Governance should retain token onboarding control");
     }
 
-    function testAddTokenRequiresStaticBalanceAcknowledgement() public {
-        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
-        oracle.setPrice(address(tokenC), 1e8);
+    function testAddTokenRejectsSenderFeeTokenWithoutBehaviorAcknowledgement() public {
+        SenderFeeToken senderFeeToken = new SenderFeeToken(1_000);
+        oracle.setPrice(address(senderFeeToken), 1e8);
 
         vm.prank(governanceTimelock);
         vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(tokenC))
+            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(senderFeeToken))
         );
-        factory.addToken(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, false);
+        factory.addToken(address(senderFeeToken), "Sender Fee Token", "SFEE", address(oracle), address(0), 10000, false);
     }
 
-    function testAddTokenInitialRequiresStaticBalanceAcknowledgement() public {
-        MockERC20 tokenC = new MockERC20("Token C", "TKNC");
-        oracle.setPrice(address(tokenC), 1e8);
+    function testAddTokenInitialRejectsSenderFeeTokenWithoutBehaviorAcknowledgement() public {
+        SenderFeeToken senderFeeToken = new SenderFeeToken(1_000);
+        oracle.setPrice(address(senderFeeToken), 1e8);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(tokenC))
+            abi.encodeWithSelector(ErrorsLib.StaticBalanceAcknowledgementRequired.selector, address(senderFeeToken))
         );
-        factory.addTokenInitial(address(tokenC), "Token C", "TKNC", address(oracle), address(0), 10000, false);
+        factory.addTokenInitial(
+            address(senderFeeToken), "Sender Fee Token", "SFEE", address(oracle), address(0), 10000, false
+        );
     }
 
     function testAddTokenRejectsScaledBalanceToken() public {

@@ -47,7 +47,9 @@ library ErrorsLib {
     error InvalidTokenDecimals(address token, uint8 decimals);
     /// @notice Thrown when a token exposes common rebasing/share-balance markers unsupported by nominal pool accounting
     error BalanceMutatingTokenUnsupported(address token);
-    /// @notice Thrown when governance has not explicitly acknowledged a token uses static balances
+    /// @notice Legacy selector thrown when governance has not attested all required token behavior
+    /// @dev The attestation covers static externally held balances, no sender-extra-debit transfers,
+    ///      and immutable behavior while pools using the token remain active.
     error StaticBalanceAcknowledgementRequired(address token);
     /// @notice Thrown when pool creation requires a non-zero bond
     error InitialCreationBondRequired();
