@@ -13,7 +13,9 @@ the adversarial post-fix review: raw Robinhood broadcast artifacts bypassing man
 quarantine, and a retirement deadlock when an expired commission cannot be paid to
 its current owner. Final verification also found and corrected a test-handler model
 gap for backing-token amounts whose USD value truncates to zero; production behavior
-was already fail-closed.
+was already fail-closed. The first exact-SHA CI run then exposed live-fork environment
+leakage from the generated `.env`; an explicit fork-test opt-in now keeps ordinary and
+coverage runs hermetic while preserving mock-based tests located in a fork test file.
 
 Robinhood mainnet deployment remains intentionally blocked until a documented
 sequencer-uptime feed address and independently reviewed runtime hash are available.
@@ -66,6 +68,7 @@ The implementation order was:
 | Verification: zero-value protector deposit model    | The randomized handler now skips positive backing-token amounts whose USD value truncates to zero, matching the production deposit guard and preventing false modeled-valid paths.                                                                                   | `f73dfc9`            |
 | Reviewed remediation size ceilings                  | The tracked Pool and Factory ceilings were advanced to the exact post-remediation artifacts, with an explicit module-split requirement before further growth.                                                                                                        | `e74298d`            |
 | Sequencer input attestation                         | Mainnet sequencer input gains an exact reviewed runtime pin plus finalized dual-RPC code/wiring evidence; testnet's explicit exception remains scoped to `46630`.                                                                                                    | `8b176a9`            |
+| Post-push CI: implicit live-fork activation         | RPC values copied from `.env.example` can no longer activate live fork tests by themselves. Dedicated fork commands explicitly opt in and remain fail-closed when their required RPC is unavailable.                                                                 | `7314a1f`            |
 
 ## Deliberate constraints and external blocker
 
@@ -90,7 +93,7 @@ Local verification on the final code state completed successfully:
 
 - formatting, Prettier, `git diff --check`, Foundry lock consistency, a clean offline
   build, and both storage-layout baselines;
-- 116 JavaScript deployment/tooling tests;
+- 117 JavaScript deployment/tooling tests;
 - 1,148 Foundry tests passed, zero failed, and five fork-gated tests skipped in the
   ordinary offline suite;
 - the isolated invariant-reachability profile passed 18 tests over 4,096 calls with
@@ -103,6 +106,14 @@ Local verification on the final code state completed successfully:
 - `npm audit --omit=dev --audit-level=high` reported zero vulnerabilities; and
 - the mandatory Robinhood mainnet canonical stock/feed fork smoke test passed 1/1
   against the official public RPC.
+
+The first pushed run, GitHub Actions `29237567663`, correctly caught an unauthenticated
+template Robinhood RPC being consumed by the ordinary and coverage jobs after
+`npm ci` copied `.env.example` to `.env`. All unrelated jobs passed, including the
+dedicated Robinhood fork smoke and both Slither gates. The follow-up guard was tested
+in both directions: an unenabled dead RPC skipped without a connection attempt, the
+same required and enabled RPC failed closed, and the enabled official Robinhood smoke
+passed. The succeeding exact-final-SHA run is reported in the repository handoff.
 
 The exact final pushed SHA and remote CI run identifiers are reported with the
 repository handoff after the documentation commit itself completes those checks.
