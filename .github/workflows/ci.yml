@@ -86,6 +86,30 @@ jobs:
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high
 
+  arbitrum-public-fork-smokes:
+    name: Arbitrum public fork smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+        with:
+          version: v1.5.1
+
+      - name: Run required Arbitrum public fork smokes
+        env:
+          FORK_TESTS_ENABLED: "true"
+          FORK_TESTS_REQUIRED: "true"
+          ARBITRUM_RPC_URL: https://arb1.arbitrum.io/rpc
+          ARBITRUM_SEPOLIA_RPC_URL: https://sepolia-rollup.arbitrum.io/rpc
+        run: forge test --match-contract ArbitrumOracleForkTest -vv
+
   fork-tests:
     name: Fork tests
     runs-on: ubuntu-latest

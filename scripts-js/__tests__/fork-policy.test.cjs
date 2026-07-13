@@ -9,6 +9,10 @@ const workflow = readFileSync(
     "utf8",
 );
 const oracleFork = readFileSync(join(root, "test", "OracleFork.t.sol"), "utf8");
+const arbitrumFork = readFileSync(
+    join(root, "test", "ArbitrumOracleFork.t.sol"),
+    "utf8",
+);
 const robinhoodFork = readFileSync(
     join(root, "test", "RobinhoodMainnetFork.t.sol"),
     "utf8",
@@ -25,8 +29,13 @@ const forkJob = workflow.slice(
     workflow.indexOf("  fork-tests:"),
     workflow.indexOf("  contract-size:"),
 );
+const arbitrumForkJob = workflow.slice(
+    workflow.indexOf("  arbitrum-public-fork-smokes:"),
+    workflow.indexOf("  fork-tests:"),
+);
 
 test("Ethereum fork suites are independently gated", () => {
+    assert.match(forkJob, /if: github\.event_name == 'push'/u);
     assert.match(forkJob, /mainnet_available=true/u);
     assert.match(forkJob, /sepolia_available=true/u);
     assert.match(
@@ -38,6 +47,40 @@ test("Ethereum fork suites are independently gated", () => {
         /if: steps\.ethereum-fork-rpcs\.outputs\.sepolia_available == 'true'/u,
     );
     assert.doesNotMatch(forkJob, /\[ -n "\$MAINNET_RPC_URL" \] &&/u);
+});
+
+test("Arbitrum public fork smokes run before merge against official RPCs", () => {
+    assert.doesNotMatch(arbitrumForkJob, /if: github\.event_name == 'push'/u);
+    assert.match(arbitrumForkJob, /FORK_TESTS_ENABLED: "true"/u);
+    assert.match(arbitrumForkJob, /FORK_TESTS_REQUIRED: "true"/u);
+    assert.match(arbitrumForkJob, /https:\/\/arb1\.arbitrum\.io\/rpc/u);
+    assert.match(
+        arbitrumForkJob,
+        /https:\/\/sepolia-rollup\.arbitrum\.io\/rpc/u,
+    );
+    assert.match(
+        arbitrumForkJob,
+        /forge test --match-contract ArbitrumOracleForkTest -vv/u,
+    );
+
+    assert.match(arbitrumFork, /PythConfig\.ARBITRUM_MAINNET_CHAIN_ID/u);
+    assert.match(arbitrumFork, /PythConfig\.ARBITRUM_SEPOLIA_CHAIN_ID/u);
+    assert.match(arbitrumFork, /getValidTimePeriod\(\)/u);
+    assert.match(arbitrumFork, /getUpdateFee\(noUpdates\)/u);
+    assert.match(arbitrumFork, /PythErrors\.PriceFeedNotFound\.selector/u);
+    assert.match(arbitrumFork, /sequencer\.latestRoundData\(\)/u);
+    assert.match(
+        arbitrumFork,
+        /PythConfig\.ARBITRUM_MAINNET_SEQUENCER_UPTIME_FEED/u,
+    );
+    assert.match(
+        arbitrumFork,
+        /oracle\.setSequencerUptimeFeedRequired\(false\)/u,
+    );
+    assert.match(
+        arbitrumFork,
+        /address\(oracle\.sequencerUptimeFeed\(\)\), address\(0\)/u,
+    );
 });
 
 test("RPC configuration alone cannot enable live fork tests", () => {
