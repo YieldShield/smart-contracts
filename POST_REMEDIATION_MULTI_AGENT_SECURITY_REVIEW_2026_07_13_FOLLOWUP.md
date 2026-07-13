@@ -35,6 +35,39 @@ This is an engineering review, not a guarantee of correctness or a substitute fo
 an independent professional audit and production launch rehearsal before material
 value is deposited.
 
+## Remediation status — July 13, 2026
+
+All eight findings in this follow-up were remediated after the review baseline. The
+detailed finding narratives below remain as the historical evidence and rationale
+for each change.
+
+| ID   | Remediation                                                                                                      | Commit    |
+| ---- | ---------------------------------------------------------------------------------------------------------------- | --------- |
+| M-01 | Require a live, circuit-breaker-capable protected backup and converged prices before permissionless failback     | `f62a068` |
+| L-01 | Deploy and immutably pin the reviewed Robinhood equity wrapper across onboarding, manifests, and finalization    | `b268d55` |
+| L-02 | Fail Arbitrum production preflight before RPC, build, keystore, or broadcast while targets exceed chain limits   | `3bcbcf4` |
+| L-03 | Require an explicit true Pyth updater confirmation in Arbitrum CLI preflight and operator documentation          | `b38cc3a` |
+| L-04 | Add enforced line and branch coverage floors, including mutation-policy tests, for both receipt NFTs             | `787a97f` |
+| L-05 | Add required public Arbitrum One and Sepolia oracle fork smokes while retaining the private push-only fork suite | `12d54db` |
+| L-06 | Run invariant reachability under fixed seeds with explicit handler metrics and retained diagnostic logs          | `85c4f38` |
+| I-01 | Exercise exact safe-accumulation boundaries and replace tautologies with conservation and reference properties   | `c7764ad` |
+
+The remediation plan and implementation were independently double-checked by
+separate agents for oracle/deployment behavior and test/CI assurance. Final local
+verification included:
+
+- `npm test`: 1,178 passed, 0 failed, 7 intentionally skipped live-fork tests.
+- Exact CI coverage command after the final harness refactor: 1,168 passed, 0
+  failed, 7 skipped; LCOV written successfully.
+- Production coverage policy: 29 contracts passed at 86.67% lines and 56.50%
+  branches, including the new receipt-NFT floors.
+- JavaScript policy and deployment tooling: 141 tests passed.
+- Fixed invariant reachability seeds `0x01`, `0x02`, and `0x03`: 28 tests passed
+  for each seed.
+- Live public Arbitrum oracle forks: 2 tests passed.
+- Storage-layout snapshots, Foundry dependency lock, optimized tracked size budgets,
+  and all 16 Robinhood production deployment-target size checks passed.
+
 ## Scope and method
 
 - **Baseline:** `b8016a8d2c4224f72fc0a37fc317ec579c97d1f8`, clean and synchronized
@@ -57,16 +90,16 @@ value is deposited.
 
 ## Finding summary
 
-| ID   | Severity      | Finding                                                                                                                  | Status                              |
-| ---- | ------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| M-01 | Medium        | Permissionless failback can reactivate the disputed primary when the backup is unavailable                               | Confirmed and reproduced            |
-| L-01 | Low           | Robinhood equity opening and corporate-action safeguards remain opt-in and are not pinned in the mainnet core deployment | Confirmed configuration weakness    |
-| L-02 | Low           | Advertised Arbitrum production aliases cannot deploy the current pool and factory implementations                        | Confirmed deployment inconsistency  |
-| L-03 | Low           | Arbitrum One requires a Pyth updater confirmation flag that CLI preflight and documentation omit                         | Confirmed operational inconsistency |
-| L-04 | Low           | Receipt NFTs are outside per-contract coverage floors                                                                    | Confirmed assurance gap             |
-| L-05 | Low           | Supported Arbitrum oracle paths have no live-fork CI coverage, while existing fork jobs run only after merge             | Confirmed assurance gap             |
-| L-06 | Low           | The randomized reachability gate is nondeterministic and emits non-diagnostic counterexamples                            | Confirmed assurance gap             |
-| I-01 | Informational | A boundary fuzz test never approaches its named boundary and contains tautological assertions                            | Confirmed test-quality issue        |
+| ID   | Severity      | Finding                                                                                                                  | Status                  |
+| ---- | ------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| M-01 | Medium        | Permissionless failback can reactivate the disputed primary when the backup is unavailable                               | Remediated in `f62a068` |
+| L-01 | Low           | Robinhood equity opening and corporate-action safeguards remain opt-in and are not pinned in the mainnet core deployment | Remediated in `b268d55` |
+| L-02 | Low           | Advertised Arbitrum production aliases cannot deploy the current pool and factory implementations                        | Remediated in `3bcbcf4` |
+| L-03 | Low           | Arbitrum One requires a Pyth updater confirmation flag that CLI preflight and documentation omit                         | Remediated in `b38cc3a` |
+| L-04 | Low           | Receipt NFTs are outside per-contract coverage floors                                                                    | Remediated in `787a97f` |
+| L-05 | Low           | Supported Arbitrum oracle paths have no live-fork CI coverage, while existing fork jobs run only after merge             | Remediated in `12d54db` |
+| L-06 | Low           | The randomized reachability gate is nondeterministic and emits non-diagnostic counterexamples                            | Remediated in `85c4f38` |
+| I-01 | Informational | A boundary fuzz test never approaches its named boundary and contains tautological assertions                            | Remediated in `c7764ad` |
 
 ## Medium finding
 
