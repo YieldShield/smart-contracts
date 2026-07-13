@@ -28,6 +28,7 @@ contract SplitRiskPoolHandler is Test {
     MockOracle public oracle;
     ShieldReceiptNFT public shieldNFT;
     ProtectorReceiptNFT public protectorNFT;
+    address public governance;
 
     // Track actors and their token IDs
     address[] public protectors;
@@ -42,6 +43,11 @@ contract SplitRiskPoolHandler is Test {
     uint256 public ghost_totalShieldedWithdrawals;
     uint256 public ghost_totalCommissionsClaimed;
     uint256 public ghost_totalCrossAssetWithdrawals;
+    uint256 public ghost_totalPartialShieldedWithdrawals;
+    uint256 public ghost_totalPoolFeesAccrued;
+    uint256 public ghost_totalProtocolFeesAccrued;
+    uint256 public ghost_totalPoolFeesPaid;
+    uint256 public ghost_totalProtocolFeesPaid;
 
     // Call counters for debugging
     uint256 public calls_depositProtector;
@@ -51,6 +57,11 @@ contract SplitRiskPoolHandler is Test {
     uint256 public calls_claimCommission;
     uint256 public calls_claimRewards;
     uint256 public calls_withdrawShieldedCrossAsset;
+    uint256 public calls_partialWithdrawShielded;
+    uint256 public calls_payPoolFee;
+    uint256 public calls_payProtocolFee;
+    uint256 public calls_transferShieldNFT;
+    uint256 public calls_transferProtectorNFT;
     uint256 public calls_dropPrice;
     uint256 public calls_generateYield;
     uint256 public calls_dropBackingPrice;
@@ -67,6 +78,7 @@ contract SplitRiskPoolHandler is Test {
     bool public metricsEnabled;
     bool public rewardPerShareEverDecreased;
     bool public tvlLimitViolatedByDeposit;
+    bool public receiptTransferAccountingChanged;
     uint256 public highestRewardPerShareObserved;
 
     // Pool config
@@ -84,7 +96,8 @@ contract SplitRiskPoolHandler is Test {
         MockERC20 _backingBaseToken,
         MockOracle _oracle,
         ShieldReceiptNFT _shieldNFT,
-        ProtectorReceiptNFT _protectorNFT
+        ProtectorReceiptNFT _protectorNFT,
+        address _governance
     ) {
         pool = _pool;
         shieldedToken = _shieldedToken;
@@ -94,6 +107,7 @@ contract SplitRiskPoolHandler is Test {
         oracle = _oracle;
         shieldNFT = _shieldNFT;
         protectorNFT = _protectorNFT;
+        governance = _governance;
 
         // Cache pool config
         (shieldedMinDepositAmount, shieldedMaxDepositAmount, backingMinDepositAmount, backingMaxDepositAmount,,,,,,) =
@@ -112,13 +126,23 @@ contract SplitRiskPoolHandler is Test {
 
     modifier tracksRewardPerShare() {
         uint256 beforeValue = pool.rewardPerShareAccumulated();
+        uint256 poolFeeBefore = pool.accumulatedPoolFee();
+        uint256 protocolFeeBefore = pool.accumulatedProtocolFee();
         _;
         uint256 afterValue = pool.rewardPerShareAccumulated();
+        uint256 poolFeeAfter = pool.accumulatedPoolFee();
+        uint256 protocolFeeAfter = pool.accumulatedProtocolFee();
         if (afterValue < beforeValue) {
             rewardPerShareEverDecreased = true;
         }
         if (afterValue > highestRewardPerShareObserved) {
             highestRewardPerShareObserved = afterValue;
+        }
+        if (poolFeeAfter > poolFeeBefore) {
+            ghost_totalPoolFeesAccrued += poolFeeAfter - poolFeeBefore;
+        }
+        if (protocolFeeAfter > protocolFeeBefore) {
+            ghost_totalProtocolFeesAccrued += protocolFeeAfter - protocolFeeBefore;
         }
     }
 
@@ -422,6 +446,76 @@ contract SplitRiskPoolHandler is Test {
         }
     }
 
+    /// @notice Partially withdraw a shield receipt while preserving its randomized owner index.
+    function partialWithdrawShielded(uint256 actorSeed, uint256 tokenIdSeed, uint256 amountSeed)
+        external
+        tracksRewardPerShare
+    {
+        _attempt(this.partialWithdrawShielded.selector);
+        address actor = shieldeds[actorSeed % shieldeds.length];
+        uint256[] storage tokenIds = shieldedTokenIds[actor];
+        if (tokenIds.length == 0) {
+            _skip(this.partialWithdrawShielded.selector);
+            return;
+        }
+
+        uint256 tokenId = tokenIds[tokenIdSeed % tokenIds.length];
+        IShieldReceiptNFT.ShieldPosition memory pos;
+        try shieldNFT.getPosition(tokenId) returns (IShieldReceiptNFT.ShieldPosition memory p) {
+            pos = p;
+        } catch {
+            _removeTokenId(tokenIds, tokenId);
+            _skip(this.partialWithdrawShielded.selector);
+            return;
+        }
+
+        uint256 pendingFees = _pendingShieldedFees(tokenId, pos);
+        if (pos.amount <= pendingFees + shieldedMinDepositAmount) {
+            _skip(this.partialWithdrawShielded.selector);
+            return;
+        }
+
+        uint256 maxWithdrawal = pos.amount - pendingFees - shieldedMinDepositAmount;
+        uint256 withdrawAmount = bound(amountSeed, 1, maxWithdrawal);
+
+        vm.prank(actor);
+        try pool.partialWithdrawShielded(tokenId, withdrawAmount, address(shieldedToken), 0) returns (
+            uint256 newTokenId
+        ) {
+            _replaceTokenId(tokenIds, tokenId, newTokenId);
+            ghost_totalPartialShieldedWithdrawals += withdrawAmount;
+            calls_partialWithdrawShielded++;
+            _success(this.partialWithdrawShielded.selector);
+        } catch {
+            _unexpectedRevert(this.partialWithdrawShielded.selector);
+        }
+    }
+
+    function _pendingShieldedFees(uint256 tokenId, IShieldReceiptNFT.ShieldPosition memory pos)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 currentPrice = oracle.getPrice(address(shieldedToken));
+        uint256 currentValue = Math.mulDiv(pos.amount, currentPrice, 1e18);
+        uint256 baselineValue = pool.feeValueBaselineUsd(tokenId);
+        if (baselineValue == 0 && pos.valueAtDeposit != 0) baselineValue = pos.valueAtDeposit;
+        if (currentValue <= baselineValue) return 0;
+
+        uint256 yieldEarnedUsd = currentValue - baselineValue;
+        (,,,,,,,, uint96 protocolFee,) = pool.poolConfig();
+        uint256 commissionUsd =
+            Math.mulDiv(yieldEarnedUsd, pool.COMMISSION_RATE(), ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
+        uint256 poolFeeUsd =
+            Math.mulDiv(yieldEarnedUsd, pool.POOL_FEE(), ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
+        uint256 protocolFeeUsd =
+            Math.mulDiv(yieldEarnedUsd, protocolFee, ConstantsLib.BASIS_POINT_SCALE, Math.Rounding.Ceil);
+        uint256 totalFees = Math.mulDiv(commissionUsd, 1e18, currentPrice, Math.Rounding.Ceil)
+            + Math.mulDiv(poolFeeUsd, 1e18, currentPrice, Math.Rounding.Ceil)
+            + Math.mulDiv(protocolFeeUsd, 1e18, currentPrice, Math.Rounding.Ceil);
+        return totalFees > pos.amount ? pos.amount : totalFees;
+    }
+
     /// @notice Claim commission as protector
     function claimCommission(uint256 actorSeed, uint256 tokenIdSeed) external tracksRewardPerShare {
         _attempt(this.claimCommission.selector);
@@ -475,6 +569,139 @@ contract SplitRiskPoolHandler is Test {
         } catch {
             _unexpectedRevert(this.claimRewards.selector);
         }
+    }
+
+    /// @notice Pay the creator fee bucket through the governance-authorized path.
+    function payPoolFee() external tracksRewardPerShare {
+        _attempt(this.payPoolFee.selector);
+        uint256 amount = pool.accumulatedPoolFee();
+        if (amount == 0) {
+            _skip(this.payPoolFee.selector);
+            return;
+        }
+
+        vm.prank(governance);
+        try pool.payPoolFee() {
+            ghost_totalPoolFeesPaid += amount;
+            calls_payPoolFee++;
+            _success(this.payPoolFee.selector);
+        } catch {
+            _unexpectedRevert(this.payPoolFee.selector);
+        }
+    }
+
+    /// @notice Pay the protocol fee bucket through the governance-authorized path.
+    function payProtocolFee() external tracksRewardPerShare {
+        _attempt(this.payProtocolFee.selector);
+        uint256 amount = pool.accumulatedProtocolFee();
+        if (amount == 0) {
+            _skip(this.payProtocolFee.selector);
+            return;
+        }
+
+        vm.prank(governance);
+        try pool.payProtocolFee() {
+            ghost_totalProtocolFeesPaid += amount;
+            calls_payProtocolFee++;
+            _success(this.payProtocolFee.selector);
+        } catch {
+            _unexpectedRevert(this.payProtocolFee.selector);
+        }
+    }
+
+    /// @notice Transfer a live shield receipt between modeled actors.
+    function transferShieldNFT(uint256 actorSeed, uint256 tokenIdSeed, uint256 recipientSeed)
+        external
+        tracksRewardPerShare
+    {
+        _attempt(this.transferShieldNFT.selector);
+        uint256 sourceIndex = actorSeed % shieldeds.length;
+        uint256 recipientIndex = recipientSeed % shieldeds.length;
+        if (recipientIndex == sourceIndex) recipientIndex = (recipientIndex + 1) % shieldeds.length;
+        address source = shieldeds[sourceIndex];
+        address recipient = shieldeds[recipientIndex];
+        uint256[] storage sourceTokenIds = shieldedTokenIds[source];
+        if (sourceTokenIds.length == 0) {
+            _skip(this.transferShieldNFT.selector);
+            return;
+        }
+
+        uint256 tokenId = sourceTokenIds[tokenIdSeed % sourceTokenIds.length];
+        IShieldReceiptNFT.ShieldPosition memory pos = shieldNFT.getPosition(tokenId);
+        uint256 unlockTime = uint256(pos.depositTime) + shieldNFT.transferLockPeriod();
+        if (block.timestamp < unlockTime) vm.warp(unlockTime);
+        bytes32 accountingBefore = _shieldReceiptAccountingHash(tokenId);
+        vm.prank(source);
+        try shieldNFT.transferFrom(source, recipient, tokenId) {
+            _removeTokenId(sourceTokenIds, tokenId);
+            shieldedTokenIds[recipient].push(tokenId);
+            if (accountingBefore != _shieldReceiptAccountingHash(tokenId)) receiptTransferAccountingChanged = true;
+            calls_transferShieldNFT++;
+            _success(this.transferShieldNFT.selector);
+        } catch {
+            _unexpectedRevert(this.transferShieldNFT.selector);
+        }
+    }
+
+    /// @notice Transfer a live protector receipt between modeled actors.
+    function transferProtectorNFT(uint256 actorSeed, uint256 tokenIdSeed, uint256 recipientSeed)
+        external
+        tracksRewardPerShare
+    {
+        _attempt(this.transferProtectorNFT.selector);
+        uint256 sourceIndex = actorSeed % protectors.length;
+        uint256 recipientIndex = recipientSeed % protectors.length;
+        if (recipientIndex == sourceIndex) recipientIndex = (recipientIndex + 1) % protectors.length;
+        address source = protectors[sourceIndex];
+        address recipient = protectors[recipientIndex];
+        uint256[] storage sourceTokenIds = protectorTokenIds[source];
+        if (sourceTokenIds.length == 0) {
+            _skip(this.transferProtectorNFT.selector);
+            return;
+        }
+
+        uint256 tokenId = sourceTokenIds[tokenIdSeed % sourceTokenIds.length];
+        IProtectorReceiptNFT.ProtectorPosition memory pos = protectorNFT.getPosition(tokenId);
+        uint256 unlockTime = uint256(pos.depositTime) + protectorNFT.transferLockPeriod();
+        if (block.timestamp < unlockTime) vm.warp(unlockTime);
+        bytes32 accountingBefore = _protectorReceiptAccountingHash(tokenId);
+        vm.prank(source);
+        try protectorNFT.transferFrom(source, recipient, tokenId) {
+            _removeTokenId(sourceTokenIds, tokenId);
+            protectorTokenIds[recipient].push(tokenId);
+            if (accountingBefore != _protectorReceiptAccountingHash(tokenId)) receiptTransferAccountingChanged = true;
+            calls_transferProtectorNFT++;
+            _success(this.transferProtectorNFT.selector);
+        } catch {
+            _unexpectedRevert(this.transferProtectorNFT.selector);
+        }
+    }
+
+    function _shieldReceiptAccountingHash(uint256 tokenId) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                shieldNFT.getPosition(tokenId),
+                pool.feeValueBaselineUsd(tokenId),
+                pool.lastClaimRewardsTime(tokenId),
+                pool.totalShieldedTokens(),
+                pool.totalValueAtDeposit(),
+                pool.totalShieldCollateralAmount()
+            )
+        );
+    }
+
+    function _protectorReceiptAccountingHash(uint256 tokenId) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                protectorNFT.getPosition(tokenId),
+                pool.protectorShares(tokenId),
+                pool.protectorShareEpochs(tokenId),
+                pool.rewardDebt(tokenId),
+                pool.commissionsClaimed(tokenId),
+                pool.totalProtectorTokens(),
+                pool.totalProtectorShares()
+            )
+        );
     }
 
     /// @notice Withdraw as shielded via cross-asset path (backing token)
@@ -624,6 +851,16 @@ contract SplitRiskPoolHandler is Test {
         }
     }
 
+    function _replaceTokenId(uint256[] storage tokenIds, uint256 oldTokenId, uint256 newTokenId) internal {
+        uint256 length = tokenIds.length;
+        for (uint256 i = 0; i < length; ++i) {
+            if (tokenIds[i] == oldTokenId) {
+                tokenIds[i] = newTokenId;
+                return;
+            }
+        }
+    }
+
     // ============ View Functions ============
 
     function getProtectorCount() external view returns (uint256) {
@@ -703,7 +940,15 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
         // Deploy handler (needs to be done carefully to handle token ownership)
         handler = new SplitRiskPoolHandler(
-            pool, shieldedToken, backingToken, shieldedBaseToken, backingBaseToken, oracle, shieldNFT, protectorNFT
+            pool,
+            shieldedToken,
+            backingToken,
+            shieldedBaseToken,
+            backingBaseToken,
+            oracle,
+            shieldNFT,
+            protectorNFT,
+            governance
         );
         oracle.transferOwnership(address(handler));
 
@@ -717,7 +962,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         targetContract(address(handler));
 
         // Exclude specific selectors that shouldn't be called randomly
-        bytes4[] memory selectors = new bytes4[](12);
+        bytes4[] memory selectors = new bytes4[](17);
         selectors[0] = SplitRiskPoolHandler.depositProtector.selector;
         selectors[1] = SplitRiskPoolHandler.depositShielded.selector;
         selectors[2] = SplitRiskPoolHandler.withdrawProtector.selector;
@@ -730,6 +975,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         selectors[9] = SplitRiskPoolHandler.dropPrice.selector;
         selectors[10] = SplitRiskPoolHandler.dropBackingPrice.selector;
         selectors[11] = SplitRiskPoolHandler.increaseBackingPrice.selector;
+        selectors[12] = SplitRiskPoolHandler.partialWithdrawShielded.selector;
+        selectors[13] = SplitRiskPoolHandler.payPoolFee.selector;
+        selectors[14] = SplitRiskPoolHandler.payProtocolFee.selector;
+        selectors[15] = SplitRiskPoolHandler.transferShieldNFT.selector;
+        selectors[16] = SplitRiskPoolHandler.transferProtectorNFT.selector;
 
         targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
     }
@@ -773,6 +1023,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         handler.generateYield(1_000);
         handler.claimRewards(0, 0);
         handler.claimCommission(0, 0);
+        handler.partialWithdrawShielded(2, 0, 50_000e18);
+        handler.transferShieldNFT(2, 0, 3);
+        handler.transferProtectorNFT(0, 0, 2);
+        handler.payPoolFee();
+        handler.payProtocolFee();
         handler.withdrawShielded(0, 0);
         handler.withdrawShieldedCrossAsset(1, 0);
         handler.withdrawProtector(1, 0, 100_000e18);
@@ -781,6 +1036,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         assertGt(handler.calls_depositShielded(), 0, "seed shield deposit must execute");
         assertGt(handler.calls_claimRewards(), 0, "seed reward claim must execute");
         assertGt(handler.calls_claimCommission(), 0, "seed commission claim must execute");
+        assertGt(handler.calls_partialWithdrawShielded(), 0, "seed partial shield exit must execute");
+        assertGt(handler.calls_transferShieldNFT(), 0, "seed shield receipt transfer must execute");
+        assertGt(handler.calls_transferProtectorNFT(), 0, "seed protector receipt transfer must execute");
+        assertGt(handler.calls_payPoolFee(), 0, "seed pool fee payout must execute");
+        assertGt(handler.calls_payProtocolFee(), 0, "seed protocol fee payout must execute");
         assertGt(handler.calls_withdrawShielded(), 0, "seed same-asset exit must execute");
         assertGt(handler.calls_withdrawShieldedCrossAsset(), 0, "seed cross-asset exit must execute");
         assertGt(handler.calls_withdrawProtector(), 0, "seed protector exit must execute");
@@ -816,6 +1076,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         _assertHandlerMetricsEmpty(SplitRiskPoolHandler.claimRewards.selector, "reward claims");
         _assertHandlerMetricsEmpty(SplitRiskPoolHandler.claimCommission.selector, "commission claims");
         _assertHandlerMetricsEmpty(SplitRiskPoolHandler.generateYield.selector, "positive price movement");
+        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.partialWithdrawShielded.selector, "partial shield exits");
+        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.payPoolFee.selector, "pool fee payouts");
+        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.payProtocolFee.selector, "protocol fee payouts");
+        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.transferShieldNFT.selector, "shield receipt transfers");
+        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.transferProtectorNFT.selector, "protector receipt transfers");
     }
 
     function _assertHandlerMetricsEmpty(bytes4 selector, string memory label) internal view {
@@ -1127,6 +1392,29 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         );
     }
 
+    // ============ Invariant 14: Fee Payout Conservation ============
+
+    /// @notice Random fee payouts must only move accrued fees from pool accounting to recipients.
+    function invariant_feePayoutConservation() public view {
+        assertEq(
+            pool.accumulatedPoolFee() + handler.ghost_totalPoolFeesPaid(),
+            handler.ghost_totalPoolFeesAccrued(),
+            "pool fee accruals must equal outstanding plus paid fees"
+        );
+        assertEq(
+            pool.accumulatedProtocolFee() + handler.ghost_totalProtocolFeesPaid(),
+            handler.ghost_totalProtocolFeesAccrued(),
+            "protocol fee accruals must equal outstanding plus paid fees"
+        );
+    }
+
+    // ============ Invariant 15: Receipt Transfer Accounting ============
+
+    /// @notice ERC721 ownership changes must not mutate receipt or aggregate pool accounting.
+    function invariant_receiptTransfersPreserveAccounting() public view {
+        assertFalse(handler.receiptTransferAccountingChanged(), "receipt transfer changed economic accounting");
+    }
+
     // ============ Post-Run Coverage ============
 
     function afterInvariant() public view {
@@ -1139,6 +1427,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
             _assertHandlerCoverage(SplitRiskPoolHandler.claimRewards.selector, 1, "reward claims");
             _assertHandlerCoverage(SplitRiskPoolHandler.claimCommission.selector, 1, "commission claims");
             _assertHandlerCoverage(SplitRiskPoolHandler.generateYield.selector, 1, "positive price movement");
+            _assertHandlerCoverage(SplitRiskPoolHandler.partialWithdrawShielded.selector, 1, "partial shield exits");
+            _assertHandlerCoverage(SplitRiskPoolHandler.payPoolFee.selector, 1, "pool fee payouts");
+            _assertHandlerCoverage(SplitRiskPoolHandler.payProtocolFee.selector, 1, "protocol fee payouts");
+            _assertHandlerCoverage(SplitRiskPoolHandler.transferShieldNFT.selector, 1, "shield receipt transfers");
+            _assertHandlerCoverage(SplitRiskPoolHandler.transferProtectorNFT.selector, 1, "protector receipt transfers");
         }
 
         _assertNoUnexpectedReverts(SplitRiskPoolHandler.depositProtector.selector, "protector deposits");
@@ -1148,6 +1441,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         _assertNoUnexpectedReverts(SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector, "cross-asset exits");
         _assertNoUnexpectedReverts(SplitRiskPoolHandler.claimRewards.selector, "reward claims");
         _assertNoUnexpectedReverts(SplitRiskPoolHandler.claimCommission.selector, "commission claims");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.partialWithdrawShielded.selector, "partial shield exits");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.payPoolFee.selector, "pool fee payouts");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.payProtocolFee.selector, "protocol fee payouts");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.transferShieldNFT.selector, "shield receipt transfers");
+        _assertNoUnexpectedReverts(SplitRiskPoolHandler.transferProtectorNFT.selector, "protector receipt transfers");
     }
 
     function _assertHandlerCoverage(bytes4 selector, uint256 minimumSuccesses, string memory label) internal view {
@@ -1207,6 +1505,11 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         console2.log("claimCommission:", handler.calls_claimCommission());
         console2.log("claimRewards:", handler.calls_claimRewards());
         console2.log("withdrawShieldedCrossAsset:", handler.calls_withdrawShieldedCrossAsset());
+        console2.log("partialWithdrawShielded:", handler.calls_partialWithdrawShielded());
+        console2.log("payPoolFee:", handler.calls_payPoolFee());
+        console2.log("payProtocolFee:", handler.calls_payProtocolFee());
+        console2.log("transferShieldNFT:", handler.calls_transferShieldNFT());
+        console2.log("transferProtectorNFT:", handler.calls_transferProtectorNFT());
         console2.log("dropPrice:", handler.calls_dropPrice());
         console2.log("generateYield:", handler.calls_generateYield());
         console2.log("unexpected handler reverts are asserted in afterInvariant");
@@ -1218,5 +1521,8 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         console2.log("totalShieldedWithdrawals:", handler.ghost_totalShieldedWithdrawals());
         console2.log("totalCommissionsClaimed:", handler.ghost_totalCommissionsClaimed());
         console2.log("totalCrossAssetWithdrawals:", handler.ghost_totalCrossAssetWithdrawals());
+        console2.log("totalPartialShieldedWithdrawals:", handler.ghost_totalPartialShieldedWithdrawals());
+        console2.log("totalPoolFeesPaid:", handler.ghost_totalPoolFeesPaid());
+        console2.log("totalProtocolFeesPaid:", handler.ghost_totalProtocolFeesPaid());
     }
 }
