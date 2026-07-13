@@ -60,6 +60,7 @@ contract MockChainlinkProxyWithoutBounds {
     uint8 internal _decimals;
     uint80 internal _roundId;
     uint256 internal _updatedAt;
+    bool internal _revertDecimals;
     address public aggregator;
 
     constructor(int256 price, uint8 feedDecimals) {
@@ -74,6 +75,10 @@ contract MockChainlinkProxyWithoutBounds {
         aggregator = newAgg;
     }
 
+    function setRevertDecimals(bool shouldRevert) external {
+        _revertDecimals = shouldRevert;
+    }
+
     function latestRoundData()
         external
         view
@@ -83,6 +88,7 @@ contract MockChainlinkProxyWithoutBounds {
     }
 
     function decimals() external view returns (uint8) {
+        require(!_revertDecimals, "decimals unavailable");
         return _decimals;
     }
 }
@@ -215,6 +221,43 @@ contract ChainlinkVenusBoundsTest is Test {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
         assertEq(feed.getPrice(token), 2_000e8);
+    }
+
+    function test_isPriceStale_TrueWhenFeedDecimalsRevert() public {
+        MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(2_000e8, 8);
+        feed.setTokenFeed(token, address(proxy));
+        proxy.setRevertDecimals(true);
+
+        (bool isStale, uint256 updatedAt) = feed.isPriceStale(token);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, block.timestamp);
+        vm.expectRevert(bytes("decimals unavailable"));
+        feed.getPrice(token);
+    }
+
+    function test_isPriceStale_TrueWhenFeedDecimalsExceedNormalizationLimit() public {
+        MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(2_000e8, 78);
+        feed.setTokenFeed(token, address(proxy));
+
+        (bool isStale, uint256 updatedAt) = feed.isPriceStale(token);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.InvalidPrice.selector, token, int256(2_000e8)));
+        feed.getPrice(token);
+    }
+
+    function test_isPriceStale_TrueWhenPositiveAnswerNormalizesToZero() public {
+        MockChainlinkProxyWithoutBounds proxy = new MockChainlinkProxyWithoutBounds(1, 9);
+        feed.setTokenFeed(token, address(proxy));
+
+        (bool isStale, uint256 updatedAt) = feed.isPriceStale(token);
+
+        assertTrue(isStale);
+        assertEq(updatedAt, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.InvalidPrice.selector, token, int256(0)));
+        feed.getPrice(token);
     }
 
     function test_setTokenFeed_AllowsBoundsUnavailableButSignalsAndCanRefreshLater() public {

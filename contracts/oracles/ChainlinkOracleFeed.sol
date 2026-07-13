@@ -537,6 +537,18 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             if ((minA != 0 || maxA != 0) && (answer <= int256(minA) || answer >= int256(maxA))) {
                 return (true, updatedAt);
             }
+
+            // `getPrice` also requires the feed decimals to produce a non-zero
+            // 8-decimal value without overflowing normalization. Treat feeds
+            // that cannot satisfy that price-read contract as unusable here as
+            // well, while keeping this monitoring helper non-reverting.
+            try feed.decimals() returns (uint8 feedDecimals) {
+                if (!_canNormalizePrice(answer, feedDecimals)) {
+                    return (true, updatedAt);
+                }
+            } catch {
+                return (true, updatedAt);
+            }
         } catch {
             return (true, 0);
         }
@@ -544,6 +556,22 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
             return (true, updatedAt);
         }
         isStale = block.timestamp - updatedAt > effectiveMaxPriceAge(token);
+    }
+
+    function _canNormalizePrice(int256 answer, uint8 feedDecimals) internal pure returns (bool) {
+        if (answer <= 0 || feedDecimals > 77) {
+            return false;
+        }
+
+        uint256 unsignedAnswer = uint256(answer);
+        if (feedDecimals < 8) {
+            uint256 scale = 10 ** (8 - feedDecimals);
+            return unsignedAnswer <= type(uint256).max / scale;
+        }
+        if (feedDecimals > 8) {
+            return unsignedAnswer / (10 ** (feedDecimals - 8)) != 0;
+        }
+        return true;
     }
 
     /// @notice Check L2 sequencer status (for monitoring/frontend)
