@@ -19,6 +19,12 @@ contract MockSixDecimalInnerFeed {
     }
 }
 
+contract LegacyEightDecimalInnerFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+}
+
 contract RevertingMarketSessionGate {
     function emergencyPaused() external pure returns (bool) {
         return false;
@@ -335,6 +341,15 @@ contract RobinhoodStockOracleFeedTest is Test {
         );
         assertFalse(stockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
         assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_openingEligibility_FailsClosedWhenInnerFeedLacksOpeningFreshnessInterface() public {
+        LegacyEightDecimalInnerFeed legacyInner = new LegacyEightDecimalInnerFeed();
+        RobinhoodStockOracleFeed legacyStockFeed =
+            new RobinhoodStockOracleFeed(address(legacyInner), address(marketSessionGate));
+
+        assertFalse(legacyStockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(legacyStockFeed.isProtectionOpeningAllowed(address(tsla)));
     }
 
     function test_openingEligibility_UsesTighterOpeningAgeWithoutShorteningOrdinaryPrice() public {
