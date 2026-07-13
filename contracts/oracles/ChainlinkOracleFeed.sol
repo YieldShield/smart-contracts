@@ -145,6 +145,11 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      `setMaxPriceAgeForToken` when a specific feed needs a tighter bound.
     uint256 public constant MAX_PRICE_AGE_LIMIT = 86_400;
 
+    /// @notice Hard freshness ceiling for a last-close price used only to settle same-asset exits
+    /// @dev Seven days covers long weekends and exchange-holiday closures without turning the
+    ///      ordinary protected price path into a week-old valuation source.
+    uint256 public constant MAX_CLOSED_SESSION_EXIT_PRICE_AGE = 7 days;
+
     /// @notice Per-token max price age override. Zero means "use the global maxPriceAge".
     mapping(address => uint256) public maxPriceAgeForToken;
 
@@ -433,6 +438,12 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     }
 
     function _getPrice(address token) internal view returns (uint256) {
+        return _getPriceAtMaxAge(token, effectiveMaxPriceAge(token));
+    }
+
+    /// @dev Reads a price with an operation-specific freshness bound while retaining every
+    ///      non-freshness validation from the ordinary protected price path.
+    function _getPriceAtMaxAge(address token, uint256 maxAge) internal view returns (uint256) {
         if (!isTokenSupported[token]) {
             revert TokenNotSupported(token);
         }
@@ -447,10 +458,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
         // Validate price data using shared library. Use per-token max-age if
         // overridden — long-heartbeat RWA feeds need their own bound. (M-1)
-        uint256 effectiveAge = effectiveMaxPriceAge(token);
         OracleValidationLib.validatePositivePrice(answer, token);
-        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, effectiveAge);
-        OracleValidationLib.validateStaleness(updatedAt, effectiveAge, token);
+        if (answeredInRound < roundId) revert StalePrice(token, updatedAt, maxAge);
+        OracleValidationLib.validateStaleness(updatedAt, maxAge, token);
 
         // Venus-style protection: if the underlying aggregator's min/max answer
         // bounds were retrievable at registration time, reject prices that have
@@ -471,6 +481,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         uint256 normalizedPrice = uint256(answer).normalize(feedDecimals, 8);
         if (normalizedPrice == 0) revert InvalidPrice(token, 0);
         return normalizedPrice;
+    }
+
+    /// @notice Return a price under the hard-capped closed-session exit freshness policy
+    /// @dev This low-level adapter cannot verify a market closure itself. Protocol routes must
+    ///      expose this value only through a feed such as RobinhoodStockOracleFeed that verifies
+    ///      both market closure and the token's corporate-action pause state.
+    function getPriceForClosedSessionExit(address token) external view returns (uint256) {
+        return _getPriceAtMaxAge(token, MAX_CLOSED_SESSION_EXIT_PRICE_AGE);
     }
 
     function _requireFreshFeedBounds(address token, address feed) internal view {

@@ -143,6 +143,11 @@ interface ICompositeOracle is IPriceOracle {
     /// @return supported True if the active feed advertises strict protected pricing support
     function supportsStrictProtectedPrice(address token) external view returns (bool supported);
 
+    /// @notice Return a protected price for same-asset settlement during a verified market closure
+    /// @dev This optional path preserves dual-feed challenge/deviation gates. It must never be
+    ///      used to open positions or calculate cross-asset withdrawals.
+    function getPriceForClosedSessionExit(address token) external view returns (uint256 price);
+
     // ============ Protection Opening Eligibility ============
 
     /// @notice Whether a new protection position may currently be opened for a token

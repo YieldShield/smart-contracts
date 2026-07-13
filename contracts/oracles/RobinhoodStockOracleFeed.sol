@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { ICorporateActionPauseGuard } from "../interfaces/ICorporateActionPauseGuard.sol";
+import { IClosedSessionExitPrice } from "../interfaces/IClosedSessionExitPrice.sol";
 import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
 
 interface IUSMarketSessionGate {
@@ -25,6 +26,7 @@ interface IChainlinkOracleFeedOptional {
     function supportsCircuitBreaker(address token) external view returns (bool);
     function supportsStrictProtectedPrice(address token) external view returns (bool);
     function isPriceStale(address token) external view returns (bool isStale, uint256 updatedAt);
+    function getPriceForClosedSessionExit(address token) external view returns (uint256 price);
 }
 
 /// @title RobinhoodStockOracleFeed
@@ -40,7 +42,12 @@ interface IChainlinkOracleFeedOptional {
 ///      ChainlinkOracleFeed, including the optional capability functions CompositeOracle probes
 ///      (`getPriceUnsafe`, `supportsCircuitBreaker`, `supportsStrictProtectedPrice`,
 ///      `isPriceStale`), so wrapping does not weaken the inner feed's protections.
-contract RobinhoodStockOracleFeed is IOracleFeed, ICorporateActionPauseGuard, IProtectionOpeningEligibility {
+contract RobinhoodStockOracleFeed is
+    IOracleFeed,
+    ICorporateActionPauseGuard,
+    IProtectionOpeningEligibility,
+    IClosedSessionExitPrice
+{
     /// @notice The wrapped ChainlinkOracleFeed that performs the actual price reads
     address public immutable innerFeed;
 
@@ -61,6 +68,12 @@ contract RobinhoodStockOracleFeed is IOracleFeed, ICorporateActionPauseGuard, IP
 
     /// @notice Custom error when the token does not implement the `oraclePaused()` probe
     error StockTokenPauseProbeFailed(address token);
+
+    /// @notice Custom error when the extended exit-price path is requested during an open session
+    error MarketSessionOpen(address token);
+
+    /// @notice Custom error when the market-session gate cannot be read
+    error MarketSessionStatusUnavailable(address gate);
 
     /// @notice Constructor
     /// @param _innerFeed The ChainlinkOracleFeed address to wrap
@@ -122,6 +135,28 @@ contract RobinhoodStockOracleFeed is IOracleFeed, ICorporateActionPauseGuard, IP
     /// @inheritdoc ICorporateActionPauseGuard
     function supportsCorporateActionPauseGuard(address) external pure returns (bool supported) {
         return true;
+    }
+
+    /// @inheritdoc IClosedSessionExitPrice
+    function supportsClosedSessionExitPrice(address) external pure returns (bool supported) {
+        return true;
+    }
+
+    /// @inheritdoc IClosedSessionExitPrice
+    /// @dev The extended Chainlink freshness window is reachable only while the configured
+    ///      calendar reports the market closed and the token's pause probe is readable and false.
+    function getPriceForClosedSessionExit(address token) external view returns (uint256 price) {
+        _requireNotPaused(token);
+
+        bool marketOpen;
+        try IUSMarketSessionGate(marketSessionGate).isMarketOpen() returns (bool open) {
+            marketOpen = open;
+        } catch {
+            revert MarketSessionStatusUnavailable(marketSessionGate);
+        }
+        if (marketOpen) revert MarketSessionOpen(token);
+
+        return IChainlinkOracleFeedOptional(innerFeed).getPriceForClosedSessionExit(token);
     }
 
     /// @notice Check if a price is stale for a given token

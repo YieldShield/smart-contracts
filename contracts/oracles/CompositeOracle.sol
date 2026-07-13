@@ -6,6 +6,7 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ICompositeOracle } from "../interfaces/ICompositeOracle.sol";
 import { ICorporateActionPauseGuard } from "../interfaces/ICorporateActionPauseGuard.sol";
+import { IClosedSessionExitPrice } from "../interfaces/IClosedSessionExitPrice.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
@@ -150,6 +151,9 @@ contract CompositeOracle is ICompositeOracle, Ownable {
 
     /// @notice Custom error when only one leg of a dual route enforces corporate-action pauses
     error CorporateActionPauseGuardMismatch(address token, address primaryFeed, address backupFeed);
+
+    /// @notice Custom error when only one leg of a dual route supports closed-session exit pricing
+    error ClosedSessionExitPriceMismatch(address token, address primaryFeed, address backupFeed);
 
     /// @notice Custom error when a strict circuit-breaker price is requested from an unsupported feed
     error CircuitBreakerNotSupported(address token, address feed);
@@ -343,6 +347,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         _validateStrictCircuitBreakerConfig(token, primaryFeed, backupFeed);
         _validateFeeAccrualBasisCompatibility(token, primaryFeed, backupFeed);
         _validateCorporateActionPauseGuardCompatibility(token, primaryFeed, backupFeed);
+        _validateClosedSessionExitPriceCompatibility(token, primaryFeed, backupFeed);
         _clearScheduledRemoval(token);
 
         TokenOracleConfig storage config = _tokenOracleConfig[token];
@@ -1116,6 +1121,44 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return _normalizeFeedPriceOrRevert(token, price, feedDecimals);
     }
 
+    /// @dev Serves only an active feed that advertises the closed-session capability. When an
+    ///      inactive dual-feed leg is readable, its extended price must remain within the normal
+    ///      deviation threshold. An unavailable inactive leg does not disable a healthy active
+    ///      feed, matching the established failover policy (especially after finalized failover).
+    function _getPriceForClosedSessionExit(address token) internal view returns (uint256) {
+        TokenOracleConfig storage config = _tokenOracleConfig[token];
+        if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
+        if (config.challengeStartTime != 0 && !config.isBackupActive) revert OracleChallengePending(token);
+
+        address activeFeed =
+            (config.backupFeed != address(0) && config.isBackupActive) ? config.backupFeed : config.primaryFeed;
+        if (!_supportsCircuitBreaker(activeFeed, token) || !_supportsClosedSessionExitPrice(activeFeed, token)) {
+            revert CircuitBreakerNotSupported(token, activeFeed);
+        }
+
+        uint256 activePrice = IClosedSessionExitPrice(activeFeed).getPriceForClosedSessionExit(token);
+        uint256 normalizedActivePrice =
+            _normalizeFeedPriceOrRevert(token, activePrice, IOracleFeed(activeFeed).decimals());
+
+        address inactiveFeed = config.isBackupActive ? config.primaryFeed : config.backupFeed;
+        if (inactiveFeed != address(0)) {
+            (bool inactiveSuccess, uint256 inactivePrice) = _tryGetNormalizedClosedSessionExitPrice(inactiveFeed, token);
+            // Before failover, the configured backup is the comparison safety net and must be
+            // readable. After finalized failover, the inactive primary is the known-bad leg and
+            // may remain unavailable without freezing exits through the healthy active backup.
+            if (!inactiveSuccess && !config.isBackupActive) revert OraclePriceDisputed(token);
+            if (
+                inactiveSuccess
+                    && OracleValidationLib.calculateDeviation(normalizedActivePrice, inactivePrice)
+                        > deviationThresholdBps
+            ) {
+                revert OraclePriceDisputed(token);
+            }
+        }
+
+        return normalizedActivePrice;
+    }
+
     /// @notice Internal helper for the UNSAFE price path
     /// @dev Bypasses challenge-gate checks and returns the active feed's price even when
     ///      the dual-feed challenge mechanism flags it as disputed. Used only by the
@@ -1195,6 +1238,42 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
+    function _tryGetNormalizedClosedSessionExitPrice(address feed, address token)
+        internal
+        view
+        returns (bool success, uint256 normalizedPrice)
+    {
+        if (!_supportsCircuitBreaker(feed, token) || !_supportsClosedSessionExitPrice(feed, token)) {
+            return (false, 0);
+        }
+
+        try IClosedSessionExitPrice(feed).getPriceForClosedSessionExit(token) returns (uint256 price) {
+            uint8 feedDecimals = IOracleFeed(feed).decimals();
+            return _tryNormalizeFeedPrice(price, feedDecimals);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    function _supportsClosedSessionExitPrice(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) return false;
+
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeCall(IClosedSessionExitPrice.supportsClosedSessionExitPrice, (token)));
+        return _isCanonicalTrue(success, data);
+    }
+
+    function _validateClosedSessionExitPriceCompatibility(address token, address primaryFeed, address backupFeed)
+        internal
+        view
+    {
+        bool primarySupported = _supportsClosedSessionExitPrice(primaryFeed, token);
+        bool backupSupported = _supportsClosedSessionExitPrice(backupFeed, token);
+        if (primarySupported != backupSupported) {
+            revert ClosedSessionExitPriceMismatch(token, primaryFeed, backupFeed);
+        }
+    }
+
     function _supportsFeeAccrualPrice(address feed, address token) internal view returns (bool) {
         if (feed.code.length == 0) {
             return false;
@@ -1261,6 +1340,11 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @dev Falls back to protected `getPrice` for feeds without a dedicated fee-accrual selector.
     function getPriceForFeeAccrual(address token) external view returns (uint256) {
         return _getPriceForFeeAccrual(token);
+    }
+
+    /// @inheritdoc ICompositeOracle
+    function getPriceForClosedSessionExit(address token) external view override returns (uint256) {
+        return _getPriceForClosedSessionExit(token);
     }
 
     /// @notice Unprotected price getter — bypasses dual-feed challenge gates

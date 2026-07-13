@@ -629,6 +629,21 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return (false, 0);
     }
 
+    /// @dev Same-asset settlement first uses ordinary protected fee pricing, then optionally
+    ///      falls back to a CompositeOracle route that verifies market closure and applies a
+    ///      hard-capped last-close freshness window. Cross-asset valuation never calls this path.
+    function _tryGetShieldedSameAssetSettlementPrice() internal view returns (bool success, uint256 price) {
+        (success, price) = _tryGetShieldedFeeAccrualPrice();
+        if (success) return (true, price);
+
+        (bool callSuccess, bytes memory data) = poolConfig.priceOracle
+            .staticcall(abi.encodeCall(ICompositeOracle.getPriceForClosedSessionExit, (SHIELDED_TOKEN)));
+        if (!callSuccess || data.length < 32) return (false, 0);
+
+        price = abi.decode(data, (uint256));
+        return (price != 0, price);
+    }
+
     function _getShieldedFeeBaselineValue(uint256 amount) internal view returns (uint256 baselineValueUsd) {
         (bool priceAvailable, uint256 feePrice) = _tryGetShieldedFeeAccrualPrice();
         if (!priceAvailable) {
@@ -1294,6 +1309,23 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
         }
 
+        return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
+    }
+
+    /// @dev Fee settlement for same-asset exits and explicit reward claims. This does not forgive
+    ///      fees when the normal price is stale: it requires the bounded closed-session oracle path.
+    function _calculateAndAccumulateFeesForSameAssetSettlement(uint256 tokenId)
+        internal
+        returns (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount)
+    {
+        if (shieldedTokenTransferIntegrityBroken) {
+            _advanceFeeBaselineWithoutAccruingFees(tokenId);
+            return (0, 0, 0);
+        }
+
+        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+        (bool priceAvailable, uint256 currentPrice) = _tryGetShieldedSameAssetSettlementPrice();
+        if (!priceAvailable) revert ErrorsLib.ShieldedFeePriceUnavailable(SHIELDED_TOKEN);
         return _calculateAndAccumulateFeesAtPrice(tokenId, currentPrice);
     }
 
@@ -2091,7 +2123,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
 
             (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-                _calculateAndAccumulateFees(tokenId);
+                _calculateAndAccumulateFeesForSameAssetSettlement(tokenId);
             totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
         } else {
             // Shield activation also consumes the shielded position, so it must
@@ -2214,7 +2246,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Calculate and accumulate fees on FULL position
         (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-            _calculateAndAccumulateFees(tokenId);
+            _calculateAndAccumulateFeesForSameAssetSettlement(tokenId);
         uint256 totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
 
         // M-1 FIX: Bounds check to prevent arithmetic underflow
@@ -2370,7 +2402,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         // Calculate and accumulate fees (this updates the position internally)
         (uint256 commissionAmount, uint256 poolFeeAmount, uint256 protocolFeeAmount) =
-            _calculateAndAccumulateFees(tokenId);
+            _calculateAndAccumulateFeesForSameAssetSettlement(tokenId);
         uint256 totalFees = commissionAmount + poolFeeAmount + protocolFeeAmount;
 
         // Update totalShieldedTokens to reflect fees deducted from position

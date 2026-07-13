@@ -9,6 +9,9 @@ import { USMarketSessionGate } from "../contracts/oracles/USMarketSessionGate.so
 import { MockChainlinkAggregator } from "../contracts/mocks/MockChainlinkAggregator.sol";
 import { MockRobinhoodStockToken } from "../contracts/mocks/MockRobinhoodStockToken.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
+import { ICorporateActionPauseGuard } from "../contracts/interfaces/ICorporateActionPauseGuard.sol";
+import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
+import { OracleValidationLib } from "../contracts/libraries/OracleValidationLib.sol";
 
 contract MockSixDecimalInnerFeed {
     function decimals() external pure returns (uint8) {
@@ -19,6 +22,32 @@ contract MockSixDecimalInnerFeed {
 contract RevertingMarketSessionGate {
     function isMarketOpen() external pure returns (bool) {
         revert("status unavailable");
+    }
+}
+
+contract CorporateGuardWithoutClosedSessionExitFeed is IOracleFeed, ICorporateActionPauseGuard {
+    function getPrice(address) external pure returns (uint256) {
+        return 1e8;
+    }
+
+    function getPriceUnsafe(address) external pure returns (uint256) {
+        return 1e8;
+    }
+
+    function supportsCircuitBreaker(address) external pure returns (bool) {
+        return true;
+    }
+
+    function supportsCorporateActionPauseGuard(address) external pure returns (bool) {
+        return true;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Corporate Guard Only";
     }
 }
 
@@ -165,6 +194,72 @@ contract RobinhoodStockOracleFeedTest is Test {
         assertTrue(stockFeed.supportsCorporateActionPauseGuard(address(tsla)));
     }
 
+    // ============ Closed-session exit pricing ============
+
+    function test_closedSessionExitPrice_AllowsSevenDayBoundaryAndRejectsOlderPrice() public {
+        (,,, uint256 lastCloseTimestamp,) = tslaAggregator.latestRoundData();
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        vm.warp(lastCloseTimestamp + chainlinkFeed.MAX_CLOSED_SESSION_EXIT_PRICE_AGE());
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleValidationLib.StalePrice.selector,
+                address(tsla),
+                lastCloseTimestamp,
+                MAX_PRICE_AGE,
+                block.timestamp
+            )
+        );
+        stockFeed.getPrice(address(tsla));
+        assertEq(stockFeed.getPriceForClosedSessionExit(address(tsla)), uint256(TSLA_PRICE));
+
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleValidationLib.StalePrice.selector,
+                address(tsla),
+                lastCloseTimestamp,
+                chainlinkFeed.MAX_CLOSED_SESSION_EXIT_PRICE_AGE(),
+                block.timestamp
+            )
+        );
+        stockFeed.getPriceForClosedSessionExit(address(tsla));
+    }
+
+    function test_closedSessionExitPrice_RejectsStalePriceWhileMarketIsOpen() public {
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+        marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.MarketSessionOpen.selector, address(tsla)));
+        stockFeed.getPriceForClosedSessionExit(address(tsla));
+    }
+
+    function test_closedSessionExitPrice_FailsClosedForCorporatePauseAndMissingPauseProbe() public {
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        tsla.setOraclePaused(true);
+
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
+        stockFeed.getPriceForClosedSessionExit(address(tsla));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenPauseProbeFailed.selector, address(weth))
+        );
+        stockFeed.getPriceForClosedSessionExit(address(weth));
+    }
+
+    function test_closedSessionExitPrice_FailsClosedWhenMarketStatusReverts() public {
+        RevertingMarketSessionGate revertingGate = new RevertingMarketSessionGate();
+        RobinhoodStockOracleFeed feedWithBrokenGate =
+            new RobinhoodStockOracleFeed(address(chainlinkFeed), address(revertingGate));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RobinhoodStockOracleFeed.MarketSessionStatusUnavailable.selector, address(revertingGate)
+            )
+        );
+        feedWithBrokenGate.getPriceForClosedSessionExit(address(tsla));
+    }
+
     // ============ Protection opening eligibility ============
 
     function test_openingEligibility_AllowsConfiguredOpenSession() public view {
@@ -291,5 +386,102 @@ contract RobinhoodStockOracleFeedTest is Test {
             )
         );
         composite.setTokenOracleFeedDual(address(tsla), address(chainlinkFeed), address(stockFeed));
+    }
+
+    function test_compositeOracle_RejectsDualRouteWithClosedSessionCapabilityMismatch() public {
+        CompositeOracle composite = new CompositeOracle();
+        CorporateGuardWithoutClosedSessionExitFeed backup = new CorporateGuardWithoutClosedSessionExitFeed();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.ClosedSessionExitPriceMismatch.selector,
+                address(tsla),
+                address(stockFeed),
+                address(backup)
+            )
+        );
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+    }
+
+    function test_compositeOracle_ClosedSessionExitPreservesPendingChallengeGate() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
+        backupInner.setTokenFeed(address(tsla), address(backupAggregator));
+        RobinhoodStockOracleFeed backup = new RobinhoodStockOracleFeed(address(backupInner), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+
+        composite.challengeForToken(address(tsla));
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OracleChallengePending.selector, address(tsla)));
+        composite.getPriceForClosedSessionExit(address(tsla));
+    }
+
+    function test_compositeOracle_ClosedSessionDualRouteSucceedsWhenExtendedPricesAgree() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE);
+        backupInner.setTokenFeed(address(tsla), address(backupAggregator));
+        RobinhoodStockOracleFeed backup = new RobinhoodStockOracleFeed(address(backupInner), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+
+        assertEq(composite.getPriceForClosedSessionExit(address(tsla)), uint256(TSLA_PRICE));
+    }
+
+    function test_compositeOracle_ClosedSessionDualRouteRejectsExtendedPriceDeviation() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
+        backupInner.setTokenFeed(address(tsla), address(backupAggregator));
+        RobinhoodStockOracleFeed backup = new RobinhoodStockOracleFeed(address(backupInner), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+
+        marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(tsla)));
+        composite.getPriceForClosedSessionExit(address(tsla));
+    }
+
+    function test_compositeOracle_ClosedSessionActiveBackupSurvivesUnavailablePrimary() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE * 2);
+        backupInner.setTokenFeed(address(tsla), address(backupAggregator));
+        RobinhoodStockOracleFeed backup = new RobinhoodStockOracleFeed(address(backupInner), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+
+        composite.challengeForToken(address(tsla));
+        vm.warp(block.timestamp + composite.challengeDurationSec() + 1);
+        backupAggregator.setAnswer(TSLA_PRICE * 2);
+        composite.finalizeChallenge(address(tsla));
+        assertTrue(composite.isBackupActiveForToken(address(tsla)));
+
+        vm.warp(block.timestamp + chainlinkFeed.MAX_CLOSED_SESSION_EXIT_PRICE_AGE() + 1);
+        backupAggregator.setAnswer(TSLA_PRICE * 2);
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+
+        assertEq(composite.getPriceForClosedSessionExit(address(tsla)), uint256(TSLA_PRICE * 2));
+    }
+
+    function test_compositeOracle_ClosedSessionActivePrimaryRejectsUnavailableBackup() public {
+        CompositeOracle composite = new CompositeOracle();
+        ChainlinkOracleFeed backupInner = new ChainlinkOracleFeed(MAX_PRICE_AGE);
+        MockChainlinkAggregator backupAggregator = new MockChainlinkAggregator("TSLA backup / USD", 8, TSLA_PRICE);
+        backupInner.setTokenFeed(address(tsla), address(backupAggregator));
+        RobinhoodStockOracleFeed backup = new RobinhoodStockOracleFeed(address(backupInner), address(marketSessionGate));
+        composite.setTokenOracleFeedDual(address(tsla), address(stockFeed), address(backup));
+
+        vm.warp(block.timestamp + chainlinkFeed.MAX_CLOSED_SESSION_EXIT_PRICE_AGE() + 1);
+        tslaAggregator.setAnswer(TSLA_PRICE);
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(CompositeOracle.OraclePriceDisputed.selector, address(tsla)));
+        composite.getPriceForClosedSessionExit(address(tsla));
     }
 }

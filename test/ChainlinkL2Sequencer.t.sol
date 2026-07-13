@@ -373,6 +373,15 @@ contract ChainlinkL2SequencerTest is Test {
         chainlinkFeed.getPrice(testToken);
     }
 
+    function test_ClosedSessionExitPrice_DoesNotBypassSequencerGuard() public {
+        chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
+        mockSequencerFeed.setSequencerUp(false);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert(ChainlinkOracleFeed.SequencerDown.selector);
+        chainlinkFeed.getPriceForClosedSessionExit(testToken);
+    }
+
     function test_GetSequencerStatus_SequencerDown() public {
         chainlinkFeed.setSequencerUptimeFeed(address(mockSequencerFeed));
         mockSequencerFeed.setSequencerUp(false);

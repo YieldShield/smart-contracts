@@ -7,6 +7,7 @@ import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Rec
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { ErrorsLib } from "../contracts/libraries/ErrorsLib.sol";
+import { OracleValidationLib } from "../contracts/libraries/OracleValidationLib.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
@@ -88,6 +89,77 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
 
         pool.shieldedWithdraw(tokenId, address(stock), 0);
         assertEq(pool.totalShieldedTokens(), 0);
+    }
+
+    function test_staleClosedSessionAllowsFullAndPartialSameAssetExits() public {
+        uint256 fullExitTokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        uint256 partialExitTokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        (,,, uint256 lastCloseTimestamp,) = stockAggregator.latestRoundData();
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleValidationLib.StalePrice.selector,
+                address(stock),
+                lastCloseTimestamp,
+                chainlink.effectiveMaxPriceAge(address(stock)),
+                block.timestamp
+            )
+        );
+        composite.getPrice(address(stock));
+
+        uint256 newTokenId = pool.partialWithdrawShielded(partialExitTokenId, 1e18, address(stock), 0);
+        assertEq(pool.totalShieldedTokens(), 19e18);
+        assertGt(newTokenId, partialExitTokenId);
+
+        pool.shieldedWithdraw(fullExitTokenId, address(stock), 0);
+        assertEq(pool.totalShieldedTokens(), 9e18);
+    }
+
+    function test_staleClosedSessionClaimRewardsStillAccruesFees() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        stockAggregator.setAnswer(110e8);
+        vm.warp(block.timestamp + 2 days);
+
+        uint256 positionBefore = pool.totalShieldedTokens();
+        pool.claimRewards(tokenId);
+
+        assertGt(pool.getReservedFees(), 0, "last-close yield must still be charged");
+        assertLt(pool.totalShieldedTokens(), positionBefore, "fees must reduce the live position amount");
+    }
+
+    function test_staleClosedSessionDoesNotRelaxCrossAssetWithdrawal() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.shieldedWithdraw(tokenId, address(backing), 0);
+    }
+
+    function test_staleOpenSessionStillRejectsSameAssetWithdrawal() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.warp(block.timestamp + 2 days);
+        marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.shieldedWithdraw(tokenId, address(stock), 0);
+    }
+
+    function test_closedSessionOlderThanSevenDaysRejectsSameAssetWithdrawal() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.warp(block.timestamp + chainlink.MAX_CLOSED_SESSION_EXIT_PRICE_AGE() + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.shieldedWithdraw(tokenId, address(stock), 0);
+    }
+
+    function test_staleClosedSessionCorporatePauseRejectsSameAssetWithdrawal() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.warp(block.timestamp + 2 days);
+        stock.setOraclePaused(true);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.shieldedWithdraw(tokenId, address(stock), 0);
     }
 
     function test_emergencyPauseRejectsOpeningsWithoutDisablingValuation() public {
