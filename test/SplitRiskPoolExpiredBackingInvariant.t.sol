@@ -103,7 +103,7 @@ contract SplitRiskPoolExpiredBackingInvariantTest is Test, FactoryProxyTestBase 
     address public keeperSettlementFreshProtector = address(0xD300);
     uint256 public ownerClaimLiability;
     uint256 public keeperSettlementLiability;
-    bool public requireRandomReachability;
+    bool public requireHandlerReachability;
 
     function setUp() public {
         governance = address(_deployTestTimelock(address(this)));
@@ -183,7 +183,7 @@ contract SplitRiskPoolExpiredBackingInvariantTest is Test, FactoryProxyTestBase 
             ownerClaimTokenIds,
             keeperSettlementTokenIds
         );
-        requireRandomReachability = vm.envOr("INVARIANT_REQUIRE_RANDOM_REACHABILITY", false);
+        requireHandlerReachability = vm.envOr("INVARIANT_REQUIRE_HANDLER_REACHABILITY", false);
         targetContract(address(handler));
         bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = SplitRiskPoolExpiredBackingHandler.claimExpiredBacking.selector;
@@ -286,7 +286,7 @@ contract SplitRiskPoolExpiredBackingInvariantTest is Test, FactoryProxyTestBase 
     function afterInvariant() public view {
         _assertNoUnexpectedReverts(SplitRiskPoolExpiredBackingHandler.claimExpiredBacking.selector);
         _assertNoUnexpectedReverts(SplitRiskPoolExpiredBackingHandler.settleExpiredBacking.selector);
-        if (requireRandomReachability) {
+        if (requireHandlerReachability) {
             _assertReached(SplitRiskPoolExpiredBackingHandler.claimExpiredBacking.selector);
             _assertReached(SplitRiskPoolExpiredBackingHandler.settleExpiredBacking.selector);
         }

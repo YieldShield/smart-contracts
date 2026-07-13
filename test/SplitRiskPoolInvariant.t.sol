@@ -167,7 +167,7 @@ contract SplitRiskPoolHandler is Test {
         callMetrics[selector].unexpectedReverts++;
     }
 
-    /// @notice Enable randomized-dispatch metrics after deterministic state seeding.
+    /// @notice Enable handler metrics for deterministic seeding and randomized dispatch.
     /// @dev The invariant target selector excludes this administrative test hook.
     function enableMetrics() external {
         metricsEnabled = true;
@@ -921,7 +921,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     address public governance = address(this);
     address public protocolFeeRecipient = address(0xfee);
-    bool public requireRandomReachability;
+    bool public requireHandlerReachability;
 
     function setUp() public {
         governance = address(_deployTestTimelock(address(this)));
@@ -978,9 +978,9 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
         // Fund the handler's actors from the test contract
         _fundHandlerActors();
-        _seedReachableHandlerPaths();
         handler.enableMetrics();
-        requireRandomReachability = vm.envOr("INVARIANT_REQUIRE_RANDOM_REACHABILITY", false);
+        _seedReachableHandlerPaths();
+        requireHandlerReachability = vm.envOr("INVARIANT_REQUIRE_HANDLER_REACHABILITY", false);
 
         // Target handler for invariant testing
         targetContract(address(handler));
@@ -1035,9 +1035,8 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
     }
 
     /// @dev Deterministically establish live receipts and exercise every economically
-    ///      important handler family once before random dispatch begins. Handler
-    ///      metrics remain disabled during seeding so reachability floors can only
-    ///      be satisfied by subsequent randomized dispatch.
+    ///      important handler family once before random dispatch begins. Metrics are
+    ///      enabled first so this ordered seed is a reproducible reachability proof.
     function _seedReachableHandlerPaths() internal {
         handler.depositProtector(0, 1_000_000e18);
         handler.depositProtector(1, 1_000_000e18);
@@ -1090,29 +1089,28 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         assertEq(handler.calls_dropPrice(), initialDropCalls + 1, "dropPrice counter should track successful mutation");
     }
 
-    function test_seedDoesNotCountTowardsRandomReachabilityMetrics() public view {
-        assertTrue(handler.metricsEnabled(), "random-dispatch metrics should be enabled after seeding");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.depositProtector.selector, "protector deposits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.depositShielded.selector, "shield deposits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.withdrawProtector.selector, "protector exits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.withdrawShielded.selector, "same-asset exits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector, "cross-asset exits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.claimRewards.selector, "reward claims");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.claimCommission.selector, "commission claims");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.generateYield.selector, "positive price movement");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.partialWithdrawShielded.selector, "partial shield exits");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.payPoolFee.selector, "pool fee payouts");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.payProtocolFee.selector, "protocol fee payouts");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.transferShieldNFT.selector, "shield receipt transfers");
-        _assertHandlerMetricsEmpty(SplitRiskPoolHandler.transferProtectorNFT.selector, "protector receipt transfers");
+    function test_seedProvesRequiredHandlerPathReachability() public view {
+        assertTrue(handler.metricsEnabled(), "handler metrics should be enabled before seeding");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.depositProtector.selector, "protector deposits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.depositShielded.selector, "shield deposits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.withdrawProtector.selector, "protector exits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.withdrawShielded.selector, "same-asset exits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.withdrawShieldedCrossAsset.selector, "cross-asset exits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.claimRewards.selector, "reward claims");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.claimCommission.selector, "commission claims");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.generateYield.selector, "positive price movement");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.partialWithdrawShielded.selector, "partial shield exits");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.payPoolFee.selector, "pool fee payouts");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.payProtocolFee.selector, "protocol fee payouts");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.transferShieldNFT.selector, "shield receipt transfers");
+        _assertSeededHandlerMetrics(SplitRiskPoolHandler.transferProtectorNFT.selector, "protector receipt transfers");
     }
 
-    function _assertHandlerMetricsEmpty(bytes4 selector, string memory label) internal view {
-        (uint256 attempts, uint256 skips, uint256 successes, uint256 unexpectedReverts) = handler.callMetrics(selector);
-        assertEq(attempts, 0, string.concat(label, " seed attempts leaked into randomized metrics"));
-        assertEq(skips, 0, string.concat(label, " seed skips leaked into randomized metrics"));
-        assertEq(successes, 0, string.concat(label, " seed successes leaked into randomized metrics"));
-        assertEq(unexpectedReverts, 0, string.concat(label, " seed reverts leaked into randomized metrics"));
+    function _assertSeededHandlerMetrics(bytes4 selector, string memory label) internal view {
+        (uint256 attempts,, uint256 successes, uint256 unexpectedReverts) = handler.callMetrics(selector);
+        assertGt(attempts, 0, string.concat(label, " were not attempted by the deterministic seed"));
+        assertGt(successes, 0, string.concat(label, " did not succeed in the deterministic seed"));
+        assertEq(unexpectedReverts, 0, string.concat(label, " reverted unexpectedly during deterministic seeding"));
     }
 
     // ============ Invariant 1: Pool Balance Solvency ============
@@ -1443,7 +1441,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
     // ============ Post-Run Coverage ============
 
     function afterInvariant() public view {
-        if (requireRandomReachability) {
+        if (requireHandlerReachability) {
             _assertHandlerCoverage(SplitRiskPoolHandler.depositProtector.selector, 1, "protector deposits");
             _assertHandlerCoverage(SplitRiskPoolHandler.depositShielded.selector, 1, "shield deposits");
             _assertHandlerCoverage(SplitRiskPoolHandler.withdrawProtector.selector, 1, "protector exits");

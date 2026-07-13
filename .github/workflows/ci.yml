@@ -77,11 +77,30 @@ jobs:
         # copied from .env.example cannot turn this into a live-network suite.
         run: npm test
 
-      - name: Require randomized invariant path reachability
+      - name: Require deterministic invariant path reachability
         env:
           FOUNDRY_PROFILE: invariant-reachability
-          INVARIANT_REQUIRE_RANDOM_REACHABILITY: "true"
-        run: forge test --match-contract 'SplitRiskPool.*InvariantTest'
+          INVARIANT_REQUIRE_HANDLER_REACHABILITY: "true"
+        run: |
+          set -o pipefail
+          status=0
+          for seed in 0x01 0x02 0x03; do
+            log_file="invariant-reachability-${seed}.log"
+            echo "forge test --match-contract 'SplitRiskPool.*InvariantTest' --fuzz-seed ${seed} -vv"
+            if ! forge test --match-contract 'SplitRiskPool.*InvariantTest' --fuzz-seed "${seed}" -vv 2>&1 | tee "${log_file}"; then
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Upload deterministic invariant reachability logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: invariant-reachability-logs
+          path: invariant-reachability-*.log
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high

@@ -174,7 +174,7 @@ contract SplitRiskPoolRetirementInvariantTest is Test, FactoryProxyTestBase {
     address public escrowShielded = address(0xE5C0);
     uint256 public settlementLiability;
     uint256 public escrowLiability;
-    bool public requireRandomReachability;
+    bool public requireHandlerReachability;
 
     function setUp() public {
         governance = address(_deployTestTimelock(address(this)));
@@ -240,7 +240,7 @@ contract SplitRiskPoolRetirementInvariantTest is Test, FactoryProxyTestBase {
             escrowTokenId
         );
         escrowToken.transferOwnership(address(handler));
-        requireRandomReachability = vm.envOr("INVARIANT_REQUIRE_RANDOM_REACHABILITY", false);
+        requireHandlerReachability = vm.envOr("INVARIANT_REQUIRE_HANDLER_REACHABILITY", false);
 
         targetContract(address(handler));
         bytes4[] memory selectors = new bytes4[](3);
@@ -325,7 +325,7 @@ contract SplitRiskPoolRetirementInvariantTest is Test, FactoryProxyTestBase {
         _assertNoUnexpectedReverts(SplitRiskPoolRetirementHandler.escrowExpiredCommission.selector);
         _assertNoUnexpectedReverts(SplitRiskPoolRetirementHandler.claimEscrow.selector);
 
-        if (requireRandomReachability) {
+        if (requireHandlerReachability) {
             _assertReached(SplitRiskPoolRetirementHandler.settleExpiredPosition.selector);
             _assertReached(SplitRiskPoolRetirementHandler.escrowExpiredCommission.selector);
             _assertReached(SplitRiskPoolRetirementHandler.claimEscrow.selector);
