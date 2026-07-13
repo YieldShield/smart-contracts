@@ -51,6 +51,15 @@ test("Ethereum fork suites are independently gated", () => {
 
 test("Arbitrum public fork smokes run before merge against official RPCs", () => {
     assert.doesNotMatch(arbitrumForkJob, /if: github\.event_name == 'push'/u);
+    assert.match(arbitrumForkJob, /actions\/setup-node@/u);
+    assert.match(arbitrumForkJob, /run: npm ci/u);
+    assert.ok(
+        arbitrumForkJob.indexOf("run: npm ci") <
+            arbitrumForkJob.indexOf(
+                "forge test --match-contract ArbitrumOracleForkTest -vv",
+            ),
+        "Node.js dependencies must be installed before compiling the fork smoke",
+    );
     assert.match(arbitrumForkJob, /FORK_TESTS_ENABLED: "true"/u);
     assert.match(arbitrumForkJob, /FORK_TESTS_REQUIRED: "true"/u);
     assert.match(arbitrumForkJob, /https:\/\/arb1\.arbitrum\.io\/rpc/u);
