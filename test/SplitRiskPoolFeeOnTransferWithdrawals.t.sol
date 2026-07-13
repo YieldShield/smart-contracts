@@ -537,6 +537,17 @@ contract SplitRiskPoolFeeOnTransferWithdrawalsTest is Test, TestTimelockHelper {
         assertEq(protectorNFT.balanceOf(protector), 0, "principal exit should burn protector NFT");
     }
 
+    function test_forfeitCommission_RejectsGovernanceTimelock() public {
+        _accrueShieldedYieldFees();
+        assertGt(pool.getClaimableCommission(0), 0, "precondition: protector should have commission");
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
+        pool.forfeitCommission(0);
+
+        assertGt(pool.getClaimableCommission(0), 0, "governance must not erase protector commission");
+    }
+
     function test_crossAssetWithdraw_RevertsAfterShieldedTransferFeeObserved() public {
         uint256 withdrawnTokenId = _depositShielded(100e18);
         uint256 tokenId = _depositShielded(100e18);

@@ -1694,13 +1694,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     /**
      * @notice Forfeit claimable commission for a protector NFT position
      * @dev The NFT owner may voluntarily forfeit commission if shielded-token payouts
-     *      are impossible. Governance may also clear it to unblock pool retirement.
-     *      Principal accounting is left intact.
+     *      are impossible. Principal accounting is left intact.
      * @param tokenId The protector NFT token ID
      */
     function forfeitCommission(uint256 tokenId) external nonReentrant {
         address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
-        if (msg.sender != positionOwner && msg.sender != governanceTimelock()) {
+        if (msg.sender != positionOwner) {
             revert ErrorsLib.NotOwner();
         }
         _requirePoolAccountingBalancesCovered();
