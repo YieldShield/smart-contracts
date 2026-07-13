@@ -6,12 +6,20 @@ import { IRobinhoodStockToken, RobinhoodStockOracleFeed } from "../contracts/ora
 import { ForkTestHelper } from "./helpers/ForkTestHelper.sol";
 
 contract AlwaysOpenMarketSessionGate {
+    function emergencyPaused() external pure returns (bool) {
+        return false;
+    }
+
     function isMarketOpen() external pure returns (bool) {
         return true;
     }
 }
 
 contract AlwaysClosedMarketSessionGate {
+    function emergencyPaused() external pure returns (bool) {
+        return false;
+    }
+
     function isMarketOpen() external pure returns (bool) {
         return false;
     }

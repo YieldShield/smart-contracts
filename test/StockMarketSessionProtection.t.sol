@@ -183,6 +183,34 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
         pool.depositShieldedAsset(address(stock), 10e18, 0);
     }
 
+    function test_emergencyPauseDoesNotUnlockStaleClosedSessionFeeSettlement() public {
+        uint256 fullExitTokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        uint256 partialExitTokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        uint256 claimTokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.warp(block.timestamp + 2 days);
+        marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+        vm.prank(address(0xBEEF));
+        marketGate.emergencyPause();
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.shieldedWithdraw(fullExitTokenId, address(stock), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.partialWithdrawShielded(partialExitTokenId, 1e18, address(stock), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ShieldedFeePriceUnavailable.selector, address(stock)));
+        pool.claimRewards(claimTokenId);
+    }
+
+    function test_emergencyPauseStillAllowsFreshSameAssetExitThroughOrdinaryPrice() public {
+        uint256 tokenId = pool.depositShieldedAsset(address(stock), 10e18, 0);
+        vm.prank(address(0xBEEF));
+        marketGate.emergencyPause();
+
+        pool.shieldedWithdraw(tokenId, address(stock), 0);
+        assertEq(pool.totalShieldedTokens(), 0);
+    }
+
     function test_requiredEligibilityCallFailureFailsClosed() public {
         vm.mockCallRevert(
             address(composite), abi.encodeCall(composite.isProtectionOpeningAllowed, (address(stock))), bytes("")

@@ -8,6 +8,7 @@ import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningE
 
 interface IUSMarketSessionGate {
     function isMarketOpen() external view returns (bool);
+    function emergencyPaused() external view returns (bool);
 }
 
 /// @title IRobinhoodStockToken
@@ -77,6 +78,9 @@ contract RobinhoodStockOracleFeed is
 
     /// @notice Custom error when the extended exit-price path is requested during an open session
     error MarketSessionOpen(address token);
+
+    /// @notice Custom error when emergency pause must not be treated as a scheduled market closure
+    error MarketSessionEmergencyPaused(address token);
 
     /// @notice Custom error when the market-session gate cannot be read
     error MarketSessionStatusUnavailable(address gate);
@@ -150,9 +154,18 @@ contract RobinhoodStockOracleFeed is
 
     /// @inheritdoc IClosedSessionExitPrice
     /// @dev The extended Chainlink freshness window is reachable only while the configured
-    ///      calendar reports the market closed and the token's pause probe is readable and false.
+    ///      calendar reports the market closed, the emergency guardian has not paused sessions,
+    ///      and the token's pause probe is readable and false.
     function getPriceForClosedSessionExit(address token) external view returns (uint256 price) {
         _requireNotPaused(token);
+
+        bool emergencyPauseActive;
+        try IUSMarketSessionGate(marketSessionGate).emergencyPaused() returns (bool paused) {
+            emergencyPauseActive = paused;
+        } catch {
+            revert MarketSessionStatusUnavailable(marketSessionGate);
+        }
+        if (emergencyPauseActive) revert MarketSessionEmergencyPaused(token);
 
         bool marketOpen;
         try IUSMarketSessionGate(marketSessionGate).isMarketOpen() returns (bool open) {

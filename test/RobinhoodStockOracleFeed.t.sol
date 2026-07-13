@@ -20,8 +20,22 @@ contract MockSixDecimalInnerFeed {
 }
 
 contract RevertingMarketSessionGate {
+    function emergencyPaused() external pure returns (bool) {
+        return false;
+    }
+
     function isMarketOpen() external pure returns (bool) {
         revert("status unavailable");
+    }
+}
+
+contract RevertingEmergencyPauseMarketSessionGate {
+    function emergencyPaused() external pure returns (bool) {
+        revert("emergency status unavailable");
+    }
+
+    function isMarketOpen() external pure returns (bool) {
+        return false;
     }
 }
 
@@ -250,6 +264,18 @@ contract RobinhoodStockOracleFeedTest is Test {
         stockFeed.getPriceForClosedSessionExit(address(tsla));
     }
 
+    function test_closedSessionExitPrice_RejectsEmergencyPauseInsteadOfTreatingItAsScheduledClosure() public {
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+        marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+        vm.prank(address(0xBEEF));
+        marketSessionGate.emergencyPause();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(RobinhoodStockOracleFeed.MarketSessionEmergencyPaused.selector, address(tsla))
+        );
+        stockFeed.getPriceForClosedSessionExit(address(tsla));
+    }
+
     function test_closedSessionExitPrice_FailsClosedForCorporatePauseAndMissingPauseProbe() public {
         marketSessionGate.clearDailySession(uint64(block.timestamp / 1 days));
         tsla.setOraclePaused(true);
@@ -265,6 +291,19 @@ contract RobinhoodStockOracleFeedTest is Test {
 
     function test_closedSessionExitPrice_FailsClosedWhenMarketStatusReverts() public {
         RevertingMarketSessionGate revertingGate = new RevertingMarketSessionGate();
+        RobinhoodStockOracleFeed feedWithBrokenGate =
+            new RobinhoodStockOracleFeed(address(chainlinkFeed), address(revertingGate));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RobinhoodStockOracleFeed.MarketSessionStatusUnavailable.selector, address(revertingGate)
+            )
+        );
+        feedWithBrokenGate.getPriceForClosedSessionExit(address(tsla));
+    }
+
+    function test_closedSessionExitPrice_FailsClosedWhenEmergencyStatusReverts() public {
+        RevertingEmergencyPauseMarketSessionGate revertingGate = new RevertingEmergencyPauseMarketSessionGate();
         RobinhoodStockOracleFeed feedWithBrokenGate =
             new RobinhoodStockOracleFeed(address(chainlinkFeed), address(revertingGate));
 
