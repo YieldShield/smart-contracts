@@ -25,6 +25,7 @@ import { SlippageLib } from "./libraries/SlippageLib.sol";
 import { ProtocolAccessControlUpgradeable } from "./base/ProtocolAccessControlUpgradeable.sol";
 import { IPoolAccessControl } from "./interfaces/IPoolAccessControl.sol";
 import { TransferIntegrityProbe } from "./TransferIntegrityProbe.sol";
+import { ProtectorCommissionEscrow } from "./ProtectorCommissionEscrow.sol";
 
 /// @title SplitRiskPool
 /// @author David Hawig
@@ -1769,6 +1770,55 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
 
         if (_claimCommissionTo(positionOwner, tokenId, positionShares_) == 0) {
             emit EventsLib.NoCommissionToClaim(positionOwner, tokenId);
+        }
+    }
+
+    /**
+     * @notice Moves an otherwise retirement-blocking expired commission into an owner-only escrow.
+     * @dev Permissionless settlement is deliberately limited to a pool whose only remaining accounted
+     *      shielded-token liability is expired-epoch protector commission. The current NFT owner is
+     *      permanently fixed as beneficiary; neither the caller nor governance can redirect the funds.
+     *      This remains callable while paused and does not apply the withdrawal ACL because no funds
+     *      are paid to the beneficiary until they independently claim from the immutable escrow.
+     * @param tokenId The expired protector NFT token ID.
+     * @return escrow Address of the newly deployed owner-only commission escrow.
+     * @return escrowedAmount Amount of shielded tokens moved out of pool accounting and into escrow.
+     */
+    function escrowExpiredProtectorCommission(uint256 tokenId)
+        external
+        nonReentrant
+        returns (address escrow, uint256 escrowedAmount)
+    {
+        uint256 positionEpoch = protectorShareEpochs[tokenId];
+        if (positionEpoch >= protectorShareEpoch || protectorEpochPositionSettled[tokenId]) {
+            revert ErrorsLib.InvalidTokenId();
+        }
+
+        _requirePoolAccountingBalancesCovered();
+        _requireCommissionEscrowRetirementState();
+
+        address positionOwner = IProtectorReceiptNFT(protectorReceiptNFT).ownerOf(tokenId);
+        uint256 positionShares_ = _getProtectorPositionShares(tokenId);
+
+        ProtectorCommissionEscrow commissionEscrow =
+            new ProtectorCommissionEscrow(IERC20(SHIELDED_TOKEN), positionOwner);
+        escrowedAmount = _claimCommissionTo(address(commissionEscrow), tokenId, positionShares_);
+        if (escrowedAmount == 0) revert ErrorsLib.NoTokensToWithdraw();
+
+        escrow = address(commissionEscrow);
+        emit EventsLib.CommissionEscrowed(msg.sender, positionOwner, tokenId, escrow, SHIELDED_TOKEN, escrowedAmount);
+    }
+
+    function _requireCommissionEscrowRetirementState() internal view {
+        if (
+            totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0
+                || totalProtectorTokens != 0 || totalProtectorShares != 0 || poolState.totalBackingTokenBalance != 0
+                || accumulatedPoolFee != 0 || accumulatedProtocolFee != 0 || currentEpochCommissionReserve != 0
+                || pendingProtectorRewardDust != 0 || accumulatedCommissions == 0
+                || accumulatedCommissions != historicalCommissionReserve
+                || poolState.shieldedTokenBalance != accumulatedCommissions
+        ) {
+            revert ErrorsLib.PoolNotEmptyForDeactivation();
         }
     }
 

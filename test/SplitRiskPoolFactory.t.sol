@@ -9,6 +9,7 @@ import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { ISplitRiskPoolFactory } from "../contracts/interfaces/ISplitRiskPoolFactory.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
+import { ProtectorCommissionEscrow } from "../contracts/ProtectorCommissionEscrow.sol";
 import { MockERC4626 } from "../contracts/mocks/MockERC4626.sol";
 import { MockERC20 } from "../contracts/mocks/MockERC20.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
@@ -442,6 +443,51 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         feeToken.approve(address(factory), bondAmount);
         poolAddress =
             factory.createPool(address(tokenA), "TKNA", address(feeToken), "SFEE", 500, 200, 15_000, bondAmount);
+    }
+
+    function _createCommissionEscrowPool()
+        internal
+        returns (
+            RecipientBlockingToken blockedToken,
+            SplitRiskPool pool,
+            uint256 protectorTokenId,
+            uint256 shieldTokenId
+        )
+    {
+        blockedToken = new RecipientBlockingToken();
+        oracle.setPrice(address(blockedToken), 1e8);
+        compositeOracle.setTokenOracleFeedWithType(address(blockedToken), address(oracle), "mock");
+        factory.addTokenInitial(
+            address(blockedToken), "Recipient Blocking Token", "BLOCK", address(oracle), address(0), 10_000, true
+        );
+
+        address poolAddress = createPool(address(blockedToken), "BLOCK", address(tokenB), "TKNB", 500, 200, 10_000);
+        pool = SplitRiskPool(payable(poolAddress));
+
+        uint256 amount = 100e18;
+        tokenB.mint(user1, amount);
+        vm.startPrank(user1);
+        tokenB.approve(poolAddress, amount);
+        protectorTokenId = pool.depositBackingAsset(address(tokenB), amount, 0);
+        vm.stopPrank();
+
+        blockedToken.mint(user2, amount);
+        vm.startPrank(user2);
+        blockedToken.approve(poolAddress, amount);
+        shieldTokenId = pool.depositShieldedAsset(address(blockedToken), amount, 0);
+        vm.stopPrank();
+    }
+
+    function _expireCommissionPosition(RecipientBlockingToken blockedToken, SplitRiskPool pool, uint256 shieldTokenId)
+        internal
+    {
+        (,,,,, uint256 minimumPoolTime,,,,) = pool.poolConfig();
+        vm.warp(block.timestamp + minimumPoolTime + 1);
+
+        vm.prank(user2);
+        pool.shieldedWithdraw(shieldTokenId, address(tokenB), 0);
+
+        blockedToken.setRecipientBlocked(user1, true);
     }
 
     function _historicalPoolCount() internal view returns (uint256) {
@@ -2184,6 +2230,108 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address replacementPool = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 600, 200, 15_000);
         assertEq(factory.activePoolCount(), 1, "Replacement pool should occupy recycled slot");
         assertTrue(factory.isPoolActive(replacementPool), "Replacement pool should be active");
+    }
+
+    function testEscrowExpiredProtectorCommissionRejectsLivePosition() public {
+        (, SplitRiskPool pool, uint256 protectorTokenId,) = _createCommissionEscrowPool();
+
+        vm.expectRevert(ErrorsLib.InvalidTokenId.selector);
+        pool.escrowExpiredProtectorCommission(protectorTokenId);
+    }
+
+    function testEscrowExpiredProtectorCommissionUnblocksRetirementWithoutConfiscation() public {
+        (RecipientBlockingToken blockedToken, SplitRiskPool pool, uint256 protectorTokenId, uint256 shieldTokenId) =
+            _createCommissionEscrowPool();
+        _expireCommissionPosition(blockedToken, pool, shieldTokenId);
+
+        uint256 claimable = pool.getClaimableCommission(protectorTokenId);
+        assertEq(claimable, 100e18, "drained protector epoch should own the forfeited shielded tokens");
+        assertEq(pool.getReservedFees(), claimable, "expired commission should be the only remaining reserve");
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(abi.encodeWithSelector(RecipientBlockingToken.RecipientBlocked.selector, user1));
+        pool.settleExpiredProtectorPosition(protectorTokenId);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
+        pool.forfeitCommission(protectorTokenId);
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(ErrorsLib.PoolNotEmptyForDeactivation.selector);
+        factory.deactivatePool(address(pool));
+        assertFalse(pool.paused(), "failed deactivation must roll its pause back");
+
+        AccessControlExample accessControl = new AccessControlExample(governanceTimelock);
+        vm.prank(governanceTimelock);
+        pool.setAccessControl(address(accessControl));
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(
+            abi.encodeWithSelector(ErrorsLib.AccessControlDenied.selector, user1, "settleExpiredProtectorPosition")
+        );
+        pool.settleExpiredProtectorPosition(protectorTokenId);
+
+        vm.prank(governanceTimelock);
+        pool.pause();
+
+        vm.prank(address(0xBEEF));
+        (address escrowAddress, uint256 escrowedAmount) = pool.escrowExpiredProtectorCommission(protectorTokenId);
+        ProtectorCommissionEscrow escrow = ProtectorCommissionEscrow(escrowAddress);
+
+        assertEq(escrowedAmount, claimable, "escrow should receive the full owner commission");
+        assertEq(address(escrow.token()), address(blockedToken), "escrow should pin the shielded token");
+        assertEq(escrow.beneficiary(), user1, "escrow should pin the NFT owner as sole beneficiary");
+        assertEq(blockedToken.balanceOf(escrowAddress), claimable, "escrow should actually custody the commission");
+        assertEq(pool.getReservedFees(), 0, "escrow should clear pool fee reserves");
+        (uint256 shieldedPoolBalance, uint256 backingPoolBalance) = pool.getPoolBalances();
+        assertEq(shieldedPoolBalance, 0, "escrow should clear tracked shielded-token balance");
+        assertEq(backingPoolBalance, 0, "drained pool should have no tracked backing balance");
+        assertEq(blockedToken.balanceOf(address(pool)), 0, "escrow should clear the pool's actual token balance");
+
+        vm.expectRevert(ErrorsLib.InvalidTokenId.selector);
+        pool.escrowExpiredProtectorCommission(protectorTokenId);
+
+        vm.prank(governanceTimelock);
+        factory.deactivatePool(address(pool));
+        assertFalse(factory.isPoolActive(address(pool)), "escrowed commission should no longer deadlock retirement");
+
+        vm.prank(governanceTimelock);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtectorCommissionEscrow.UnauthorizedClaimant.selector, governanceTimelock)
+        );
+        escrow.claim();
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(RecipientBlockingToken.RecipientBlocked.selector, user1));
+        escrow.claim();
+
+        blockedToken.setRecipientBlocked(user1, false);
+        blockedToken.setTransferFee(500);
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtectorCommissionEscrow.UnexpectedEscrowTokenReceipt.selector, claimable, (claimable * 9500) / 10_000
+            )
+        );
+        escrow.claim();
+        assertEq(blockedToken.balanceOf(escrowAddress), claimable, "inexact claim must leave escrow accounting intact");
+
+        blockedToken.setTransferFee(0);
+        uint256 beneficiaryBalanceBefore = blockedToken.balanceOf(user1);
+        vm.prank(user1);
+        uint256 received = escrow.claim();
+
+        assertEq(received, claimable, "beneficiary should receive the full escrow after transfer access returns");
+        assertEq(
+            blockedToken.balanceOf(user1) - beneficiaryBalanceBefore,
+            claimable,
+            "only the original NFT owner should receive escrowed funds"
+        );
+        assertEq(blockedToken.balanceOf(escrowAddress), 0, "successful claim should empty escrow");
+
+        vm.prank(user1);
+        vm.expectRevert(ProtectorCommissionEscrow.EmptyEscrow.selector);
+        escrow.claim();
     }
 
     function testDeactivateProtectorOnlyPoolFreesSlotWithoutSweepingBacking() public {

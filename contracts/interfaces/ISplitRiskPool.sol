@@ -97,6 +97,7 @@ interface ISplitRiskPool {
     function claimRewards(uint256 tokenId) external;
     function claimCommission(uint256 tokenId) external;
     function forfeitCommission(uint256 tokenId) external;
+    function escrowExpiredProtectorCommission(uint256 tokenId) external returns (address escrow, uint256 escrowedAmount);
     function settleExpiredProtectorPosition(uint256 tokenId) external;
     function claimExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut) external returns (uint256 received);
     function settleExpiredProtectorBacking(uint256 tokenId, uint256 minAmountOut) external returns (uint256 received);

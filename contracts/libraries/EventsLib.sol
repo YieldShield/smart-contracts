@@ -75,6 +75,14 @@ library EventsLib {
     );
     event CommissionClaimed(address indexed recipient, uint256 indexed tokenId, uint256 amount);
     event CommissionForfeited(address indexed caller, address indexed owner, uint256 indexed tokenId, uint256 amount);
+    event CommissionEscrowed(
+        address indexed caller,
+        address indexed beneficiary,
+        uint256 indexed tokenId,
+        address escrow,
+        address token,
+        uint256 amount
+    );
     event NoCommissionToClaim(address indexed recipient, uint256 indexed tokenId);
     event ProtectorResidualBackingSwept(address indexed recipient, address indexed asset, uint256 amount);
     event ProtectorResidualBackingReserved(uint256 indexed epoch, address indexed asset, uint256 amount);
