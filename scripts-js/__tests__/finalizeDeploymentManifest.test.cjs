@@ -892,6 +892,67 @@ test("same-generation recovery is idempotent and history collisions fail", async
     );
 });
 
+test("same-generation recovery preserves fresh fixture health without rewriting history", async (t) => {
+    const item = await fixture({ demo: true });
+    const rootDir = mkdtempSync(join(tmpdir(), "ys-manifest-fresh-recovery-"));
+    t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+    writeAttempt(rootDir, item.candidate, item.broadcast);
+
+    const feedIndex = new Map(
+        Object.entries(item.DEMO_FEEDS).map(
+            ([symbol, deploymentName], index) => [
+                Object.entries(item.candidate)
+                    .find(([, name]) => name === deploymentName)[0]
+                    .toLowerCase(),
+                { index, symbol },
+            ],
+        ),
+    );
+    const readFeedAt = (startingTimestamp) => async (_provider, address) => {
+        const { index, symbol } = feedIndex.get(address.toLowerCase());
+        return {
+            decimals: 8,
+            description: `${symbol} / USD`,
+            owner: DEPLOYER,
+            updatedAt: startingTimestamp + index,
+        };
+    };
+
+    const first = await item.promoteDeploymentManifest(
+        promotionArgs(rootDir, item, {
+            now: () => new Date("2026-07-10T12:00:00.000Z"),
+            readFeed: readFeedAt(1_000),
+        }),
+    );
+    const historicalContents = readFileSync(first.historyPath, "utf8");
+    assert.equal(
+        first.manifest.fixtureMetadata.robinhoodStandardMockFeeds.expiresAt,
+        87_400,
+    );
+
+    const second = await item.promoteDeploymentManifest(
+        promotionArgs(rootDir, item, {
+            now: () => new Date("2026-07-11T12:00:00.000Z"),
+            readFeed: readFeedAt(2_000),
+        }),
+    );
+
+    assert.equal(second.manifest.validatedAt, "2026-07-11T12:00:00.000Z");
+    assert.equal(
+        second.manifest.fixtureMetadata.robinhoodStandardMockFeeds.expiresAt,
+        88_400,
+    );
+    assert.deepEqual(
+        JSON.parse(readFileSync(second.activePath, "utf8")),
+        second.manifest,
+    );
+    assert.equal(readFileSync(second.historyPath, "utf8"), historicalContents);
+    assert.deepEqual(
+        JSON.parse(readFileSync(second.historyPath, "utf8")),
+        first.manifest,
+    );
+});
+
 test("deployment workflow promotes the manifest before ABI generation", () => {
     const makefile = readFileSync(
         join(__dirname, "..", "..", "Makefile"),

@@ -1041,17 +1041,35 @@ async function validateAndBuildManifest({
     return manifest;
 }
 
-function sameGeneration(left, right) {
-    if (
-        left.deploymentId !== right.deploymentId ||
-        left.configurationDigest !== right.configurationDigest ||
-        String(left.chainId) !== String(right.chainId)
-    ) {
-        return false;
+function canonicalize(value) {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(
+        Object.entries(value)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, entry]) => [key, canonicalize(entry)]),
+    );
+}
+
+function immutableGenerationProjection(manifest) {
+    const { validatedAt: _validatedAt, ...immutable } = manifest;
+    const standardMockFeeds =
+        immutable.fixtureMetadata?.robinhoodStandardMockFeeds;
+    if (standardMockFeeds) {
+        const { expiresAt: _expiresAt, ...immutableStandardMockFeeds } =
+            standardMockFeeds;
+        immutable.fixtureMetadata = {
+            ...immutable.fixtureMetadata,
+            robinhoodStandardMockFeeds: immutableStandardMockFeeds,
+        };
     }
+    return canonicalize(immutable);
+}
+
+function sameGeneration(left, right) {
     return (
-        JSON.stringify(addressEntries(left).sort()) ===
-        JSON.stringify(addressEntries(right).sort())
+        JSON.stringify(immutableGenerationProjection(left)) ===
+        JSON.stringify(immutableGenerationProjection(right))
     );
 }
 
@@ -1115,7 +1133,6 @@ async function promoteDeploymentManifest({
         if (!sameGeneration(existingHistory, manifest)) {
             throw new Error("Immutable deployment history collision.");
         }
-        manifest = existingHistory;
     } else {
         fs.writeFileSync(
             historyPath,
