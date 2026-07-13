@@ -206,11 +206,20 @@ contract OracleForkTest is ForkTestHelper {
         // if no one has updated prices recently on testnet
         // In production, a keeper would update prices before critical operations
 
-        // Try to get price (may revert if stale)
+        // Try to get price. Sepolia commonly has no keeper refreshing this feed,
+        // but only our explicit staleness error is an acceptable soft outcome.
+        // Address drift, missing bytecode, malformed data, and other integration
+        // failures must fail this live smoke test instead of looking like staleness.
         try pythOracle.getPrice(WETH) returns (uint256 price) {
             console.log("ETH/USD price from Pyth:", price);
             assertGt(price, 100 * 1e8, "ETH price too low");
-        } catch {
+        } catch (bytes memory reason) {
+            assertGe(reason.length, 4, "Pyth reverted without a custom-error selector");
+            bytes4 selector;
+            assembly ("memory-safe") {
+                selector := mload(add(reason, 0x20))
+            }
+            assertEq(selector, PythOracle.StalePrice.selector, "unexpected Pyth integration failure");
             console.log("Pyth price stale - expected on testnet without keepers");
         }
     }
