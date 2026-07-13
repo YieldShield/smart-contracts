@@ -161,6 +161,9 @@ jobs:
           CONTRACT_SIZE_REPORT_ONLY: "true"
         run: npm run size-check
 
+      - name: Check exact Robinhood deployment target sizes
+        run: npm run size-check:robinhood-deployment
+
   coverage:
     name: Foundry coverage
     runs-on: ubuntu-latest

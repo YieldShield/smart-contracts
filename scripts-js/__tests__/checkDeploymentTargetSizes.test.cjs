@@ -30,6 +30,22 @@ test("production deployment source and size inventory stay in sync", async () =>
     );
 });
 
+test("CI enforces the exact Robinhood deployment target inventory", () => {
+    const workflow = readFileSync(
+        join(__dirname, "..", "..", ".github", "workflows", "ci.yml"),
+        "utf8",
+    );
+    const contractSizeJob = workflow.slice(
+        workflow.indexOf("  contract-size:"),
+        workflow.indexOf("  coverage:"),
+    );
+
+    assert.match(
+        contractSizeJob,
+        /run: npm run size-check:robinhood-deployment/u,
+    );
+});
+
 test("target inventory extraction ignores arrays, comments, and strings", async () => {
     const { extractConstructedContractNames } =
         await import("../checkDeploymentTargetSizes.js");
