@@ -50,6 +50,74 @@ function normalizeChainId(chainId) {
 }
 
 const STRICT_MANIFEST_CHAIN_IDS = new Set(["4663", "46630"]);
+const ZERO_CODEHASH = `0x${"00".repeat(32)}`;
+const TESTNET_SEQUENCER_EXCEPTION_SOURCES = new Set([
+    "robinhood-testnet-explicit-exception",
+    "robinhood-testnet-relaxed-guards",
+]);
+
+function validateSequencerUptimeFeedEvidence(chainId, manifest) {
+    const evidence = manifest.sequencerUptimeFeedEvidence;
+    const metadataAddress = manifest.robinhoodSequencerUptimeFeed;
+    const metadataSource = manifest.robinhoodSequencerUptimeFeedSource;
+    const metadataCodehash = manifest.robinhoodSequencerUptimeFeedCodehash;
+    if (
+        !evidence ||
+        !/^0x[0-9a-f]{40}$/iu.test(metadataAddress ?? "") ||
+        typeof metadataSource !== "string" ||
+        metadataSource.trim().length === 0 ||
+        !/^0x[0-9a-f]{64}$/iu.test(metadataCodehash ?? "") ||
+        evidence.address?.toLowerCase() !== metadataAddress.toLowerCase() ||
+        evidence.source !== metadataSource ||
+        evidence.runtimeCodehash?.toLowerCase() !==
+            metadataCodehash.toLowerCase()
+    ) {
+        throw new Error(
+            `Deployment ${chainId} has incomplete sequencer uptime feed evidence`,
+        );
+    }
+
+    const zeroAddress = /^0x0{40}$/iu.test(evidence.address);
+    if (String(chainId) === "4663") {
+        if (
+            evidence.mode !== "configured" ||
+            zeroAddress ||
+            evidence.runtimeCodehash.toLowerCase() === ZERO_CODEHASH ||
+            !/^0x[0-9a-f]{64}$/iu.test(evidence.reviewedCodehashPin ?? "") ||
+            evidence.reviewedCodehashPin.toLowerCase() !==
+                evidence.runtimeCodehash.toLowerCase()
+        ) {
+            throw new Error(
+                "Robinhood mainnet requires a configured, reviewed sequencer uptime feed",
+            );
+        }
+        return;
+    }
+
+    if (evidence.mode === "configured") {
+        if (
+            zeroAddress ||
+            evidence.runtimeCodehash.toLowerCase() === ZERO_CODEHASH ||
+            evidence.reviewedCodehashPin !== null
+        ) {
+            throw new Error(
+                "Robinhood testnet configured sequencer evidence is invalid",
+            );
+        }
+        return;
+    }
+    if (
+        evidence.mode !== "robinhood-testnet-exception" ||
+        !zeroAddress ||
+        evidence.runtimeCodehash.toLowerCase() !== ZERO_CODEHASH ||
+        evidence.reviewedCodehashPin !== null ||
+        !TESTNET_SEQUENCER_EXCEPTION_SOURCES.has(evidence.source)
+    ) {
+        throw new Error(
+            "Robinhood testnet sequencer exception evidence is invalid",
+        );
+    }
+}
 
 function isStrictManifestChain(chainId) {
     return STRICT_MANIFEST_CHAIN_IDS.has(normalizeChainId(chainId));
@@ -206,6 +274,13 @@ function validateActiveDeploymentManifest(chainId, manifest) {
     if (hasPyth === hasChainlink) {
         throw new Error(
             `Deployment ${normalizedChainId} must select exactly one production oracle inventory`,
+        );
+    }
+    if (hasChainlink) {
+        validateSequencerUptimeFeedEvidence(normalizedChainId, manifest);
+    } else if (manifest.sequencerUptimeFeedEvidence !== undefined) {
+        throw new Error(
+            `Deployment ${normalizedChainId} has sequencer evidence without a Chainlink deployment`,
         );
     }
     const expectedNames = [

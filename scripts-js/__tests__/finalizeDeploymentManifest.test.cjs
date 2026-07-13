@@ -50,7 +50,11 @@ function transactionHashFor(index) {
     return `0x${index.toString(16).padStart(64, "0")}`;
 }
 
-async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
+async function fixture({
+    chainId = CHAIN_ID,
+    demo = false,
+    oracleMode = "chainlink",
+} = {}) {
     const module = await import("../finalizeDeploymentManifest.js");
     const { keccak256 } = await import("ethers");
     const names = [
@@ -63,7 +67,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         schemaVersion: "2",
         status: "candidate",
         deploymentId: DEPLOYMENT_ID,
-        chainId: CHAIN_ID,
+        chainId,
         deployer: DEPLOYER,
         configurationDigest: CONFIGURATION_DIGEST,
         networkName: "robinhood-testnet",
@@ -76,6 +80,10 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
     });
     if (oracleMode === "chainlink") {
         candidate.marketSessionGuardian = addressFor(900);
+        candidate.robinhoodSequencerUptimeFeed = addressFor(0);
+        candidate.robinhoodSequencerUptimeFeedSource =
+            "robinhood-testnet-relaxed-guards";
+        candidate.robinhoodSequencerUptimeFeedCodehash = `0x${"00".repeat(32)}`;
     }
     const byName = new Map(
         Object.entries(candidate)
@@ -113,7 +121,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         ]),
     );
     const broadcast = {
-        chain: CHAIN_ID,
+        chain: chainId,
         transactions,
         receipts,
         pending: [],
@@ -133,7 +141,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
             return "0x";
         },
         async getNetwork() {
-            return { chainId: BigInt(CHAIN_ID) };
+            return { chainId: BigInt(chainId) };
         },
         async getTransactionReceipt(hash) {
             return liveReceipts.get(hash) || null;
@@ -299,6 +307,15 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         },
         marketSessionGuardian:
             oracleMode === "chainlink" ? candidate.marketSessionGuardian : null,
+        sequencer:
+            oracleMode === "chainlink"
+                ? {
+                      chainlinkFeed: addressFor(0),
+                      chainlinkRequired: false,
+                      erc4626Feed: addressFor(0),
+                      erc4626Required: false,
+                  }
+                : null,
         oracleOwners:
             oracleMode === "pyth"
                 ? { PythOracle: byName.get("SplitRiskPoolFactory") }
@@ -321,6 +338,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         broadcast,
         callBlockTags,
         candidate,
+        chainId,
         codeBlockTags,
         env,
         liveReceipts,
@@ -328,6 +346,7 @@ async function fixture({ demo = false, oracleMode = "chainlink" } = {}) {
         provider,
         validationProvider,
         protocolState,
+        runtimeCodehash,
         readProtocolState: async (scopedProvider) => {
             await scopedProvider.call({ data: "0x", to: addressFor(1) });
             return structuredClone(protocolState);
@@ -367,7 +386,7 @@ function writeAttempt(
 function promotionArgs(rootDir, item, overrides = {}) {
     return {
         rootDir,
-        chainId: CHAIN_ID,
+        chainId: item.chainId,
         deploymentId: DEPLOYMENT_ID,
         configurationDigest: CONFIGURATION_DIGEST,
         provider: item.provider,
@@ -385,7 +404,7 @@ function validationArgs(item, overrides = {}) {
     return {
         candidate: item.candidate,
         broadcast: item.broadcast,
-        chainId: CHAIN_ID,
+        chainId: item.chainId,
         deploymentId: DEPLOYMENT_ID,
         configurationDigest: CONFIGURATION_DIGEST,
         provider: item.provider,
@@ -397,6 +416,36 @@ function validationArgs(item, overrides = {}) {
         now: () => new Date("2026-07-10T12:00:00.000Z"),
         ...overrides,
     };
+}
+
+function configureSequencer(
+    item,
+    { source = "https://docs.example/feed" } = {},
+) {
+    const address = addressFor(950);
+    const candidateSource =
+        item.chainId === "46630" && source.trim().length === 0
+            ? "operator-supplied-testnet-feed"
+            : source;
+    item.candidate.robinhoodSequencerUptimeFeed = address;
+    item.candidate.robinhoodSequencerUptimeFeedSource = candidateSource;
+    item.candidate.robinhoodSequencerUptimeFeedCodehash = item.runtimeCodehash;
+    item.protocolState.sequencer = {
+        chainlinkFeed: address,
+        chainlinkRequired: true,
+        erc4626Feed: address,
+        erc4626Required: true,
+    };
+    if (item.chainId === "4663") {
+        item.candidate.productionGuardMode = "strict";
+        item.env.YS_ROBINHOOD_SEQUENCER_FEED = address;
+        item.env.YS_ROBINHOOD_SEQUENCER_FEED_SOURCE = source;
+        item.env.YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH = item.runtimeCodehash;
+    } else {
+        item.env.YS_ROBINHOOD_TESTNET_SEQUENCER_FEED = address;
+        item.env.YS_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE = source;
+    }
+    return address;
 }
 
 function removeCreationEvidence(item, broadcast, deploymentName) {
@@ -456,6 +505,13 @@ test("complete generation promotes atomically and records exact demo fixture met
         independentValidationRpc: true,
         policySchemaVersion: 1,
     });
+    assert.deepEqual(result.manifest.sequencerUptimeFeedEvidence, {
+        address: addressFor(0),
+        mode: "robinhood-testnet-exception",
+        reviewedCodehashPin: null,
+        runtimeCodehash: `0x${"00".repeat(32)}`,
+        source: "robinhood-testnet-relaxed-guards",
+    });
     assert.ok(item.codeBlockTags.length > 0);
     assert.ok(
         item.codeBlockTags.every(
@@ -510,6 +566,111 @@ test("complete generation promotes atomically and records exact demo fixture met
     assert.deepEqual(
         JSON.parse(readFileSync(result.historyPath)),
         result.manifest,
+    );
+});
+
+test("Robinhood mainnet promotion attests configured sequencer code and wiring at finalized state", async () => {
+    const item = await fixture({ chainId: "4663" });
+    configureSequencer(item);
+
+    const manifest = await item.validateAndBuildManifest(validationArgs(item));
+
+    assert.deepEqual(manifest.sequencerUptimeFeedEvidence, {
+        address: "0x00000000000000000000000000000000000003B6",
+        mode: "configured",
+        reviewedCodehashPin: item.runtimeCodehash,
+        runtimeCodehash: item.runtimeCodehash,
+        source: "https://docs.example/feed",
+    });
+    assert.ok(item.codeBlockTags.length > 0);
+    assert.ok(
+        item.codeBlockTags.every(
+            (blockTag) => blockTag === FINALIZED_BLOCK_NUMBER,
+        ),
+    );
+    assert.ok(item.callBlockTags.length > 0);
+    assert.ok(
+        item.callBlockTags.every(
+            (blockTag) => blockTag === FINALIZED_BLOCK_NUMBER,
+        ),
+    );
+});
+
+test("Robinhood mainnet promotion requires and enforces the reviewed sequencer codehash pin", async () => {
+    const missing = await fixture({ chainId: "4663" });
+    configureSequencer(missing);
+    delete missing.env.YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH;
+    await assert.rejects(
+        missing.validateAndBuildManifest(validationArgs(missing)),
+        /YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH is required/u,
+    );
+
+    const mismatched = await fixture({ chainId: "4663" });
+    configureSequencer(mismatched);
+    mismatched.env.YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH = `0x${"11".repeat(32)}`;
+    await assert.rejects(
+        mismatched.validateAndBuildManifest(validationArgs(mismatched)),
+        /does not match the reviewed mainnet pin/u,
+    );
+});
+
+test("sequencer attestation rejects finalized dual-RPC code and adapter-wiring disagreement", async () => {
+    const codeMismatch = await fixture({ chainId: "4663" });
+    const sequencerAddress = configureSequencer(codeMismatch);
+    const validationProvider = {
+        ...codeMismatch.validationProvider,
+        async getCode(address, blockTag) {
+            codeMismatch.codeBlockTags.push(blockTag);
+            return address.toLowerCase() === sequencerAddress.toLowerCase()
+                ? "0x6001"
+                : "0x6000";
+        },
+    };
+    await assert.rejects(
+        codeMismatch.validateAndBuildManifest(
+            validationArgs(codeMismatch, { validationProvider }),
+        ),
+        /disagree on finalized sequencer uptime feed code/u,
+    );
+
+    const wiringMismatch = await fixture({ chainId: "4663" });
+    configureSequencer(wiringMismatch);
+    wiringMismatch.protocolState.sequencer.erc4626Feed = addressFor(951);
+    await assert.rejects(
+        wiringMismatch.validateAndBuildManifest(validationArgs(wiringMismatch)),
+        /ERC4626 sequencer uptime feed wiring mismatch/u,
+    );
+});
+
+test("Robinhood testnet preserves both configured feeds and the explicit missing-feed exception without a mainnet pin", async () => {
+    const configured = await fixture();
+    configureSequencer(configured, { source: "" });
+    const configuredManifest = await configured.validateAndBuildManifest(
+        validationArgs(configured),
+    );
+    assert.deepEqual(configuredManifest.sequencerUptimeFeedEvidence, {
+        address: "0x00000000000000000000000000000000000003B6",
+        mode: "configured",
+        reviewedCodehashPin: null,
+        runtimeCodehash: configured.runtimeCodehash,
+        source: "operator-supplied-testnet-feed",
+    });
+
+    const exception = await fixture();
+    exception.candidate.productionGuardMode = "strict";
+    exception.candidate.robinhoodSequencerUptimeFeedSource =
+        "robinhood-testnet-explicit-exception";
+    exception.env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "true";
+    const exceptionManifest = await exception.validateAndBuildManifest(
+        validationArgs(exception),
+    );
+    assert.equal(
+        exceptionManifest.sequencerUptimeFeedEvidence.mode,
+        "robinhood-testnet-exception",
+    );
+    assert.equal(
+        exceptionManifest.sequencerUptimeFeedEvidence.reviewedCodehashPin,
+        null,
     );
 });
 
@@ -902,30 +1063,10 @@ test("Chainlink production mode is rejected outside Robinhood chains", async () 
 });
 
 test("Chainlink production mode accepts Robinhood mainnet", async () => {
-    const item = await fixture();
-    const candidate = {
-        ...item.candidate,
-        chainId: "4663",
-        productionGuardMode: "strict",
-    };
-    const broadcast = { ...item.broadcast, chain: "4663" };
-    const provider = {
-        ...item.provider,
-        async getNetwork() {
-            return { chainId: 4663n };
-        },
-    };
-    const validationProvider = { ...provider };
+    const item = await fixture({ chainId: "4663" });
+    configureSequencer(item);
 
-    const manifest = await item.validateAndBuildManifest(
-        validationArgs(item, {
-            broadcast,
-            candidate,
-            chainId: "4663",
-            provider,
-            validationProvider,
-        }),
-    );
+    const manifest = await item.validateAndBuildManifest(validationArgs(item));
     assert.equal(manifest.chainId, "4663");
 });
 

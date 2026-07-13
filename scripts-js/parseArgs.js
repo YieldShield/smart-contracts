@@ -216,6 +216,11 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
             if (!hasNonBlankEnvValue(env.YS_ROBINHOOD_SEQUENCER_FEED_SOURCE)) {
                 missing.push("YS_ROBINHOOD_SEQUENCER_FEED_SOURCE");
             }
+            if (
+                !hasNonBlankEnvValue(env.YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH)
+            ) {
+                missing.push("YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH");
+            }
         }
     } else {
         missing.push(...REQUIRED_PYTH_ENV);

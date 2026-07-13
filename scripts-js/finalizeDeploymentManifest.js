@@ -158,6 +158,12 @@ const COMPOSITE_INTERFACE = new ethers.Interface([
 const ERC4626_INTERFACE = new ethers.Interface([
     "function owner() view returns (address)",
     "function underlyingPriceOracle() view returns (address)",
+    "function sequencerUptimeFeed() view returns (address)",
+    "function sequencerUptimeFeedRequired() view returns (bool)",
+]);
+const SEQUENCER_GUARD_INTERFACE = new ethers.Interface([
+    "function sequencerUptimeFeed() view returns (address)",
+    "function sequencerUptimeFeedRequired() view returns (bool)",
 ]);
 const OWNABLE_INTERFACE = new ethers.Interface([
     "function owner() view returns (address)",
@@ -453,6 +459,177 @@ function validateExactInventory(candidate) {
     return { byName, demoEnabled, oracleMode: hasPyth ? "pyth" : "chainlink" };
 }
 
+const ZERO_CODEHASH = `0x${"00".repeat(32)}`;
+const ROBINHOOD_TESTNET_SEQUENCER_EXCEPTION_SOURCES = new Set([
+    "robinhood-testnet-explicit-exception",
+    "robinhood-testnet-relaxed-guards",
+]);
+
+function normalizedTestnetSequencerSource(value) {
+    return typeof value === "string" && value.trim().length > 0
+        ? value
+        : "operator-supplied-testnet-feed";
+}
+
+function validateCandidateSequencerMetadata({ candidate, chainId, env }) {
+    const normalizedChainId = String(chainId);
+    const address = candidate.robinhoodSequencerUptimeFeed;
+    const source = candidate.robinhoodSequencerUptimeFeedSource;
+    const runtimeCodehash = candidate.robinhoodSequencerUptimeFeedCodehash;
+    if (!ethers.isAddress(address)) {
+        throw new Error(
+            "Deployment candidate has an invalid Robinhood sequencer feed address.",
+        );
+    }
+    if (typeof source !== "string" || source.trim().length === 0) {
+        throw new Error(
+            "Deployment candidate has invalid Robinhood sequencer provenance.",
+        );
+    }
+    if (!/^0x[0-9a-f]{64}$/iu.test(runtimeCodehash ?? "")) {
+        throw new Error(
+            "Deployment candidate has an invalid Robinhood sequencer runtime codehash.",
+        );
+    }
+
+    const checksumAddress = ethers.getAddress(address);
+    const codehash = runtimeCodehash.toLowerCase();
+    if (checksumAddress === ethers.ZeroAddress) {
+        if (
+            normalizedChainId !== "46630" ||
+            codehash !== ZERO_CODEHASH ||
+            !ROBINHOOD_TESTNET_SEQUENCER_EXCEPTION_SOURCES.has(source)
+        ) {
+            throw new Error(
+                "Only Robinhood testnet may use the explicit missing-sequencer exception.",
+            );
+        }
+        if (
+            source === "robinhood-testnet-explicit-exception" &&
+            !["1", "true", "yes"].includes(
+                String(
+                    env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED ?? "",
+                ).toLowerCase(),
+            )
+        ) {
+            throw new Error(
+                "Robinhood testnet explicit sequencer exception is not enabled in the deployment environment.",
+            );
+        }
+        if (
+            source === "robinhood-testnet-relaxed-guards" &&
+            candidate.productionGuardMode !== "relaxed"
+        ) {
+            throw new Error(
+                "Robinhood testnet relaxed sequencer exception requires relaxed production guards.",
+            );
+        }
+        return {
+            address: checksumAddress,
+            mode: "robinhood-testnet-exception",
+            reviewedCodehashPin: null,
+            runtimeCodehash: ZERO_CODEHASH,
+            source,
+        };
+    }
+
+    if (codehash === ZERO_CODEHASH) {
+        throw new Error(
+            "Configured Robinhood sequencer feed has a zero runtime codehash.",
+        );
+    }
+    const addressEnvName =
+        normalizedChainId === "46630"
+            ? "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED"
+            : "YS_ROBINHOOD_SEQUENCER_FEED";
+    const sourceEnvName =
+        normalizedChainId === "46630"
+            ? "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE"
+            : "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE";
+    if (
+        !ethers.isAddress(env[addressEnvName] ?? "") ||
+        ethers.getAddress(env[addressEnvName]) !== checksumAddress
+    ) {
+        throw new Error(
+            `Deployment candidate sequencer address does not match ${addressEnvName}.`,
+        );
+    }
+    const expectedSource =
+        normalizedChainId === "46630"
+            ? normalizedTestnetSequencerSource(env[sourceEnvName])
+            : env[sourceEnvName];
+    if (
+        typeof expectedSource !== "string" ||
+        expectedSource.trim().length === 0 ||
+        source !== expectedSource
+    ) {
+        throw new Error(
+            `Deployment candidate sequencer provenance does not match ${sourceEnvName}.`,
+        );
+    }
+
+    let reviewedCodehashPin = null;
+    if (normalizedChainId === "4663") {
+        const expected = env.YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH;
+        if (!/^0x[0-9a-f]{64}$/iu.test(expected ?? "")) {
+            throw new Error(
+                "YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH is required as a bytes32 codehash.",
+            );
+        }
+        if (expected.toLowerCase() !== codehash) {
+            throw new Error(
+                "Deployment candidate sequencer runtime codehash does not match the reviewed mainnet pin.",
+            );
+        }
+        reviewedCodehashPin = expected.toLowerCase();
+    }
+
+    return {
+        address: checksumAddress,
+        mode: "configured",
+        reviewedCodehashPin,
+        runtimeCodehash: codehash,
+        source,
+    };
+}
+
+async function validateFinalizedSequencerCode({
+    metadata,
+    provider,
+    validationProvider,
+}) {
+    if (metadata.mode !== "configured") return metadata;
+    const [code, validationCode] = await Promise.all([
+        provider.getCode(metadata.address),
+        validationProvider.getCode(metadata.address),
+    ]);
+    if (typeof code !== "string" || code === "0x") {
+        throw new Error(
+            `No sequencer uptime feed code at ${metadata.address} in finalized state.`,
+        );
+    }
+    if (code.toLowerCase() !== validationCode?.toLowerCase()) {
+        throw new Error(
+            "Deployment RPC providers disagree on finalized sequencer uptime feed code.",
+        );
+    }
+    const actualCodehash = ethers.keccak256(code).toLowerCase();
+    if (actualCodehash !== metadata.runtimeCodehash) {
+        throw new Error(
+            "Finalized sequencer uptime feed codehash does not match deployment metadata.",
+        );
+    }
+    if (
+        metadata.reviewedCodehashPin !== null &&
+        actualCodehash !== metadata.reviewedCodehashPin
+    ) {
+        throw new Error(
+            "Finalized sequencer uptime feed codehash does not match the reviewed mainnet pin.",
+        );
+    }
+    return metadata;
+}
+
 async function contractCall(
     provider,
     contractInterface,
@@ -605,6 +782,40 @@ async function readLiveProtocolState(
         erc4626,
         "underlyingPriceOracle",
     );
+    let sequencer = null;
+    if (oracleMode === "chainlink") {
+        const chainlink = byName.get("ChainlinkOracleFeed");
+        const [chainlinkFeed] = await contractCall(
+            provider,
+            SEQUENCER_GUARD_INTERFACE,
+            chainlink,
+            "sequencerUptimeFeed",
+        );
+        const [chainlinkRequired] = await contractCall(
+            provider,
+            SEQUENCER_GUARD_INTERFACE,
+            chainlink,
+            "sequencerUptimeFeedRequired",
+        );
+        const [erc4626Feed] = await contractCall(
+            provider,
+            ERC4626_INTERFACE,
+            erc4626,
+            "sequencerUptimeFeed",
+        );
+        const [erc4626Required] = await contractCall(
+            provider,
+            ERC4626_INTERFACE,
+            erc4626,
+            "sequencerUptimeFeedRequired",
+        );
+        sequencer = {
+            chainlinkFeed,
+            chainlinkRequired,
+            erc4626Feed,
+            erc4626Required,
+        };
+    }
     const oracleOwners = {};
     for (const name of oracleMode === "pyth"
         ? ["PythOracle"]
@@ -680,6 +891,7 @@ async function readLiveProtocolState(
             authorizedCallerCount: Number(authorizedCallerCount),
         },
         erc4626: { owner: erc4626Owner, underlyingPriceOracle },
+        sequencer,
         marketSessionGuardian,
         oracleOwners,
         timelockRoles,
@@ -702,7 +914,7 @@ function sortedAddresses(values) {
 
 function validateProtocolWiring(
     state,
-    { byName, candidate, demoEnabled, oracleMode },
+    { byName, candidate, demoEnabled, oracleMode, sequencerMetadata },
 ) {
     const timelock = byName.get("TimelockController");
     const factory = byName.get("SplitRiskPoolFactory");
@@ -806,6 +1018,28 @@ function validateProtocolWiring(
             candidate.marketSessionGuardian,
             "US market gate emergency guardian",
         );
+        if (!sequencerMetadata || !state.sequencer) {
+            throw new Error("Robinhood sequencer wiring evidence is missing.");
+        }
+        requireAddress(
+            state.sequencer.chainlinkFeed,
+            sequencerMetadata.address,
+            "Chainlink sequencer uptime feed",
+        );
+        requireAddress(
+            state.sequencer.erc4626Feed,
+            sequencerMetadata.address,
+            "ERC4626 sequencer uptime feed",
+        );
+        const expectedRequired = sequencerMetadata.mode === "configured";
+        if (
+            state.sequencer.chainlinkRequired !== expectedRequired ||
+            state.sequencer.erc4626Required !== expectedRequired
+        ) {
+            throw new Error(
+                "Robinhood sequencer uptime requirement wiring mismatch.",
+            );
+        }
     }
 
     const expectedTokens = demoEnabled
@@ -1230,6 +1464,10 @@ async function validateAndBuildManifest({
             );
         }
     }
+    const sequencerMetadata =
+        oracleMode === "chainlink"
+            ? validateCandidateSequencerMetadata({ candidate, chainId, env })
+            : null;
     const finalityEvidence = await resolveFinalityEvidence({
         chainId,
         provider,
@@ -1271,6 +1509,13 @@ async function validateAndBuildManifest({
         }
         codehashes[address] = ethers.keccak256(code);
     }
+    const sequencerUptimeFeedEvidence = sequencerMetadata
+        ? await validateFinalizedSequencerCode({
+              metadata: sequencerMetadata,
+              provider: finalizedProvider,
+              validationProvider: finalizedValidationProvider,
+          })
+        : null;
     const addressEvidence = {};
     for (const [name, address] of byName.entries()) {
         if (createdAddresses.has(address)) {
@@ -1329,6 +1574,7 @@ async function validateAndBuildManifest({
         candidate,
         demoEnabled,
         oracleMode,
+        sequencerMetadata,
     });
 
     const manifest = {
@@ -1341,6 +1587,9 @@ async function validateAndBuildManifest({
         finalityEvidence,
         reviewedCodehashPins,
     };
+    if (sequencerUptimeFeedEvidence) {
+        manifest.sequencerUptimeFeedEvidence = sequencerUptimeFeedEvidence;
+    }
     if (demoEnabled) {
         if (String(chainId) !== "46630") {
             throw new Error(

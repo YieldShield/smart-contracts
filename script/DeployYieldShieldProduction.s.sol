@@ -155,6 +155,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant NAME_COMPOSITE_ORACLE = "CompositeOracle";
     bytes32 private constant NAME_PYTH_ORACLE = "PythOracle";
     bytes32 private constant NAME_CHAINLINK_ORACLE_FEED = "ChainlinkOracleFeed";
+    bytes32 private constant NAME_ROBINHOOD_SEQUENCER_FEED = "RobinhoodSequencerFeed";
     bytes32 private constant NAME_US_MARKET_SESSION_GATE = "USMarketSessionGate";
     bytes32 private constant NAME_ERC4626_ORACLE_FEED = "ERC4626OracleFeed";
     bytes32 private constant NAME_TIMELOCK = "TimelockController";
@@ -175,6 +176,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     string private constant ENV_MARKET_SESSION_GUARDIAN = "YS_PRODUCTION_MARKET_SESSION_GUARDIAN";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED = "YS_ROBINHOOD_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE = "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE";
+    string private constant ENV_ROBINHOOD_SEQUENCER_FEED_CODEHASH = "YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED";
     string private constant ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE = "YS_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE";
     string private constant ENV_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED";
@@ -201,6 +203,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     bytes32 private constant FIELD_MARKET_SESSION_GUARDIAN = "marketSession.guardian";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED = "robinhoodSequencerUptimeFeed";
     string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE = "robinhoodSequencerUptimeFeedSource";
+    string private constant METADATA_ROBINHOOD_SEQUENCER_FEED_CODEHASH = "robinhoodSequencerUptimeFeedCodehash";
     string private constant METADATA_ROBINHOOD_DEMO_ASSETS_ENABLED = "robinhoodDemoAssetsEnabled";
     string private constant METADATA_PRODUCTION_GUARD_MODE = "productionGuardMode";
     string private constant METADATA_MARKET_SESSION_GUARDIAN = "marketSessionGuardian";
@@ -244,6 +247,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionRobinhoodSequencerFeedRequired(uint256 chainId, string envName);
     error ProductionRobinhoodSequencerFeedSourceRequired(uint256 chainId, string envName);
     error ProductionRobinhoodSequencerFeedInvalid(address feed);
+    error ProductionRobinhoodSequencerRequirementMismatch(address oracle, bool actual, bool expected);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
     error ProductionMarketSessionGuardianInvalid(address guardian, address timelock);
 
@@ -333,6 +337,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         if (_isLocalNetwork()) revert LocalChainRequiresLocalDeployment(block.chainid);
         _snapshotProductionDeploymentMode();
         _snapshotProductionMarketSessionGuardian(_readProductionMarketSessionGuardian(timelockAddr));
+        _validateAndSnapshotRobinhoodSequencerConfiguration(
+            ChainlinkOracleFeed(chainlinkOracleFeedAddr), ERC4626OracleFeed(erc4626OracleFeedAddr)
+        );
         if (_requiresStrictProductionGuards()) {
             _readRequiredProductionCodehashes(true);
         }
@@ -744,10 +751,15 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             }
             chainlinkOracleFeed.setSequencerUptimeFeed(sequencerFeed);
             erc4626OracleFeed.setSequencerUptimeFeed(sequencerFeed);
-            _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED, vm.toString(sequencerFeed));
-            _setDeploymentMetadata(
-                METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE,
-                _hasNonWhitespace(source) ? source : "operator-supplied-testnet-feed"
+            if (!isTestnet) {
+                _requireMandatoryProductionCodehash(
+                    NAME_ROBINHOOD_SEQUENCER_FEED, sequencerFeed, ENV_ROBINHOOD_SEQUENCER_FEED_CODEHASH
+                );
+            }
+            _snapshotRobinhoodSequencerMetadata(
+                sequencerFeed,
+                _hasNonWhitespace(source) ? source : "operator-supplied-testnet-feed",
+                sequencerFeed.codehash
             );
             console.log("Sequencer uptime feed set:", sequencerFeed);
             return;
@@ -761,12 +773,79 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
 
         chainlinkOracleFeed.setSequencerUptimeFeedRequired(false);
         erc4626OracleFeed.setSequencerUptimeFeedRequired(false);
-        _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED, vm.toString(address(0)));
-        _setDeploymentMetadata(
-            METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE,
-            explicitTestnetException ? "robinhood-testnet-explicit-exception" : "robinhood-testnet-relaxed-guards"
+        _snapshotRobinhoodSequencerMetadata(
+            address(0),
+            explicitTestnetException ? "robinhood-testnet-explicit-exception" : "robinhood-testnet-relaxed-guards",
+            bytes32(0)
         );
         console.log("Sequencer uptime requirement explicitly disabled for Robinhood deployment");
+    }
+
+    function _validateAndSnapshotRobinhoodSequencerConfiguration(
+        ChainlinkOracleFeed chainlinkOracleFeed,
+        ERC4626OracleFeed erc4626OracleFeed
+    ) internal {
+        bool isTestnet = _isRobinhoodTestnet();
+        string memory envName = isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED : ENV_ROBINHOOD_SEQUENCER_FEED;
+        string memory sourceEnvName =
+            isTestnet ? ENV_ROBINHOOD_TESTNET_SEQUENCER_FEED_SOURCE : ENV_ROBINHOOD_SEQUENCER_FEED_SOURCE;
+        address expectedFeed = _robinhoodSequencerFeed(isTestnet);
+        address chainlinkFeed = address(chainlinkOracleFeed.sequencerUptimeFeed());
+        address erc4626Feed = address(erc4626OracleFeed.sequencerUptimeFeed());
+
+        if (expectedFeed != address(0)) {
+            string memory source = _robinhoodSequencerFeedSource(isTestnet);
+            if (!isTestnet && !_hasNonWhitespace(source)) {
+                revert ProductionRobinhoodSequencerFeedSourceRequired(block.chainid, sourceEnvName);
+            }
+            if (expectedFeed.code.length == 0) {
+                revert ProductionRobinhoodSequencerFeedInvalid(expectedFeed);
+            }
+            if (!isTestnet) {
+                _requireMandatoryProductionCodehash(
+                    NAME_ROBINHOOD_SEQUENCER_FEED, expectedFeed, ENV_ROBINHOOD_SEQUENCER_FEED_CODEHASH
+                );
+            }
+            _requireProductionAddress("chainlink.sequencerFeed", chainlinkFeed, expectedFeed);
+            _requireProductionAddress("erc4626.sequencerFeed", erc4626Feed, expectedFeed);
+            if (!chainlinkOracleFeed.sequencerUptimeFeedRequired()) {
+                revert ProductionRobinhoodSequencerRequirementMismatch(address(chainlinkOracleFeed), false, true);
+            }
+            if (!erc4626OracleFeed.sequencerUptimeFeedRequired()) {
+                revert ProductionRobinhoodSequencerRequirementMismatch(address(erc4626OracleFeed), false, true);
+            }
+            _snapshotRobinhoodSequencerMetadata(
+                expectedFeed,
+                _hasNonWhitespace(source) ? source : "operator-supplied-testnet-feed",
+                expectedFeed.codehash
+            );
+            return;
+        }
+
+        bool explicitTestnetException = _robinhoodMissingSequencerFeedExceptionRequested();
+        bool allowMissingSequencerFeed = isTestnet && (!_requiresStrictProductionGuards() || explicitTestnetException);
+        if (!allowMissingSequencerFeed) {
+            revert ProductionRobinhoodSequencerFeedRequired(block.chainid, envName);
+        }
+        _requireProductionAddress("chainlink.sequencerFeed", chainlinkFeed, address(0));
+        _requireProductionAddress("erc4626.sequencerFeed", erc4626Feed, address(0));
+        if (chainlinkOracleFeed.sequencerUptimeFeedRequired()) {
+            revert ProductionRobinhoodSequencerRequirementMismatch(address(chainlinkOracleFeed), true, false);
+        }
+        if (erc4626OracleFeed.sequencerUptimeFeedRequired()) {
+            revert ProductionRobinhoodSequencerRequirementMismatch(address(erc4626OracleFeed), true, false);
+        }
+        _snapshotRobinhoodSequencerMetadata(
+            address(0),
+            explicitTestnetException ? "robinhood-testnet-explicit-exception" : "robinhood-testnet-relaxed-guards",
+            bytes32(0)
+        );
+    }
+
+    function _snapshotRobinhoodSequencerMetadata(address feed, string memory source, bytes32 codehash) internal {
+        _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED, vm.toString(feed));
+        _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED_SOURCE, source);
+        _setDeploymentMetadata(METADATA_ROBINHOOD_SEQUENCER_FEED_CODEHASH, vm.toString(codehash));
     }
 
     function _robinhoodSequencerFeed(bool isTestnet) internal view virtual returns (address) {
@@ -1476,6 +1555,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         if (usesChainlink) {
             _readRequiredProductionCodehash(NAME_CHAINLINK_ORACLE_FEED, ENV_CHAINLINK_ORACLE_CODEHASH);
             _readRequiredProductionCodehash(NAME_US_MARKET_SESSION_GATE, ENV_US_MARKET_SESSION_GATE_CODEHASH);
+            if (_isRobinhoodChain() && !_isRobinhoodTestnet()) {
+                _readRequiredProductionCodehash(NAME_ROBINHOOD_SEQUENCER_FEED, ENV_ROBINHOOD_SEQUENCER_FEED_CODEHASH);
+            }
         } else {
             _readRequiredProductionCodehash(NAME_PYTH_ORACLE, ENV_PYTH_ORACLE_CODEHASH);
         }

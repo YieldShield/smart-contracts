@@ -210,7 +210,11 @@ test("missingProductionEnv limits the missing-sequencer exception to Robinhood t
             { ...productionDeploy, network: "robinhood" },
             productionEnv,
         ),
-        ["YS_ROBINHOOD_SEQUENCER_FEED", "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE"],
+        [
+            "YS_ROBINHOOD_SEQUENCER_FEED",
+            "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE",
+            "YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH",
+        ],
     );
 });
 
@@ -241,12 +245,14 @@ test("missingProductionEnv requires nonblank mainnet sequencer provenance", asyn
 
     assert.deepEqual(missingProductionEnv(request, env), [
         "YS_ROBINHOOD_SEQUENCER_FEED_SOURCE",
+        "YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH",
     ]);
     assert.deepEqual(
         missingProductionEnv(request, {
             ...env,
             YS_ROBINHOOD_SEQUENCER_FEED_SOURCE:
                 "https://docs.example/sequencer-feed",
+            YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH: `0x${"66".repeat(32)}`,
         }),
         [],
     );

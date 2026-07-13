@@ -24,6 +24,35 @@ async function makePromotedManifest(chainId = "46630") {
         addressEvidence: {},
         reviewedCodehashPins: {},
     };
+    if (chainId === "4663") {
+        const sequencerAddress = "0x0000000000000000000000000000000000000abc";
+        const sequencerCodehash = `0x${"cc".repeat(32)}`;
+        manifest.robinhoodSequencerUptimeFeed = sequencerAddress;
+        manifest.robinhoodSequencerUptimeFeedSource =
+            "https://docs.example/feed";
+        manifest.robinhoodSequencerUptimeFeedCodehash = sequencerCodehash;
+        manifest.sequencerUptimeFeedEvidence = {
+            address: sequencerAddress,
+            mode: "configured",
+            reviewedCodehashPin: sequencerCodehash,
+            runtimeCodehash: sequencerCodehash,
+            source: "https://docs.example/feed",
+        };
+    } else {
+        const zeroAddress = "0x0000000000000000000000000000000000000000";
+        const zeroCodehash = `0x${"00".repeat(32)}`;
+        manifest.robinhoodSequencerUptimeFeed = zeroAddress;
+        manifest.robinhoodSequencerUptimeFeedSource =
+            "robinhood-testnet-relaxed-guards";
+        manifest.robinhoodSequencerUptimeFeedCodehash = zeroCodehash;
+        manifest.sequencerUptimeFeedEvidence = {
+            address: zeroAddress,
+            mode: "robinhood-testnet-exception",
+            reviewedCodehashPin: null,
+            runtimeCodehash: zeroCodehash,
+            source: "robinhood-testnet-relaxed-guards",
+        };
+    }
     CHAINLINK_CORE_INVENTORY.forEach((name, index) => {
         const address = `0x${(index + 1).toString(16).padStart(40, "0")}`;
         manifest[address] = name;
@@ -132,6 +161,45 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
     assert.throws(
         () => validateActiveDeploymentManifest("46630", manifest),
         /does not match the reviewed production inventory/u,
+    );
+});
+
+test("Robinhood manifests require chain-appropriate sequencer evidence", async () => {
+    const { validateActiveDeploymentManifest } =
+        await import("../generateTsAbis.js");
+    const testnet = await makePromotedManifest();
+    const withoutEvidence = structuredClone(testnet);
+    delete withoutEvidence.sequencerUptimeFeedEvidence;
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", withoutEvidence),
+        /incomplete sequencer uptime feed evidence/u,
+    );
+
+    const mainnet = await makePromotedManifest("4663");
+    assert.equal(validateActiveDeploymentManifest("4663", mainnet), mainnet);
+    const mainnetException = structuredClone(mainnet);
+    mainnetException.robinhoodSequencerUptimeFeed =
+        "0x0000000000000000000000000000000000000000";
+    mainnetException.robinhoodSequencerUptimeFeedCodehash = `0x${"00".repeat(32)}`;
+    mainnetException.robinhoodSequencerUptimeFeedSource =
+        "robinhood-testnet-explicit-exception";
+    mainnetException.sequencerUptimeFeedEvidence = {
+        address: mainnetException.robinhoodSequencerUptimeFeed,
+        mode: "robinhood-testnet-exception",
+        reviewedCodehashPin: null,
+        runtimeCodehash: mainnetException.robinhoodSequencerUptimeFeedCodehash,
+        source: mainnetException.robinhoodSequencerUptimeFeedSource,
+    };
+    assert.throws(
+        () => validateActiveDeploymentManifest("4663", mainnetException),
+        /mainnet requires a configured, reviewed sequencer uptime feed/u,
+    );
+
+    const tampered = structuredClone(mainnet);
+    tampered.sequencerUptimeFeedEvidence.runtimeCodehash = `0x${"dd".repeat(32)}`;
+    assert.throws(
+        () => validateActiveDeploymentManifest("4663", tampered),
+        /incomplete sequencer uptime feed evidence/u,
     );
 });
 
