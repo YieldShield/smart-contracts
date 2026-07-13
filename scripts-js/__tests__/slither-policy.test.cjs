@@ -5,6 +5,24 @@ const { test } = require("node:test");
 
 const root = join(__dirname, "..", "..");
 
+test("local Slither reports findings without hiding execution failures", () => {
+    const makefile = readFileSync(join(root, "Makefile"), "utf8");
+    const recipe = makefile.slice(
+        makefile.indexOf("slither:\n"),
+        makefile.indexOf("\n# Security analysis — Aderyn"),
+    );
+
+    assert.match(recipe, /\bslither\s+\./u);
+    assert.match(recipe, /--checklist\b/u);
+    assert.match(recipe, /--fail-none\b/u);
+    assert.doesNotMatch(recipe, /\|\|\s*true/u);
+
+    const securityPolicy = readFileSync(join(root, "SECURITY.md"), "utf8");
+    assert.match(securityPolicy, /report-only for detector findings/u);
+    assert.match(securityPolicy, /Tool startup/u);
+    assert.match(securityPolicy, /non-zero exit\s+status/u);
+});
+
 test("Slither 0.11.5 is pinned in both jobs without detector-family exclusions", () => {
     const workflow = readFileSync(
         join(root, ".github", "workflows", "ci.yml"),

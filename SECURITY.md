@@ -55,6 +55,11 @@ make slither
 make aderyn
 ```
 
+The local Slither target is report-only for detector findings: it writes the
+full checklist to `slither-report.md` and uses `--fail-none`. Tool startup,
+configuration, compilation, and analyzer crashes still return a non-zero exit
+status so a broken analysis cannot appear successful.
+
 In CI, Slither's dedicated high-severity job is the blocking static-analysis
 gate. Aderyn is uploaded as a report-only artifact for manual triage unless a
 separate Aderyn severity gate is intentionally added later.

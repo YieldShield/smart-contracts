@@ -73,7 +73,7 @@ verify:
 
 # Security analysis — Slither
 slither:
-	slither . --foundry-out-dir out --config-file slither.config.json --checklist > slither-report.md 2>&1 || true
+	slither . --foundry-out-dir out --config-file slither.config.json --checklist --fail-none > slither-report.md 2>&1
 	@echo "Report written to slither-report.md"
 
 # Security analysis — Aderyn
