@@ -189,6 +189,14 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
+        // The production deposit path rejects positive token amounts whose USD
+        // value truncates to zero. Repeated backing-price drops can otherwise
+        // make the handler classify an invalid deposit as modeled-valid.
+        if (_toUsd(address(backingToken), amount) == 0) {
+            _skip(this.depositProtector.selector);
+            return;
+        }
+
         // Check TVL limit
         (uint256 shieldedBal, uint256 protectorBal) = pool.getPoolBalances();
         (,,,, uint256 maxTVLUsd,,,,,) = pool.poolConfig();
@@ -1168,6 +1176,23 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
         assertEq(skipsAfter, skipsBefore + 1, "zero-USD deposit should be a modeled skip");
         assertEq(successesAfter, successesBefore, "zero-USD deposit must not execute");
         assertEq(revertsAfter, revertsBefore, "zero-USD deposit must not count as an unexpected revert");
+    }
+
+    function test_handlerSkipsProtectorDepositWhenUsdValueRoundsToZero() public {
+        for (uint256 i = 0; i < 32; i++) {
+            handler.dropBackingPrice(5_000);
+        }
+        assertEq(oracle.getPrice(address(backingToken)), 1, "precondition: fuzzed backing price reaches one");
+
+        (, uint256 skipsBefore, uint256 successesBefore, uint256 revertsBefore) =
+            handler.callMetrics(SplitRiskPoolHandler.depositProtector.selector);
+        handler.depositProtector(0, 0);
+        (, uint256 skipsAfter, uint256 successesAfter, uint256 revertsAfter) =
+            handler.callMetrics(SplitRiskPoolHandler.depositProtector.selector);
+
+        assertEq(skipsAfter, skipsBefore + 1, "zero-USD protector deposit should be a modeled skip");
+        assertEq(successesAfter, successesBefore, "zero-USD protector deposit must not execute");
+        assertEq(revertsAfter, revertsBefore, "zero-USD protector deposit must not count as an unexpected revert");
     }
 
     // ============ Post-Run Summary ============
