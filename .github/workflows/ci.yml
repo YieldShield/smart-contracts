@@ -81,7 +81,7 @@ jobs:
         env:
           FOUNDRY_PROFILE: invariant-reachability
           INVARIANT_REQUIRE_RANDOM_REACHABILITY: "true"
-        run: forge test --match-contract SplitRiskPoolInvariantTest
+        run: forge test --match-contract 'SplitRiskPool.*InvariantTest'
 
       - name: Check high-severity npm advisories
         run: npm audit --omit=dev --audit-level=high
