@@ -57,8 +57,72 @@ test("checker accepts complete production coverage above every floor", async () 
         .join("\n");
 
     const result = checkCoverage(report);
-    assert.equal(result.production.size, 11);
+    assert.equal(
+        result.production.size,
+        Object.keys(COVERAGE_POLICY.critical).length + 1,
+    );
     assert.deepEqual(result.violations, []);
+});
+
+test("security-critical production inventory and coverage floors stay synchronized", async () => {
+    const {
+        COVERAGE_POLICY,
+        SECURITY_CRITICAL_CONTRACTS,
+        validateCriticalCoverageInventory,
+    } = await coverageModule();
+
+    assert.deepEqual(
+        validateCriticalCoverageInventory(),
+        [...SECURITY_CRITICAL_CONTRACTS].sort(),
+    );
+    assert.deepEqual(
+        Object.keys(COVERAGE_POLICY.critical).sort(),
+        [...SECURITY_CRITICAL_CONTRACTS].sort(),
+    );
+
+    assert.throws(
+        () =>
+            validateCriticalCoverageInventory(COVERAGE_POLICY, [
+                ...SECURITY_CRITICAL_CONTRACTS,
+                "contracts/NewSecurityBoundary.sol",
+            ]),
+        /missing floors: contracts\/NewSecurityBoundary\.sol/u,
+    );
+    assert.throws(
+        () =>
+            validateCriticalCoverageInventory(
+                {
+                    ...COVERAGE_POLICY,
+                    critical: {
+                        ...COVERAGE_POLICY.critical,
+                        "contracts/UnreviewedFloor.sol": {
+                            lines: 1,
+                            branches: 1,
+                        },
+                    },
+                },
+                SECURITY_CRITICAL_CONTRACTS,
+            ),
+        /floors outside security-critical inventory: contracts\/UnreviewedFloor\.sol/u,
+    );
+});
+
+test("checker rejects zero-hit commission escrow coverage despite a passing aggregate", async () => {
+    const { COVERAGE_POLICY, checkCoverage } = await coverageModule();
+    const escrowPath = "contracts/ProtectorCommissionEscrow.sol";
+    const report = Object.keys(COVERAGE_POLICY.critical)
+        .map((sourcePath) =>
+            lcovRecord(sourcePath, {
+                lineHit: sourcePath !== escrowPath,
+                branchHit: sourcePath !== escrowPath,
+            }),
+        )
+        .join("\n");
+
+    assert.throws(
+        () => checkCoverage(report),
+        /contracts\/ProtectorCommissionEscrow\.sol lines 0\.00% is below 90\.00%[\s\S]*branches 0\.00% is below 49\.00%/u,
+    );
 });
 
 test("checker fails closed for missing critical entries", async () => {
@@ -79,10 +143,10 @@ test("checker enforces critical and aggregate line and branch floors", async () 
     const { COVERAGE_POLICY, checkCoverage } = await coverageModule();
     const critical = Object.keys(COVERAGE_POLICY.critical);
     const criticalFailure = critical
-        .map((sourcePath, index) =>
+        .map((sourcePath) =>
             lcovRecord(sourcePath, {
-                lineHit: index !== 0,
-                branchHit: index !== 0,
+                lineHit: sourcePath !== "contracts/SplitRiskPool.sol",
+                branchHit: sourcePath !== "contracts/SplitRiskPool.sol",
             }),
         )
         .join("\n");
@@ -94,7 +158,7 @@ test("checker enforces critical and aggregate line and branch floors", async () 
     const aggregateFailure = critical
         .map((sourcePath) => lcovRecord(sourcePath))
         .concat(
-            Array.from({ length: 10 }, (_unused, index) =>
+            Array.from({ length: critical.length }, (_unused, index) =>
                 lcovRecord(`contracts/libraries/Uncovered${index}.sol`, {
                     lineHit: false,
                     branchHit: false,

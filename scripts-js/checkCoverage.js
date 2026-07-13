@@ -4,9 +4,34 @@ import { fileURLToPath } from "url";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
+// Explicitly reviewed production security boundary. Keep this separate from the
+// floor table so CI fails if a security-critical contract is inventoried without
+// a corresponding per-contract coverage floor (or vice versa).
+const SECURITY_CRITICAL_CONTRACTS = Object.freeze([
+    "contracts/ProtectorCommissionEscrow.sol",
+    "contracts/SplitRiskPool.sol",
+    "contracts/SplitRiskPoolFactory.sol",
+    "contracts/YSGovernor.sol",
+    "contracts/YSToken.sol",
+    "contracts/governance/YSTimelockController.sol",
+    "contracts/oracles/ChainlinkOracleFeed.sol",
+    "contracts/oracles/CompositeOracle.sol",
+    "contracts/oracles/ERC4626OracleFeed.sol",
+    "contracts/oracles/PythOracle.sol",
+    "contracts/oracles/RobinhoodStockOracleFeed.sol",
+    "contracts/oracles/SequencerUptimeGuard.sol",
+    "contracts/oracles/USMarketSessionGate.sol",
+]);
+
 const COVERAGE_POLICY = Object.freeze({
     aggregate: Object.freeze({ lines: 85, branches: 53 }),
     critical: Object.freeze({
+        // Reviewed 2026-07-13 LCOV: 91.30% lines / 50.00% branches.
+        // These floors fail if any currently hit line or branch becomes unhit.
+        "contracts/ProtectorCommissionEscrow.sol": Object.freeze({
+            lines: 90,
+            branches: 49,
+        }),
         "contracts/SplitRiskPool.sol": Object.freeze({
             lines: 84,
             branches: 52,
@@ -46,6 +71,18 @@ const COVERAGE_POLICY = Object.freeze({
         "contracts/oracles/RobinhoodStockOracleFeed.sol": Object.freeze({
             lines: 94,
             branches: 90,
+        }),
+        // Reviewed 2026-07-13 LCOV: 78.57% lines / 52.17% branches.
+        // These floors fail if any currently hit line or branch becomes unhit.
+        "contracts/oracles/SequencerUptimeGuard.sol": Object.freeze({
+            lines: 77,
+            branches: 51,
+        }),
+        // Reviewed 2026-07-13 LCOV: 93.48% lines / 50.00% branches.
+        // These floors fail if any currently hit line or branch becomes unhit.
+        "contracts/oracles/USMarketSessionGate.sol": Object.freeze({
+            lines: 92,
+            branches: 49,
         }),
     }),
 });
@@ -226,7 +263,43 @@ function percentage(metric) {
     return metric.total === 0 ? undefined : (metric.hit / metric.total) * 100;
 }
 
-function evaluateCoverage(sources, policy = COVERAGE_POLICY) {
+function validateCriticalCoverageInventory(
+    policy = COVERAGE_POLICY,
+    inventory = SECURITY_CRITICAL_CONTRACTS,
+) {
+    const inventoried = new Set(inventory);
+    const floored = new Set(Object.keys(policy.critical));
+    const missingFloors = [...inventoried].filter(
+        (sourcePath) => !floored.has(sourcePath),
+    );
+    const unreviewedFloors = [...floored].filter(
+        (sourcePath) => !inventoried.has(sourcePath),
+    );
+
+    if (missingFloors.length > 0 || unreviewedFloors.length > 0) {
+        const details = [];
+        if (missingFloors.length > 0) {
+            details.push(`missing floors: ${missingFloors.sort().join(", ")}`);
+        }
+        if (unreviewedFloors.length > 0) {
+            details.push(
+                `floors outside security-critical inventory: ${unreviewedFloors.sort().join(", ")}`,
+            );
+        }
+        throw new Error(
+            `Security-critical coverage inventory mismatch (${details.join("; ")}).`,
+        );
+    }
+
+    return [...inventoried].sort();
+}
+
+function evaluateCoverage(
+    sources,
+    policy = COVERAGE_POLICY,
+    securityCriticalContracts = SECURITY_CRITICAL_CONTRACTS,
+) {
+    validateCriticalCoverageInventory(policy, securityCriticalContracts);
     const production = new Map(
         [...sources].filter(([sourcePath]) => isProductionContract(sourcePath)),
     );
@@ -279,7 +352,11 @@ function formatMetric(metric) {
 
 function checkCoverage(contents, options = {}) {
     const sources = parseLcov(contents, options);
-    const result = evaluateCoverage(sources, options.policy ?? COVERAGE_POLICY);
+    const result = evaluateCoverage(
+        sources,
+        options.policy ?? COVERAGE_POLICY,
+        options.securityCriticalContracts ?? SECURITY_CRITICAL_CONTRACTS,
+    );
     if (result.violations.length > 0) {
         throw new Error(
             `Coverage policy failed:\n- ${result.violations.join("\n- ")}`,
@@ -307,6 +384,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 export {
     COVERAGE_POLICY,
+    SECURITY_CRITICAL_CONTRACTS,
     checkCoverage,
     evaluateCoverage,
     isProductionContract,
@@ -314,4 +392,5 @@ export {
     parseLcov,
     percentage,
     summarize,
+    validateCriticalCoverageInventory,
 };
