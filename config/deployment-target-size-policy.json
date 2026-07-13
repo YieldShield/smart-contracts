@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "networks": {
+    "arbitrum": {
+      "productionDeploymentEnabled": false,
+      "artifactSizeCheckRequired": false,
+      "runtimeLimit": 24576,
+      "initcodeLimit": 49152,
+      "reason": "SplitRiskPool and SplitRiskPoolFactory exceed the standard EIP-170 runtime limit; split the implementations and complete an Arbitrum fork deployment rehearsal before enabling broadcasts"
+    },
+    "arbitrumSepolia": {
+      "productionDeploymentEnabled": false,
+      "artifactSizeCheckRequired": false,
+      "runtimeLimit": 24576,
+      "initcodeLimit": 49152,
+      "reason": "SplitRiskPool and SplitRiskPoolFactory exceed the standard EIP-170 runtime limit; split the implementations and complete an Arbitrum fork deployment rehearsal before enabling broadcasts"
+    },
+    "robinhood": {
+      "productionDeploymentEnabled": true,
+      "artifactSizeCheckRequired": true,
+      "runtimeLimit": 98304,
+      "initcodeLimit": 196608,
+      "reason": "Robinhood permits the reviewed 96 KiB runtime and 192 KiB initcode deployment ceilings"
+    },
+    "robinhoodTestnet": {
+      "productionDeploymentEnabled": true,
+      "artifactSizeCheckRequired": true,
+      "runtimeLimit": 98304,
+      "initcodeLimit": 196608,
+      "reason": "Robinhood permits the reviewed 96 KiB runtime and 192 KiB initcode deployment ceilings"
+    }
+  }
+}

@@ -399,12 +399,17 @@ test("forgeScriptArgsForNetwork applies the runner override to both Robinhood ne
     assert.deepEqual(forgeScriptArgsForNetwork("robinhood", {}), [
         "--disable-code-size-limit",
     ]);
+    assert.deepEqual(forgeScriptArgsForNetwork("arbitrum", {}), []);
+    assert.deepEqual(forgeScriptArgsForNetwork("arbitrumSepolia", {}), []);
     assert.deepEqual(forgeScriptArgsForNetwork("base", {}), []);
 });
 
-test("deployment target size preflight is scoped to Robinhood production deploys", async () => {
-    const { requiresDeploymentTargetSizeCheck } =
-        await import("../parseArgs.js");
+test("deployment target size policy enables only reviewed Robinhood production deploys", async () => {
+    const {
+        assertProductionDeploymentTargetSupported,
+        deploymentTargetSizePolicyForNetwork,
+        requiresDeploymentTargetSizeCheck,
+    } = await import("../parseArgs.js");
 
     assert.equal(
         requiresDeploymentTargetSizeCheck({
@@ -433,6 +438,25 @@ test("deployment target size preflight is scoped to Robinhood production deploys
             network: "robinhoodTestnet",
         }),
         false,
+    );
+
+    for (const network of ["arbitrum", "arbitrumSepolia"]) {
+        const policy = deploymentTargetSizePolicyForNetwork(network);
+        assert.equal(policy.productionDeploymentEnabled, false);
+        assert.equal(policy.runtimeLimit, 24_576);
+        assert.equal(policy.initcodeLimit, 49_152);
+        assert.throws(
+            () =>
+                assertProductionDeploymentTargetSupported({
+                    fileName: "DeployYieldShieldProduction.s.sol",
+                    network,
+                }),
+            /blocked by the checked-in deployment target size policy/u,
+        );
+    }
+    assert.throws(
+        () => deploymentTargetSizePolicyForNetwork("base"),
+        /no checked-in deployment target size policy/u,
     );
 });
 
@@ -495,51 +519,23 @@ test("Arbitrum sequencer input is only an exact policy assertion", async () => {
     );
 });
 
-test("invalid Arbitrum sequencer input fails before RPC, size, or Make work", async () => {
-    const { preflightPublicDeploymentPromotion, runDeploymentGatesAndSpawn } =
-        await import("../parseArgs.js");
-    const cases = [
-        {
-            network: "arbitrum",
-            feed: "0x0000000000000000000000000000000000000bad",
-            error: /must exactly match the checked-in feed/u,
-        },
-        {
-            network: "arbitrumSepolia",
-            feed: "0xFdB631F5EE196F0ed6FAa767959853A9F217697D",
-            error: /must be unset for chain 421614/u,
-        },
-    ];
+test("blocked Arbitrum targets fail before RPC, size, or Make work", async () => {
+    const { runDeploymentGatesAndSpawn } = await import("../parseArgs.js");
 
-    for (const testCase of cases) {
+    for (const network of ["arbitrum", "arbitrumSepolia"]) {
         const calls = [];
         const request = {
             fileName: "DeployYieldShieldProduction.s.sol",
-            network: testCase.network,
-            env: {
-                YS_ARBITRUM_SEQUENCER_FEED: testCase.feed,
-            },
+            network,
+            env: {},
             makeArgs: ["deploy-and-generate-abis"],
             childEnv: {},
         };
 
         await assert.rejects(
             runDeploymentGatesAndSpawn(request, {
-                preflight: async (preflightRequest) => {
+                preflight: async () => {
                     calls.push("preflight");
-                    return preflightPublicDeploymentPromotion(
-                        preflightRequest,
-                        {
-                            resolveRpcUrlFn: () => {
-                                calls.push("resolve-rpc");
-                                return "https://must-not-run.example";
-                            },
-                            providerFactory: () => {
-                                calls.push("provider");
-                                return {};
-                            },
-                        },
-                    );
                 },
                 runSizeCheck: () => {
                     calls.push("size");
@@ -551,9 +547,9 @@ test("invalid Arbitrum sequencer input fails before RPC, size, or Make work", as
                 },
                 log: () => {},
             }),
-            testCase.error,
+            /blocked by the checked-in deployment target size policy/u,
         );
-        assert.deepEqual(calls, ["preflight"]);
+        assert.deepEqual(calls, []);
     }
 });
 
@@ -682,8 +678,7 @@ test("public deployment preflight verifies both chains and their agreed finalize
 });
 
 test("unsupported aliases and failed preflights cannot reach size checks or Make", async () => {
-    const { preflightPublicDeploymentPromotion, runDeploymentGatesAndSpawn } =
-        await import("../parseArgs.js");
+    const { runDeploymentGatesAndSpawn } = await import("../parseArgs.js");
     const calls = [];
     const request = {
         fileName: "DeployYieldShieldProduction.s.sol",
@@ -695,14 +690,8 @@ test("unsupported aliases and failed preflights cannot reach size checks or Make
 
     await assert.rejects(
         runDeploymentGatesAndSpawn(request, {
-            preflight: async (preflightRequest) => {
+            preflight: async () => {
                 calls.push("preflight");
-                return preflightPublicDeploymentPromotion(preflightRequest, {
-                    providerFactory: () => {
-                        calls.push("provider");
-                        return {};
-                    },
-                });
             },
             runSizeCheck: () => {
                 calls.push("size");
@@ -714,9 +703,9 @@ test("unsupported aliases and failed preflights cannot reach size checks or Make
             },
             log: () => {},
         }),
-        /has no unique checked-in deployment finality policy/u,
+        /no checked-in deployment target size policy/u,
     );
-    assert.deepEqual(calls, ["preflight"]);
+    assert.deepEqual(calls, []);
 
     const orderedCalls = [];
     const status = await runDeploymentGatesAndSpawn(

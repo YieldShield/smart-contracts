@@ -173,12 +173,21 @@ finality evidence. These identities are operator-attested rather than
 cryptographically discovered; use an independently operated full node for one
 side when possible.
 
-The production deploy CLI accepts promotion policy only for the checked-in
-`arbitrum`, `arbitrumSepolia`, `robinhood`, and `robinhoodTestnet` aliases.
-Before any contract-size check, Make target, or Forge broadcast, it resolves
-both RPCs and requires them to report the policy's chain ID and the same
-explicit finalized block. Other public aliases fail closed before deployment;
-supporting another chain requires a reviewed finality-policy entry first.
+The production deploy CLI has finality policies for the checked-in `arbitrum`,
+`arbitrumSepolia`, `robinhood`, and `robinhoodTestnet` aliases. A separate
+checked-in deployment-target size policy runs before keystore selection,
+environment validation, RPC construction, contract-size builds, Make, or Forge.
+Only Robinhood aliases are currently broadcast-enabled. Other public aliases
+fail closed; supporting another chain requires reviewed finality and target-size
+policy entries.
+
+Arbitrum One and Arbitrum Sepolia production broadcasts are intentionally
+blocked because the current `SplitRiskPool` and `SplitRiskPoolFactory` runtimes
+exceed EIP-170's 24,576-byte limit. The aliases remain available to oracle fork
+tests and finality-policy validation. Re-enabling deployment requires splitting
+both implementations below the standard limit and completing a full Arbitrum
+fork deployment rehearsal. The Robinhood code-size override must not be used on
+Arbitrum.
 
 The Arbitrum Pyth policies also pin both sequencer adapters. Arbitrum One must
 use Chainlink's documented `0xFdB631F5EE196F0ed6FAa767959853A9F217697D`

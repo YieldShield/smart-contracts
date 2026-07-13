@@ -5,9 +5,29 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
+const DEPLOYMENT_TARGET_SIZE_POLICY = JSON.parse(
+    readFileSync(
+        join(PROJECT_ROOT, "config", "deployment-target-size-policy.json"),
+        "utf8",
+    ),
+);
+const ROBINHOOD_POLICY = DEPLOYMENT_TARGET_SIZE_POLICY.networks.robinhood;
+const ROBINHOOD_TESTNET_POLICY =
+    DEPLOYMENT_TARGET_SIZE_POLICY.networks.robinhoodTestnet;
+if (
+    DEPLOYMENT_TARGET_SIZE_POLICY.schemaVersion !== 1 ||
+    !ROBINHOOD_POLICY?.productionDeploymentEnabled ||
+    !ROBINHOOD_POLICY.artifactSizeCheckRequired ||
+    ROBINHOOD_POLICY.runtimeLimit !== ROBINHOOD_TESTNET_POLICY?.runtimeLimit ||
+    ROBINHOOD_POLICY.initcodeLimit !== ROBINHOOD_TESTNET_POLICY?.initcodeLimit
+) {
+    throw new Error(
+        "Checked-in Robinhood deployment target size policy is invalid.",
+    );
+}
 
-const ROBINHOOD_RUNTIME_SIZE_LIMIT = 96 * 1024;
-const ROBINHOOD_INITCODE_SIZE_LIMIT = 192 * 1024;
+const ROBINHOOD_RUNTIME_SIZE_LIMIT = ROBINHOOD_POLICY.runtimeLimit;
+const ROBINHOOD_INITCODE_SIZE_LIMIT = ROBINHOOD_POLICY.initcodeLimit;
 const PRODUCTION_SCRIPT_PATH = join(
     PROJECT_ROOT,
     "script",

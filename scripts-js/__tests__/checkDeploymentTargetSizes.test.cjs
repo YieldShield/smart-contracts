@@ -110,6 +110,36 @@ test("Robinhood target size limits accept exact boundaries", async () => {
     ]);
 });
 
+test("Robinhood artifact limits come from the checked-in per-network policy", async () => {
+    const { ROBINHOOD_INITCODE_SIZE_LIMIT, ROBINHOOD_RUNTIME_SIZE_LIMIT } =
+        await import("../checkDeploymentTargetSizes.js");
+    const policy = JSON.parse(
+        readFileSync(
+            join(
+                __dirname,
+                "..",
+                "..",
+                "config",
+                "deployment-target-size-policy.json",
+            ),
+            "utf8",
+        ),
+    );
+
+    assert.equal(
+        ROBINHOOD_RUNTIME_SIZE_LIMIT,
+        policy.networks.robinhood.runtimeLimit,
+    );
+    assert.equal(
+        ROBINHOOD_INITCODE_SIZE_LIMIT,
+        policy.networks.robinhood.initcodeLimit,
+    );
+    assert.deepEqual(
+        policy.networks.robinhood,
+        policy.networks.robinhoodTestnet,
+    );
+});
+
 test("Robinhood target size validation rejects runtime and initcode overflow", async () => {
     const {
         ROBINHOOD_INITCODE_SIZE_LIMIT,

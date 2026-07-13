@@ -34,6 +34,12 @@ const DEPLOYMENT_TARGET_SIZE_CHECK_SCRIPT = join(
     __dirname,
     "checkDeploymentTargetSizes.js",
 );
+const DEPLOYMENT_TARGET_SIZE_POLICY = JSON.parse(
+    readFileSync(
+        join(__dirname, "..", "config", "deployment-target-size-policy.json"),
+        "utf8",
+    ),
+);
 const REQUIRED_RUNTIME_CODEHASH_ENV = [
     "YS_PRODUCTION_FACTORY_PROXY_CODEHASH",
     "YS_PRODUCTION_FACTORY_IMPLEMENTATION_CODEHASH",
@@ -410,10 +416,71 @@ function resolveDeploymentGeneration(
     };
 }
 
-function requiresDeploymentTargetSizeCheck({ fileName, network }) {
-    return (
-        fileName === PRODUCTION_DEPLOY_SCRIPT && ROBINHOOD_NETWORKS.has(network)
+function deploymentTargetSizePolicyForNetwork(
+    network,
+    sizePolicy = DEPLOYMENT_TARGET_SIZE_POLICY,
+) {
+    if (
+        sizePolicy?.schemaVersion !== 1 ||
+        !sizePolicy.networks ||
+        typeof network !== "string"
+    ) {
+        throw new Error("Deployment target size policy is invalid.");
+    }
+
+    const networkPolicy = sizePolicy.networks[network];
+    if (!networkPolicy) {
+        throw new Error(
+            `Public network alias '${network}' has no checked-in deployment target size policy.`,
+        );
+    }
+    if (
+        typeof networkPolicy.productionDeploymentEnabled !== "boolean" ||
+        typeof networkPolicy.artifactSizeCheckRequired !== "boolean" ||
+        !Number.isSafeInteger(networkPolicy.runtimeLimit) ||
+        networkPolicy.runtimeLimit <= 0 ||
+        !Number.isSafeInteger(networkPolicy.initcodeLimit) ||
+        networkPolicy.initcodeLimit <= 0 ||
+        !hasNonBlankEnvValue(networkPolicy.reason)
+    ) {
+        throw new Error(
+            `Deployment target size policy for '${network}' is invalid.`,
+        );
+    }
+
+    return networkPolicy;
+}
+
+function assertProductionDeploymentTargetSupported(
+    { fileName, network },
+    sizePolicy = DEPLOYMENT_TARGET_SIZE_POLICY,
+) {
+    if (fileName !== PRODUCTION_DEPLOY_SCRIPT || isLocalNetwork(network)) {
+        return null;
+    }
+
+    const networkPolicy = deploymentTargetSizePolicyForNetwork(
+        network,
+        sizePolicy,
     );
+    if (!networkPolicy.productionDeploymentEnabled) {
+        throw new Error(
+            `Production deployment to '${network}' is blocked by the checked-in deployment target size policy: ${networkPolicy.reason}.`,
+        );
+    }
+
+    return networkPolicy;
+}
+
+function requiresDeploymentTargetSizeCheck(request) {
+    try {
+        return Boolean(
+            assertProductionDeploymentTargetSupported(request)
+                ?.artifactSizeCheckRequired,
+        );
+    } catch {
+        return false;
+    }
 }
 
 function runDeploymentTargetSizeCheck() {
@@ -540,15 +607,20 @@ async function preflightPublicDeploymentPromotion(
 async function runDeploymentGatesAndSpawn(
     { fileName, network, env, makeArgs, childEnv },
     {
+        assertDeploymentSupported = assertProductionDeploymentTargetSupported,
         preflight = preflightPublicDeploymentPromotion,
         runSizeCheck = runDeploymentTargetSizeCheck,
         spawn = spawnSync,
         log = console.log,
     } = {},
 ) {
+    const targetSizePolicy = assertDeploymentSupported({
+        fileName,
+        network,
+    });
     await preflight({ fileName, network, env });
 
-    if (requiresDeploymentTargetSizeCheck({ fileName, network })) {
+    if (targetSizePolicy?.artifactSizeCheckRequired) {
         log(
             "\n📏 Validating every production deployment target against Robinhood code-size limits",
         );
@@ -666,6 +738,15 @@ async function main(rawArgs = process.argv.slice(2), env = process.env) {
 
     validateDeployScriptFileName(fileName);
     validateNetworkExists(network);
+
+    try {
+        assertProductionDeploymentTargetSupported({ fileName, network });
+    } catch (error) {
+        console.error(
+            `\n❌ Deployment target preflight failed: ${error.message}`,
+        );
+        process.exit(1);
+    }
 
     if (defaultedToProduction) {
         console.log(
@@ -835,8 +916,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 }
 
 export {
+    assertProductionDeploymentTargetSupported,
     configuredKeystore,
     deploymentFinalityPolicyForNetwork,
+    deploymentTargetSizePolicyForNetwork,
     deploymentConfigurationDigest,
     forgeScriptArgsForNetwork,
     hasNonBlankEnvValue,
