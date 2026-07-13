@@ -515,13 +515,15 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
     // ----------------------------------------------------------------------
 
     /// @notice Backing-asset deposits must fail closed when the shielded leg is
-    ///         challengeable because capacity and accounting checks price both legs.
+    ///         challengeable and a shielded liability makes that leg relevant.
     ///         The test uses a deviation (challengeable, not yet challenged) to
     ///         exercise the `_hasOracleChallengeablePrice` half of the guard.
     function test_B7_depositBacking_RevertsOnShieldedChallengeable() public {
-        // First seed a backing position so the deposit path is reachable.
+        // First seed both sides so the deposit path must account for shielded exposure.
         vm.prank(protector);
         pool.depositBackingAsset(address(backingToken), 1_000e18, 0);
+        vm.prank(shielded);
+        pool.depositShieldedAsset(address(shieldedToken), 100e18, 0);
 
         // Push the primary shielded feed off the backup — this makes the
         // shielded leg challengeable. We don't formally challenge so we
@@ -531,6 +533,16 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         vm.prank(protector);
         vm.expectRevert(abi.encodeWithSelector(ErrorsLib.OraclePendingChallenge.selector, address(shieldedToken)));
         pool.depositBackingAsset(address(backingToken), 1_000e18, 0);
+    }
+
+    function test_B7_depositBacking_AllowsUnusedShieldedLegToBeChallengeable() public {
+        primaryOracle.setPrice(address(shieldedToken), 2e8);
+
+        vm.prank(protector);
+        uint256 tokenId = pool.depositBackingAsset(address(backingToken), 1_000e18, 0);
+
+        assertEq(tokenId, 0, "empty pool should accept backing without reading the unused shielded leg");
+        assertEq(pool.totalProtectorTokens(), 1_000e18);
     }
 
     // ----------------------------------------------------------------------

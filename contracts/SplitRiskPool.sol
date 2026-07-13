@@ -593,6 +593,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         return totalShieldedTokens != 0 || totalValueAtDeposit != 0 || totalShieldCollateralAmount != 0;
     }
 
+    /// @dev Returns true while shielded-token pricing can affect pool accounting.
+    function _hasShieldedExposure() internal view returns (bool) {
+        return poolState.shieldedTokenBalance != 0 || _hasShieldedLiabilities();
+    }
+
     /// @dev Best-effort wrapper for protected shielded-token pricing.
     function _tryGetShieldedProtectedPrice() internal view returns (bool success, uint256 price) {
         try IPriceOracle(poolConfig.priceOracle).getPrice(SHIELDED_TOKEN) returns (uint256 protectedPrice) {
@@ -877,7 +882,7 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
      * @return totalValueUsd The combined USD value of all deposited assets
      */
     function _getTotalPoolValueUsd() internal view returns (uint256 totalValueUsd) {
-        uint256 shieldedValueUsd = _getShieldedValue(poolState.shieldedTokenBalance);
+        uint256 shieldedValueUsd = _hasShieldedExposure() ? _getShieldedValue(poolState.shieldedTokenBalance) : 0;
         return shieldedValueUsd + _getProtectedBackingValue(poolState.totalBackingTokenBalance);
     }
 
@@ -1876,10 +1881,13 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             revert ErrorsLib.AccessControlDenied(msg.sender, "depositProtector");
         }
 
-        // Backing deposits lock protector shares from protected backing value and TVL
-        // accounting, so both priced legs must be free of pending oracle challenges.
+        // Backing deposits always depend on the backing leg. The shielded leg is
+        // relevant only once a balance or receipt liability exists; requiring it
+        // for an otherwise empty pool can prevent safety-improving recapitalization.
         _requireNoOraclePendingChallenge(BACKING_TOKEN);
-        _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+        if (_hasShieldedExposure()) {
+            _requireNoOraclePendingChallenge(SHIELDED_TOKEN);
+        }
 
         // Balance-delta deposit to support fee-on-transfer tokens
         uint256 received = _transferAndGetReceived(asset, depositAmount);
