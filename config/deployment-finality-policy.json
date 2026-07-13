@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "chains": {
     "4663": {
       "network": "robinhood-mainnet",

@@ -135,6 +135,8 @@ async function fixture({
             .reviewedCodehashPinSpecs(oracleMode)
             .map(([, envName]) => [envName, runtimeCodehash]),
     );
+    env.YS_DEPLOYMENT_RPC_OPERATOR = "deployment-operator";
+    env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR = "validation-operator";
     const provider = {
         async call(transaction) {
             callBlockTags.push(transaction.blockTag);
@@ -503,7 +505,11 @@ test("complete generation promotes atomically and records exact demo fixture met
         blockNumber: FINALIZED_BLOCK_NUMBER.toString(),
         blockTag: "finalized",
         independentValidationRpc: true,
-        policySchemaVersion: 1,
+        policySchemaVersion: 2,
+        rpcProviderOperators: {
+            deployment: "deployment-operator",
+            validation: "validation-operator",
+        },
     });
     assert.deepEqual(result.manifest.sequencerUptimeFeedEvidence, {
         address: addressFor(0),
@@ -706,6 +712,60 @@ test("public promotion requires a distinct independent validation RPC", async ()
             }),
         ),
         /independent deployment validation provider/u,
+    );
+});
+
+test("public promotion requires distinct normalized RPC operator identities", async () => {
+    const sameOperator = await fixture();
+    sameOperator.env.YS_DEPLOYMENT_RPC_OPERATOR = " QuickNode ";
+    sameOperator.env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR = "quicknode";
+    await assert.rejects(
+        sameOperator.validateAndBuildManifest(
+            validationArgs(sameOperator, {
+                primaryRpcUrl: "https://alpha.quiknode.pro/key-a",
+                validationRpcUrl: "https://beta.quiknode.pro/key-b",
+            }),
+        ),
+        /must identify an operator distinct/u,
+    );
+
+    const missingOperator = await fixture();
+    delete missingOperator.env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR;
+    await assert.rejects(
+        missingOperator.validateAndBuildManifest(
+            validationArgs(missingOperator),
+        ),
+        /YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR is required/u,
+    );
+
+    const malformedOperator = await fixture();
+    malformedOperator.env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR =
+        "https://validation.example/api-key";
+    await assert.rejects(
+        malformedOperator.validateAndBuildManifest(
+            validationArgs(malformedOperator),
+        ),
+        /must be a 2-64 character lowercase operator slug/u,
+    );
+});
+
+test("public promotion persists only normalized non-secret RPC operator slugs", async () => {
+    const item = await fixture();
+    item.env.YS_DEPLOYMENT_RPC_OPERATOR = " Alchemy ";
+    item.env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR = "SELF-HOSTED-BERLIN";
+
+    const manifest = await item.validateAndBuildManifest(validationArgs(item));
+
+    assert.deepEqual(manifest.finalityEvidence.rpcProviderOperators, {
+        deployment: "alchemy",
+        validation: "self-hosted-berlin",
+    });
+    const serializedEvidence = JSON.stringify(manifest.finalityEvidence);
+    assert.equal(serializedEvidence.includes(PRIMARY_RPC_URL), false);
+    assert.equal(serializedEvidence.includes(VALIDATION_RPC_URL), false);
+    assert.deepEqual(
+        Object.keys(manifest.finalityEvidence.rpcProviderOperators).sort(),
+        ["deployment", "validation"],
     );
 });
 

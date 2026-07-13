@@ -16,7 +16,11 @@ async function makePromotedManifest(chainId = "46630") {
             blockNumber: "1234",
             blockTag: "finalized",
             independentValidationRpc: true,
-            policySchemaVersion: 1,
+            policySchemaVersion: 2,
+            rpcProviderOperators: {
+                deployment: "deployment-operator",
+                validation: "validation-operator",
+            },
         },
         robinhoodDemoAssetsEnabled: "false",
         transactionHashes: ["0x01"],
@@ -129,6 +133,39 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
     assert.throws(
         () =>
             validateActiveDeploymentManifest("46630", withoutFinalityEvidence),
+        /missing finalized-state promotion evidence/u,
+    );
+
+    const withoutOperatorEvidence = structuredClone(manifest);
+    delete withoutOperatorEvidence.finalityEvidence.rpcProviderOperators;
+    assert.throws(
+        () =>
+            validateActiveDeploymentManifest("46630", withoutOperatorEvidence),
+        /missing finalized-state promotion evidence/u,
+    );
+
+    const sameOperator = structuredClone(manifest);
+    sameOperator.finalityEvidence.rpcProviderOperators.validation =
+        sameOperator.finalityEvidence.rpcProviderOperators.deployment;
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", sameOperator),
+        /missing finalized-state promotion evidence/u,
+    );
+
+    const nonCanonicalOperator = structuredClone(manifest);
+    nonCanonicalOperator.finalityEvidence.rpcProviderOperators.deployment =
+        "Deployment-Operator";
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", nonCanonicalOperator),
+        /missing finalized-state promotion evidence/u,
+    );
+
+    const operatorEvidenceWithUrl = structuredClone(manifest);
+    operatorEvidenceWithUrl.finalityEvidence.rpcProviderOperators.url =
+        "https://do-not-persist.example/key";
+    assert.throws(
+        () =>
+            validateActiveDeploymentManifest("46630", operatorEvidenceWithUrl),
         /missing finalized-state promotion evidence/u,
     );
 

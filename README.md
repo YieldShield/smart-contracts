@@ -164,15 +164,24 @@ Before preflight, the deploy helper prints the selected guard, sequencer, demo,
 and runner-size modes. Demo seeding is disabled by default in both relaxed and
 strict testnet modes and is never inferred from the network.
 
+Public manifest promotion requires `YS_DEPLOYMENT_VALIDATION_RPC_URL` plus the
+non-secret `YS_DEPLOYMENT_RPC_OPERATOR` and
+`YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR` slugs. The two URLs must use distinct
+hosts, and the normalized operator slugs must identify different operating
+organizations. Only the slugs—not RPC URLs or credentials—are persisted in
+finality evidence. These identities are operator-attested rather than
+cryptographically discovered; use an independently operated full node for one
+side when possible.
+
 Robinhood mainnet has no canonical sequencer uptime feed identified in the
 current Chainlink registry. It therefore remains operationally blocked until an
 operator supplies a documented `YS_ROBINHOOD_SEQUENCER_FEED`, its public
 `YS_ROBINHOOD_SEQUENCER_FEED_SOURCE`, and a reviewed exact-runtime
 `YS_ROBINHOOD_SEQUENCER_FEED_CODEHASH`. The deploy script checks that runtime
 before accepting the feed, and manifest promotion independently rechecks its
-code and both oracle wiring paths at one finalized block through two distinct
-RPC providers. This attests the operator-reviewed input; it does not claim an
-undocumented address is canonical.
+code and both oracle wiring paths at one finalized block through the two
+operator-identified RPCs. This attests the operator-reviewed input; it does not
+claim an undocumented address is canonical.
 
 The Robinhood testnet path also passes `--disable-code-size-limit` to Foundry so
 the current factory/pool monoliths do not make a successful testnet broadcast

@@ -14,6 +14,7 @@ import {
     DEMO_EXTRA_INVENTORY,
     PYTH_CORE_INVENTORY,
     requiredReviewedCodehashPinNames,
+    requireIndependentRpcOperators,
 } from "./finalizeDeploymentManifest.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -234,12 +235,29 @@ function validateActiveDeploymentManifest(chainId, manifest) {
         }
     }
     const finalityEvidence = manifest.finalityEvidence;
+    const rpcProviderOperators = finalityEvidence?.rpcProviderOperators;
+    let normalizedRpcProviderOperators;
+    try {
+        normalizedRpcProviderOperators = requireIndependentRpcOperators(
+            rpcProviderOperators?.deployment,
+            rpcProviderOperators?.validation,
+        );
+    } catch {
+        normalizedRpcProviderOperators = null;
+    }
     if (
         finalityEvidence?.blockTag !== "finalized" ||
         finalityEvidence?.independentValidationRpc !== true ||
-        finalityEvidence?.policySchemaVersion !== 1 ||
+        finalityEvidence?.policySchemaVersion !== 2 ||
         !/^(?:0|[1-9][0-9]*)$/u.test(finalityEvidence?.blockNumber ?? "") ||
-        !/^0x[0-9a-f]{64}$/iu.test(finalityEvidence?.blockHash ?? "")
+        !/^0x[0-9a-f]{64}$/iu.test(finalityEvidence?.blockHash ?? "") ||
+        !normalizedRpcProviderOperators ||
+        Object.keys(rpcProviderOperators).sort().join(",") !==
+            "deployment,validation" ||
+        rpcProviderOperators.deployment !==
+            normalizedRpcProviderOperators.deployment ||
+        rpcProviderOperators.validation !==
+            normalizedRpcProviderOperators.validation
     ) {
         throw new Error(
             `Deployment ${normalizedChainId} is missing finalized-state promotion evidence`,

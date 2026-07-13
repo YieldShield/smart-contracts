@@ -272,7 +272,7 @@ function inventoryByName(manifest) {
 }
 
 function chainFinalityPolicy(chainId, policy = CHAIN_FINALITY_POLICY) {
-    if (policy?.schemaVersion !== 1 || !policy.chains) {
+    if (policy?.schemaVersion !== 2 || !policy.chains) {
         throw new Error("Deployment finality policy is invalid.");
     }
     const chainPolicy = policy.chains[String(chainId)];
@@ -325,6 +325,42 @@ function requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl) {
     return { primaryRpcUrl: primary, validationRpcUrl: validation };
 }
 
+const RPC_OPERATOR_PATTERN = /^[a-z0-9][a-z0-9._-]{1,63}$/u;
+
+function normalizeRpcOperator(value, label) {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(`${label} is required for public manifest promotion.`);
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!RPC_OPERATOR_PATTERN.test(normalized)) {
+        throw new Error(
+            `${label} must be a 2-64 character lowercase operator slug using only letters, numbers, dots, underscores, or hyphens.`,
+        );
+    }
+    return normalized;
+}
+
+function requireIndependentRpcOperators(
+    deploymentRpcOperator,
+    validationRpcOperator,
+) {
+    const deployment = normalizeRpcOperator(
+        deploymentRpcOperator,
+        "YS_DEPLOYMENT_RPC_OPERATOR",
+    );
+    const validation = normalizeRpcOperator(
+        validationRpcOperator,
+        "YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR",
+    );
+    if (deployment === validation) {
+        throw new Error(
+            "YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR must identify an operator distinct from YS_DEPLOYMENT_RPC_OPERATOR.",
+        );
+    }
+    return { deployment, validation };
+}
+
 function parseRpcQuantity(value, label) {
     if (
         typeof value !== "string" ||
@@ -360,10 +396,16 @@ async function resolveFinalityEvidence({
     validationProvider,
     primaryRpcUrl,
     validationRpcUrl,
+    deploymentRpcOperator,
+    validationRpcOperator,
     finalityPolicy = CHAIN_FINALITY_POLICY,
 }) {
     const policy = chainFinalityPolicy(chainId, finalityPolicy);
     requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl);
+    const rpcProviderOperators = requireIndependentRpcOperators(
+        deploymentRpcOperator,
+        validationRpcOperator,
+    );
     if (!validationProvider || validationProvider === provider) {
         throw new Error(
             "An independent deployment validation provider is required for public manifest promotion.",
@@ -403,6 +445,7 @@ async function resolveFinalityEvidence({
         blockTag: policy.blockTag,
         independentValidationRpc: true,
         policySchemaVersion: finalityPolicy.schemaVersion,
+        rpcProviderOperators,
     };
 }
 
@@ -1474,6 +1517,8 @@ async function validateAndBuildManifest({
         validationProvider,
         primaryRpcUrl,
         validationRpcUrl,
+        deploymentRpcOperator: env.YS_DEPLOYMENT_RPC_OPERATOR,
+        validationRpcOperator: env.YS_DEPLOYMENT_VALIDATION_RPC_OPERATOR,
         finalityPolicy,
     });
     const finalizedBlockNumber = BigInt(finalityEvidence.blockNumber);
@@ -1816,6 +1861,7 @@ export {
     promoteDeploymentManifest,
     requiredReviewedCodehashPinNames,
     reviewedCodehashPinSpecs,
+    requireIndependentRpcOperators,
     requireIndependentRpcUrls,
     resolveFinalityEvidence,
     resolveRpcUrl,
