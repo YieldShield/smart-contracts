@@ -24,6 +24,15 @@ function writeJson(filePath, data, mtimeMs) {
     }
 }
 
+function makePromotedDeployment(chainId, addresses) {
+    return {
+        schemaVersion: "2",
+        status: "active",
+        chainId,
+        ...addresses,
+    };
+}
+
 test("readLatestBroadcast picks the newest run-latest.json for a chain", () => {
     const rootDir = makeTempRoot();
     const older = Date.now() - 20_000;
@@ -109,10 +118,13 @@ test("resolveDeploymentChainId prefers explicit DEPLOY_CHAIN_ID, then the most r
 test("resolveContractAddress returns the newest deployment address when no newer broadcast exists", () => {
     const rootDir = makeTempRoot();
 
-    writeJson(join(rootDir, "deployments", "421614.json"), {
-        "0x00000000000000000000000000000000000000a1": "PythOracle",
-        "0x00000000000000000000000000000000000000a2": "PythOracle",
-    });
+    writeJson(
+        join(rootDir, "deployments", "421614.json"),
+        makePromotedDeployment("421614", {
+            "0x00000000000000000000000000000000000000a1": "PythOracle",
+            "0x00000000000000000000000000000000000000a2": "PythOracle",
+        }),
+    );
 
     assert.equal(
         resolveContractAddress({
@@ -132,9 +144,9 @@ test("resolveContractAddress keeps deployment metadata authoritative over newer 
 
     writeJson(
         join(rootDir, "deployments", "421614.json"),
-        {
+        makePromotedDeployment("421614", {
             "0x00000000000000000000000000000000000000b1": "PythOracle",
-        },
+        }),
         older,
     );
     writeJson(
@@ -166,6 +178,25 @@ test("resolveContractAddress keeps deployment metadata authoritative over newer 
             env: {},
         }),
         "0x00000000000000000000000000000000000000b1",
+    );
+});
+
+test("resolveContractAddress rejects legacy public deployment maps", () => {
+    const rootDir = makeTempRoot();
+
+    writeJson(join(rootDir, "deployments", "421614.json"), {
+        "0x00000000000000000000000000000000000000b1": "PythOracle",
+        networkName: "arbitrum-sepolia",
+    });
+
+    assert.equal(
+        resolveContractAddress({
+            rootDir,
+            chainId: "421614",
+            contractName: "PythOracle",
+            env: {},
+        }),
+        null,
     );
 });
 

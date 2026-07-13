@@ -312,7 +312,7 @@ test("schema-v2 Pyth manifests require exact chain-policy sequencer evidence", a
     );
 });
 
-test("legacy Arbitrum address maps remain outside this Pyth-evidence-only change", async () => {
+test("legacy public-chain address maps are rejected", async () => {
     const { validateActiveDeploymentManifest } =
         await import("../generateTsAbis.js");
     const legacy = {
@@ -320,40 +320,50 @@ test("legacy Arbitrum address maps remain outside this Pyth-evidence-only change
         networkName: "arbitrum-sepolia",
     };
 
-    assert.equal(validateActiveDeploymentManifest("421614", legacy), legacy);
+    assert.throws(
+        () => validateActiveDeploymentManifest("421614", legacy),
+        /not a promoted schema-v2 active manifest/u,
+    );
+    assert.equal(validateActiveDeploymentManifest("31337", legacy), legacy);
+    assert.equal(validateActiveDeploymentManifest("1337", legacy), legacy);
 });
 
-test("strict-chain broadcasts are excluded without a promoted manifest", async () => {
-    const { constrainStrictChainContracts } =
+test("public-chain broadcasts are excluded without a promoted manifest", async () => {
+    const { constrainPublicChainContracts } =
         await import("../generateTsAbis.js");
     const localContracts = {
         SplitRiskPoolFactory: {
             address: "0x00000000000000000000000000000000000000a1",
         },
     };
-    const strictContracts = {
+    const publicContracts = {
         SplitRiskPoolFactory: {
             address: "0x00000000000000000000000000000000000000b1",
         },
     };
 
     assert.deepEqual(
-        constrainStrictChainContracts(
-            { 31337: localContracts, 46630: strictContracts },
+        constrainPublicChainContracts(
+            {
+                1337: localContracts,
+                31337: localContracts,
+                46630: publicContracts,
+                421614: publicContracts,
+            },
             {},
         ),
-        { 31337: localContracts },
+        { 1337: localContracts, 31337: localContracts },
     );
 });
 
-test("strict-chain emission permits only exact promoted name-address pairs", async () => {
-    const { constrainStrictChainContracts } =
+test("public-chain emission permits only exact promoted name-address pairs", async () => {
+    const { constrainPublicChainContracts } =
         await import("../generateTsAbis.js");
-    const manifest = await makePromotedManifest();
+    const manifest = await makePromotedManifest("421614");
     const factoryAddress = manifestAddressFor(manifest, "SplitRiskPoolFactory");
     const governorAddress = manifestAddressFor(manifest, "YSGovernor");
     const tokenAddress = manifestAddressFor(manifest, "YSToken");
-    const strictContracts = {
+    const publicContracts = {
         SplitRiskPoolFactory: {
             address: factoryAddress.toUpperCase().replace("0X", "0x"),
             source: "history",
@@ -371,12 +381,12 @@ test("strict-chain emission permits only exact promoted name-address pairs", asy
     };
 
     assert.deepEqual(
-        constrainStrictChainContracts(
-            { 46630: strictContracts },
-            { 46630: manifest },
+        constrainPublicChainContracts(
+            { 421614: publicContracts },
+            { 421614: manifest },
         ),
         {
-            46630: {
+            421614: {
                 SplitRiskPoolFactory: {
                     address: factoryAddress,
                     source: "history",
@@ -390,8 +400,8 @@ test("strict-chain emission permits only exact promoted name-address pairs", asy
     );
 });
 
-test("strict-chain emission accepts a broadcast alias only at its promoted address", async () => {
-    const { constrainStrictChainContracts, remapContractNamesByManifest } =
+test("public-chain emission accepts a broadcast alias only at its promoted address", async () => {
+    const { constrainPublicChainContracts, remapContractNamesByManifest } =
         await import("../generateTsAbis.js");
     const manifest = await makePromotedManifest();
     const factoryAddress = manifestAddressFor(manifest, "SplitRiskPoolFactory");
@@ -412,7 +422,7 @@ test("strict-chain emission accepts a broadcast alias only at its promoted addre
     );
 
     assert.deepEqual(
-        constrainStrictChainContracts(
+        constrainPublicChainContracts(
             { 46630: remappedContracts },
             { 46630: manifest },
         ),
@@ -431,21 +441,22 @@ test("strict-chain emission accepts a broadcast alias only at its promoted addre
     );
 });
 
-test("an explicit strict-chain target requires a promoted manifest", async () => {
-    const { requirePromotedManifestForStrictTarget } =
+test("an explicit public-chain target requires a promoted manifest", async () => {
+    const { requirePromotedManifestForPublicTarget } =
         await import("../generateTsAbis.js");
 
     assert.throws(
-        () => requirePromotedManifestForStrictTarget("46630", {}),
+        () => requirePromotedManifestForPublicTarget("421614", {}),
         /raw broadcasts remain quarantined/u,
     );
-    assert.equal(requirePromotedManifestForStrictTarget("31337", {}), null);
+    assert.equal(requirePromotedManifestForPublicTarget("31337", {}), null);
+    assert.equal(requirePromotedManifestForPublicTarget("1337", {}), null);
 });
 
-test("Ponder cannot select an unpromoted strict chain", async () => {
+test("Ponder cannot select an unpromoted public chain", async () => {
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
     const allGeneratedContracts = {
-        46630: {
+        421614: {
             SplitRiskPoolFactory: {
                 address: "0x00000000000000000000000000000000000000a1",
             },
@@ -457,18 +468,18 @@ test("Ponder cannot select an unpromoted strict chain", async () => {
     };
 
     assert.equal(
-        selectPonderDeployment(["46630"], allGeneratedContracts, {}),
+        selectPonderDeployment(["421614"], allGeneratedContracts, {}),
         null,
     );
 });
 
-test("Ponder selects strict-chain addresses only from the promoted manifest", async () => {
+test("Ponder selects public-chain addresses only from the promoted manifest", async () => {
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
-    const manifest = await makePromotedManifest();
+    const manifest = await makePromotedManifest("421614");
     const factoryAddress = manifestAddressFor(manifest, "SplitRiskPoolFactory");
     const governorAddress = manifestAddressFor(manifest, "YSGovernor");
     const allGeneratedContracts = {
-        46630: {
+        421614: {
             SplitRiskPoolFactory: {
                 address: factoryAddress,
             },
@@ -480,11 +491,11 @@ test("Ponder selects strict-chain addresses only from the promoted manifest", as
     };
 
     assert.deepEqual(
-        selectPonderDeployment(["46630"], allGeneratedContracts, {
-            46630: manifest,
+        selectPonderDeployment(["421614"], allGeneratedContracts, {
+            421614: manifest,
         }),
         {
-            chainId: "46630",
+            chainId: "421614",
             factoryAddress,
             governorAddress,
             governorBlock: 1234,
@@ -492,11 +503,11 @@ test("Ponder selects strict-chain addresses only from the promoted manifest", as
     );
 });
 
-test("Ponder rejects promoted strict-chain contracts that do not match the manifest", async () => {
+test("Ponder rejects promoted public-chain contracts that do not match the manifest", async () => {
     const { selectPonderDeployment } = await import("../generateTsAbis.js");
-    const manifest = await makePromotedManifest();
+    const manifest = await makePromotedManifest("421614");
     const allGeneratedContracts = {
-        46630: {
+        421614: {
             SplitRiskPoolFactory: {
                 address: "0x0000000000000000000000000000000000000bad",
             },
@@ -508,8 +519,8 @@ test("Ponder rejects promoted strict-chain contracts that do not match the manif
     };
 
     assert.equal(
-        selectPonderDeployment(["46630"], allGeneratedContracts, {
-            46630: manifest,
+        selectPonderDeployment(["421614"], allGeneratedContracts, {
+            421614: manifest,
         }),
         null,
     );

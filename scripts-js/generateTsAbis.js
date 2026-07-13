@@ -51,8 +51,7 @@ function normalizeChainId(chainId) {
     return String(chainId);
 }
 
-const STRICT_MANIFEST_CHAIN_IDS = new Set(["4663", "46630"]);
-const PYTH_SEQUENCER_POLICY_CHAIN_IDS = new Set(["42161", "421614"]);
+const LOCAL_CHAIN_IDS = new Set(["31337", "1337"]);
 const ZERO_CODEHASH = `0x${"00".repeat(32)}`;
 const TESTNET_SEQUENCER_EXCEPTION_SOURCES = new Set([
     "robinhood-testnet-explicit-exception",
@@ -155,13 +154,14 @@ function validatePythSequencerUptimeGuardEvidence(chainId, manifest) {
     }
 }
 
-function isStrictManifestChain(chainId) {
-    return STRICT_MANIFEST_CHAIN_IDS.has(normalizeChainId(chainId));
+function isPublicChain(chainId) {
+    const normalizedChainId = normalizeChainId(chainId);
+    return normalizedChainId !== null && !isLocalChain(normalizedChainId);
 }
 
-function requirePromotedManifestForStrictTarget(chainId, deployments) {
+function requirePromotedManifestForPublicTarget(chainId, deployments) {
     const normalizedChainId = normalizeChainId(chainId);
-    if (!isStrictManifestChain(normalizedChainId)) return null;
+    if (!isPublicChain(normalizedChainId)) return null;
 
     const manifest = deployments?.[normalizedChainId];
     if (!manifest) {
@@ -173,13 +173,13 @@ function requirePromotedManifestForStrictTarget(chainId, deployments) {
     return validateActiveDeploymentManifest(normalizedChainId, manifest);
 }
 
-function constrainStrictChainContracts(allGeneratedContracts, deployments) {
+function constrainPublicChainContracts(allGeneratedContracts, deployments) {
     const constrainedContracts = {};
 
     for (const [chainId, chainContracts] of Object.entries(
         allGeneratedContracts,
     )) {
-        if (!isStrictManifestChain(chainId)) {
+        if (!isPublicChain(chainId)) {
             constrainedContracts[chainId] = { ...chainContracts };
             continue;
         }
@@ -243,15 +243,7 @@ function remapContractNamesByManifest(chainContracts, manifest) {
 
 function validateActiveDeploymentManifest(chainId, manifest) {
     const normalizedChainId = normalizeChainId(chainId);
-    const hasPromotionMetadata =
-        manifest?.schemaVersion !== undefined || manifest?.status !== undefined;
-    if (
-        !STRICT_MANIFEST_CHAIN_IDS.has(normalizedChainId) &&
-        !(
-            PYTH_SEQUENCER_POLICY_CHAIN_IDS.has(normalizedChainId) &&
-            hasPromotionMetadata
-        )
-    ) {
+    if (!isPublicChain(normalizedChainId)) {
         return manifest;
     }
 
@@ -684,7 +676,7 @@ function getInheritedFunctions(mainArtifact) {
 }
 
 function isLocalChain(chainId) {
-    return chainId === "31337" || chainId === "1337";
+    return LOCAL_CHAIN_IDS.has(normalizeChainId(chainId));
 }
 
 function isLocalOnlyContract(contractName) {
@@ -903,14 +895,14 @@ function generatedContractBlockFor(chainContracts, contractName) {
 function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
     for (const chainId of chainIds) {
         const chainContracts = allGeneratedContracts[chainId] || {};
-        const strictManifest = isStrictManifestChain(chainId)
+        const promotedManifest = isPublicChain(chainId)
             ? deployments?.[chainId]
             : null;
-        if (isStrictManifestChain(chainId) && !strictManifest) {
+        if (isPublicChain(chainId) && !promotedManifest) {
             continue;
         }
-        if (strictManifest) {
-            validateActiveDeploymentManifest(chainId, strictManifest);
+        if (promotedManifest) {
+            validateActiveDeploymentManifest(chainId, promotedManifest);
         }
         const generatedFactoryAddress = generatedContractAddressFor(
             chainContracts,
@@ -929,7 +921,7 @@ function selectPonderDeployment(chainIds, allGeneratedContracts, deployments) {
             "YSGovernor",
         );
         if (
-            strictManifest &&
+            promotedManifest &&
             (generatedFactoryAddress?.toLowerCase() !==
                 manifestFactoryAddress?.toLowerCase() ||
                 generatedGovernorAddress?.toLowerCase() !==
@@ -1018,7 +1010,7 @@ async function main() {
         };
     });
 
-    requirePromotedManifestForStrictTarget(explicitTargetChainId, deployments);
+    requirePromotedManifestForPublicTarget(explicitTargetChainId, deployments);
     // Update contract keys based on deployments if they exist
     Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {
         allGeneratedContracts[chainId] = remapContractNamesByManifest(
@@ -1040,7 +1032,7 @@ async function main() {
 
         // Also update deployment-mapped contract addresses from deployments JSON.
         // This keeps local generated addresses aligned with the latest deploy entrypoint.
-        if (deployments[chainId] && !isStrictManifestChain(chainId)) {
+        if (deployments[chainId] && isLocalChain(chainId)) {
             for (const [address, name] of Object.entries(
                 deployments[chainId],
             )) {
@@ -1054,7 +1046,7 @@ async function main() {
         }
     });
 
-    allGeneratedContracts = constrainStrictChainContracts(
+    allGeneratedContracts = constrainPublicChainContracts(
         allGeneratedContracts,
         deployments,
     );
@@ -1154,10 +1146,10 @@ if (process.argv[1] === __filename) {
 export {
     CHAINLINK_CORE_INVENTORY,
     PYTH_CORE_INVENTORY,
-    constrainStrictChainContracts,
+    constrainPublicChainContracts,
     deploymentJsonNameForAddress,
     remapContractNamesByManifest,
-    requirePromotedManifestForStrictTarget,
+    requirePromotedManifestForPublicTarget,
     requiredReviewedCodehashPinNames,
     selectPonderDeployment,
     sortChainIdsForSelection,

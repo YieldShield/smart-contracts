@@ -160,8 +160,20 @@ function readJsonFileRecord(filePath) {
 }
 
 function readDeploymentRecord(rootDir, chainId) {
-    const deploymentPath = getDeploymentFilePath(rootDir, chainId);
-    return readJsonFileRecord(deploymentPath);
+    const normalizedChainId = normalizeChainId(chainId);
+    const deploymentPath = getDeploymentFilePath(rootDir, normalizedChainId);
+    const record = readJsonFileRecord(deploymentPath);
+    if (
+        !record ||
+        isLocalChain(normalizedChainId) ||
+        (String(record.data?.schemaVersion) === "2" &&
+            record.data?.status === "active" &&
+            String(record.data?.chainId) === normalizedChainId)
+    ) {
+        return record;
+    }
+
+    return null;
 }
 
 function readDeployment(rootDir, chainId) {
@@ -306,13 +318,15 @@ function getLatestDeploymentRecord(rootDir) {
     const chainFiles = readdirSync(deploymentsDir)
         .filter((fileName) => /^\d+\.json$/.test(fileName))
         .map((fileName) => {
-            const fullPath = join(deploymentsDir, fileName);
-            const stats = statSync(fullPath);
+            const chainId = fileName.replace(/\.json$/, "");
+            const record = readDeploymentRecord(rootDir, chainId);
+            if (!record) return null;
             return {
-                chainId: fileName.replace(/\.json$/, ""),
-                mtimeMs: stats.mtimeMs,
+                chainId,
+                mtimeMs: record.mtimeMs,
             };
         })
+        .filter(Boolean)
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
     return chainFiles[0] || null;
