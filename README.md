@@ -193,6 +193,11 @@ set for Arbitrum One, the CLI treats it only as an assertion and requires an
 exact match before constructing either RPC provider. The variable must remain
 unset for Arbitrum Sepolia's disabled-feed policy.
 
+Arbitrum One production broadcasts also require
+`YS_PRODUCTION_PYTH_UPDATER_CONFIRMED=true`. This is an explicit operator
+acceptance that the configured Pyth updater is a trusted authority for accepted
+price updates; missing, false, or malformed values fail before deployment.
+
 Robinhood mainnet has no canonical sequencer uptime feed identified in the
 current Chainlink registry. It therefore remains operationally blocked until an
 operator supplies a documented `YS_ROBINHOOD_SEQUENCER_FEED`, its public

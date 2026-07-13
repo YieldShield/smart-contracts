@@ -58,6 +58,8 @@ const REQUIRED_ROBINHOOD_ENV = [
     "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
 ];
 const REQUIRED_PYTH_ENV = ["YS_PRODUCTION_PYTH_ORACLE_CODEHASH"];
+const ARBITRUM_PYTH_UPDATER_CONFIRMATION =
+    "YS_PRODUCTION_PYTH_UPDATER_CONFIRMED=true";
 const deployScriptFileNamePattern = /^[A-Za-z0-9_.-]+\.s\.sol$/u;
 
 function usage() {
@@ -187,6 +189,14 @@ function hasNonBlankEnvValue(value) {
     return typeof value === "string" && value.trim().length > 0;
 }
 
+function isExplicitTrue(value) {
+    return (
+        String(value || "")
+            .trim()
+            .toLowerCase() === "true"
+    );
+}
+
 function usesRelaxedRobinhoodTestnetGuards(network, env = process.env) {
     return (
         network === ROBINHOOD_TESTNET_NETWORK &&
@@ -234,6 +244,12 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
         }
     } else {
         missing.push(...REQUIRED_PYTH_ENV);
+        if (
+            network === "arbitrum" &&
+            !isExplicitTrue(env.YS_PRODUCTION_PYTH_UPDATER_CONFIRMED)
+        ) {
+            missing.push(ARBITRUM_PYTH_UPDATER_CONFIRMATION);
+        }
     }
 
     return missing.filter((name) => {

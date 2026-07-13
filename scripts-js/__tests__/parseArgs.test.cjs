@@ -258,6 +258,50 @@ test("missingProductionEnv requires nonblank mainnet sequencer provenance", asyn
     );
 });
 
+test("missingProductionEnv requires explicit Arbitrum Pyth updater acceptance", async () => {
+    const { missingProductionEnv } = await import("../parseArgs.js");
+    const request = {
+        fileName: "DeployYieldShieldProduction.s.sol",
+        network: "arbitrum",
+    };
+    const env = {
+        ...RUNTIME_PIN_ENV,
+        YS_PRODUCTION_BOOTSTRAP_HOLDER:
+            "0x0000000000000000000000000000000000000001",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_CODEHASH: `0x${"11".repeat(32)}`,
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_SINGLETON:
+            "0x0000000000000000000000000000000000000002",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_THRESHOLD: "2",
+        YS_PRODUCTION_BOOTSTRAP_HOLDER_OWNERS_HASH: `0x${"22".repeat(32)}`,
+        YS_PRODUCTION_PYTH_ORACLE_CODEHASH: `0x${"33".repeat(32)}`,
+    };
+
+    for (const value of [undefined, "false", "garbage", "1"]) {
+        assert.deepEqual(
+            missingProductionEnv(request, {
+                ...env,
+                YS_PRODUCTION_PYTH_UPDATER_CONFIRMED: value,
+            }),
+            ["YS_PRODUCTION_PYTH_UPDATER_CONFIRMED=true"],
+        );
+    }
+
+    assert.deepEqual(
+        missingProductionEnv(request, {
+            ...env,
+            YS_PRODUCTION_PYTH_UPDATER_CONFIRMED: " TRUE ",
+        }),
+        [],
+    );
+    assert.equal(
+        missingProductionEnv(
+            { ...request, network: "arbitrumSepolia" },
+            env,
+        ).includes("YS_PRODUCTION_PYTH_UPDATER_CONFIRMED=true"),
+        false,
+    );
+});
+
 test("Robinhood testnet deployment mode keeps demo seeding off by default", async () => {
     const {
         formatRobinhoodProductionDeploymentMode,
