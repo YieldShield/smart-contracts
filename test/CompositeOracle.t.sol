@@ -11,6 +11,7 @@ import { MockUSDC } from "../contracts/mocks/MockUSDC.sol";
 import { MockERC20Decimals } from "../contracts/mocks/MockERC20Decimals.sol";
 import { ICompositeOracle } from "../contracts/interfaces/ICompositeOracle.sol";
 import { IOracleFeed } from "../contracts/interfaces/IOracleFeed.sol";
+import { IProtectionOpeningEligibility } from "../contracts/interfaces/IProtectionOpeningEligibility.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract FeeAccrualMarkerFeed is IOracleFeed {
@@ -50,6 +51,27 @@ contract FeeAccrualMarkerFeed is IOracleFeed {
 
     function description() external pure returns (string memory) {
         return "Fee Accrual Marker Feed";
+    }
+}
+
+contract OpeningEligibilityMockOracle is MockOracle, IProtectionOpeningEligibility {
+    bool public openingEligibilitySupported;
+    bool public openingAllowed;
+
+    function setOpeningEligibilitySupported(bool supported) external {
+        openingEligibilitySupported = supported;
+    }
+
+    function setOpeningAllowed(bool allowed) external {
+        openingAllowed = allowed;
+    }
+
+    function supportsProtectionOpeningEligibility(address) external view returns (bool supported) {
+        return openingEligibilitySupported;
+    }
+
+    function isProtectionOpeningAllowed(address) external view returns (bool allowed) {
+        return openingAllowed;
     }
 }
 
@@ -452,6 +474,91 @@ contract CompositeOracleTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(FeeAccrualMarkerFeed.FeeAccrualUnavailable.selector, address(tokenA)));
         compositeOracle.getPriceForFeeAccrual(address(tokenA));
+    }
+
+    function testProtectionOpeningEligibility_DualRouteAggregatesBackupCapability() public {
+        OpeningEligibilityMockOracle backup = new OpeningEligibilityMockOracle();
+        backup.setOpeningEligibilitySupported(true);
+        backup.setOpeningAllowed(true);
+
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(mockOracle), address(backup));
+
+        assertTrue(compositeOracle.protectionOpeningEligibilityRequired(address(tokenA)));
+        assertTrue(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+
+        backup.setOpeningAllowed(false);
+        assertFalse(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+    }
+
+    function testProtectionOpeningEligibility_DualRouteRequiresEveryCapabilityBearingLeg() public {
+        OpeningEligibilityMockOracle primary = new OpeningEligibilityMockOracle();
+        OpeningEligibilityMockOracle backup = new OpeningEligibilityMockOracle();
+        primary.setOpeningEligibilitySupported(true);
+        backup.setOpeningEligibilitySupported(true);
+        primary.setOpeningAllowed(true);
+        backup.setOpeningAllowed(false);
+
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(primary), address(backup));
+
+        assertTrue(compositeOracle.protectionOpeningEligibilityRequired(address(tokenA)));
+        assertFalse(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+
+        backup.setOpeningAllowed(true);
+        assertTrue(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+    }
+
+    function testProtectionOpeningEligibility_SnapshottedLegMarkerDisappearingFailsClosed() public {
+        OpeningEligibilityMockOracle primary = new OpeningEligibilityMockOracle();
+        OpeningEligibilityMockOracle backup = new OpeningEligibilityMockOracle();
+        primary.setOpeningEligibilitySupported(true);
+        backup.setOpeningEligibilitySupported(true);
+        primary.setOpeningAllowed(true);
+        backup.setOpeningAllowed(true);
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(primary), address(backup));
+
+        primary.setOpeningEligibilitySupported(false);
+
+        assertTrue(compositeOracle.protectionOpeningEligibilityRequired(address(tokenA)));
+        assertFalse(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+    }
+
+    function testProtectionOpeningEligibility_AdvertisedRevertingCheckFailsClosed() public {
+        OpeningEligibilityMockOracle backup = new OpeningEligibilityMockOracle();
+        backup.setOpeningEligibilitySupported(true);
+        backup.setOpeningAllowed(true);
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(mockOracle), address(backup));
+
+        vm.mockCallRevert(
+            address(backup),
+            abi.encodeCall(IProtectionOpeningEligibility.isProtectionOpeningAllowed, (address(tokenA))),
+            bytes("unavailable")
+        );
+
+        assertFalse(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+    }
+
+    function testProtectionOpeningEligibility_AdvertisedMalformedCheckFailsClosed() public {
+        OpeningEligibilityMockOracle backup = new OpeningEligibilityMockOracle();
+        backup.setOpeningEligibilitySupported(true);
+        backup.setOpeningAllowed(true);
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(mockOracle), address(backup));
+
+        vm.mockCall(
+            address(backup),
+            abi.encodeCall(IProtectionOpeningEligibility.isProtectionOpeningAllowed, (address(tokenA))),
+            abi.encode(uint256(2))
+        );
+
+        assertFalse(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
+    }
+
+    function testProtectionOpeningEligibility_DualRouteWithoutCapabilityRemainsAllowed() public {
+        MockOracle backup = new MockOracle();
+
+        compositeOracle.setTokenOracleFeedDual(address(tokenA), address(mockOracle), address(backup));
+
+        assertFalse(compositeOracle.protectionOpeningEligibilityRequired(address(tokenA)));
+        assertTrue(compositeOracle.isProtectionOpeningAllowed(address(tokenA)));
     }
 
     function testStrictCircuitBreakerRequirement_AllowsERC4626WithStrictUnderlying() public {

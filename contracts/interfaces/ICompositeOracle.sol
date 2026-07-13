@@ -146,12 +146,13 @@ interface ICompositeOracle is IPriceOracle {
     // ============ Protection Opening Eligibility ============
 
     /// @notice Whether a new protection position may currently be opened for a token
-    /// @dev Returns true for feeds without the optional opening-eligibility capability.
-    ///      Feeds that advertised the capability when configured fail closed if their
-    ///      eligibility response later becomes unavailable or malformed.
+    /// @dev Returns true when no configured feed advertises the optional capability.
+    ///      Every currently capability-bearing configured leg must allow opening. Feeds that
+    ///      advertised the capability when configured also fail closed if their marker or response
+    ///      later becomes unavailable.
     function isProtectionOpeningAllowed(address token) external view returns (bool allowed);
 
-    /// @notice Whether the token's configured primary feed requires opening eligibility
+    /// @notice Whether any of the token's configured feeds requires opening eligibility
     function protectionOpeningEligibilityRequired(address token) external view returns (bool required);
 
     // ============ Challenge Mechanism ============

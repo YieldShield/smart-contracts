@@ -284,7 +284,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.challengeEndTime = 0;
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
-        _setProtectionOpeningEligibilityRequirement(token, oracleFeed);
+        _setProtectionOpeningEligibilityRequirement(token, oracleFeed, address(0));
 
         // Try to detect oracle type from feed description
         try IOracleFeed(oracleFeed).description() returns (string memory desc) {
@@ -328,7 +328,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.lastChallengeTime = 0; // Reset cooldown state for fresh configuration
         _isTokenSupported[token] = true;
         _tokenOracleType[token] = oracleType;
-        _setProtectionOpeningEligibilityRequirement(token, oracleFeed);
+        _setProtectionOpeningEligibilityRequirement(token, oracleFeed, address(0));
 
         emit TokenOracleFeedSet(token, oracleFeed);
     }
@@ -362,7 +362,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         config.challengeEndTime = 0;
         config.lastChallengeTime = 0;
         _isTokenSupported[token] = true;
-        _setProtectionOpeningEligibilityRequirement(token, primaryFeed);
+        _setProtectionOpeningEligibilityRequirement(token, primaryFeed, backupFeed);
 
         // Try to detect oracle type from primary feed description
         try IOracleFeed(primaryFeed).description() returns (string memory desc) {
@@ -467,6 +467,7 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         delete _tokenOracleConfig[token];
         delete _tokenOracleType[token];
         delete protectionOpeningEligibilityRequired[token];
+        delete _protectionOpeningEligibilityLegMask[token];
         _isTokenSupported[token] = false;
 
         // Clear the strict circuit-breaker requirement when removing the feed; otherwise
@@ -494,11 +495,28 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     function isProtectionOpeningAllowed(address token) external view returns (bool allowed) {
         TokenOracleConfig storage config = _tokenOracleConfig[token];
         if (config.primaryFeed == address(0)) revert TokenNotSupported(token);
-        if (!protectionOpeningEligibilityRequired[token]) return true;
 
-        (bool success, bytes memory data) = config.primaryFeed
-            .staticcall(abi.encodeCall(IProtectionOpeningEligibility.isProtectionOpeningAllowed, (token)));
-        return success && data.length >= 32 && abi.decode(data, (bool));
+        bool primaryRequiresEligibility = _supportsProtectionOpeningEligibility(config.primaryFeed, token);
+        bool backupRequiresEligibility =
+            config.backupFeed != address(0) && _supportsProtectionOpeningEligibility(config.backupFeed, token);
+
+        uint8 configuredLegMask = _protectionOpeningEligibilityLegMask[token];
+        // Configurations created before the per-leg mask existed only snapshotted the
+        // primary feed's aggregate requirement. Preserve that fail-closed behavior.
+        if (configuredLegMask == 0 && protectionOpeningEligibilityRequired[token]) {
+            configuredLegMask = _PRIMARY_OPENING_ELIGIBILITY_LEG;
+        }
+
+        if (
+            configuredLegMask & _PRIMARY_OPENING_ELIGIBILITY_LEG != 0 && !primaryRequiresEligibility
+                || configuredLegMask & _BACKUP_OPENING_ELIGIBILITY_LEG != 0 && !backupRequiresEligibility
+        ) {
+            return false;
+        }
+
+        if (primaryRequiresEligibility && !_isProtectionOpeningAllowed(config.primaryFeed, token)) return false;
+        if (backupRequiresEligibility && !_isProtectionOpeningAllowed(config.backupFeed, token)) return false;
+        return true;
     }
 
     /// @inheritdoc ICompositeOracle
@@ -855,10 +873,17 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @dev Scheduled override per (token, action). executableAt == 0 = not scheduled.
     mapping(bytes32 => EmergencyOverrideSchedule) public emergencyOverrides;
 
-    /// @notice True when the configured primary feed advertised a deposit-opening gate
-    /// @dev Appended after prior storage declarations. The primary feed remains the policy
-    ///      source even while a dual-feed backup is active, so failover cannot bypass the gate.
+    /// @notice True when any configured feed advertised a deposit-opening gate
+    /// @dev Appended after prior storage declarations. Every capability-bearing leg remains
+    ///      a policy source even while a dual-feed backup is inactive or active.
     mapping(address => bool) public override protectionOpeningEligibilityRequired;
+
+    /// @dev Bitmask of the route legs that advertised opening eligibility when configured.
+    ///      Appended after the existing aggregate bool to preserve every prior storage slot.
+    mapping(address => uint8) private _protectionOpeningEligibilityLegMask;
+
+    uint8 private constant _PRIMARY_OPENING_ELIGIBILITY_LEG = 1 << 0;
+    uint8 private constant _BACKUP_OPENING_ELIGIBILITY_LEG = 1 << 1;
 
     event EmergencyOverrideScheduled(
         address indexed token, bytes32 indexed action, uint256 executableAt, bytes32 stateNonce
@@ -1555,17 +1580,45 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         return abi.decode(data, (bool));
     }
 
-    /// @dev Snapshot the primary feed's optional opening-policy capability at configuration
-    ///      time. A later failure of the feed cannot silently turn a required gate into opt-out.
-    function _setProtectionOpeningEligibilityRequirement(address token, address primaryFeed) internal {
-        bool required;
-        if (primaryFeed.code.length != 0) {
-            (bool success, bytes memory data) = primaryFeed.staticcall(
-                abi.encodeCall(IProtectionOpeningEligibility.supportsProtectionOpeningEligibility, (token))
-            );
-            required = success && data.length >= 32 && abi.decode(data, (bool));
+    /// @dev Snapshot every configured feed's optional opening-policy capability at
+    ///      configuration time. A later failure cannot silently turn a required gate into opt-out.
+    function _setProtectionOpeningEligibilityRequirement(address token, address primaryFeed, address backupFeed)
+        internal
+    {
+        uint8 configuredLegMask;
+        if (_supportsProtectionOpeningEligibility(primaryFeed, token)) {
+            configuredLegMask |= _PRIMARY_OPENING_ELIGIBILITY_LEG;
         }
-        protectionOpeningEligibilityRequired[token] = required;
+        if (backupFeed != address(0) && _supportsProtectionOpeningEligibility(backupFeed, token)) {
+            configuredLegMask |= _BACKUP_OPENING_ELIGIBILITY_LEG;
+        }
+
+        _protectionOpeningEligibilityLegMask[token] = configuredLegMask;
+        protectionOpeningEligibilityRequired[token] = configuredLegMask != 0;
+    }
+
+    function _supportsProtectionOpeningEligibility(address feed, address token) internal view returns (bool) {
+        if (feed.code.length == 0) return false;
+
+        (bool success, bytes memory data) = feed.staticcall(
+            abi.encodeCall(IProtectionOpeningEligibility.supportsProtectionOpeningEligibility, (token))
+        );
+        return _isCanonicalTrue(success, data);
+    }
+
+    function _isProtectionOpeningAllowed(address feed, address token) internal view returns (bool) {
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeCall(IProtectionOpeningEligibility.isProtectionOpeningAllowed, (token)));
+        return _isCanonicalTrue(success, data);
+    }
+
+    function _isCanonicalTrue(bool success, bytes memory data) internal pure returns (bool result) {
+        if (!success || data.length < 32) return false;
+        uint256 encoded;
+        assembly ("memory-safe") {
+            encoded := mload(add(data, 0x20))
+        }
+        return encoded == 1;
     }
 
     /// @notice Detect oracle type from feed description
