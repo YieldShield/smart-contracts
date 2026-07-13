@@ -79,6 +79,7 @@ contract SplitRiskPoolHandler is Test {
     bool public rewardPerShareEverDecreased;
     bool public tvlLimitViolatedByDeposit;
     bool public receiptTransferAccountingChanged;
+    bool public feePayoutRecipientMismatch;
     uint256 public highestRewardPerShareObserved;
 
     // Pool config
@@ -580,9 +581,21 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
+        address recipient = pool.poolFeeRecipient();
+        if (recipient == address(0)) recipient = pool.POOL_CREATOR();
+        uint256 recipientBalanceBefore = shieldedToken.balanceOf(recipient);
         vm.prank(governance);
         try pool.payPoolFee() {
-            ghost_totalPoolFeesPaid += amount;
+            uint256 recipientBalanceAfter = shieldedToken.balanceOf(recipient);
+            if (
+                recipientBalanceAfter < recipientBalanceBefore
+                    || recipientBalanceAfter - recipientBalanceBefore != amount
+            ) {
+                feePayoutRecipientMismatch = true;
+                _unexpectedRevert(this.payPoolFee.selector);
+                return;
+            }
+            ghost_totalPoolFeesPaid += recipientBalanceAfter - recipientBalanceBefore;
             calls_payPoolFee++;
             _success(this.payPoolFee.selector);
         } catch {
@@ -599,9 +612,20 @@ contract SplitRiskPoolHandler is Test {
             return;
         }
 
+        (,,,,,,, address recipient,,) = pool.poolConfig();
+        uint256 recipientBalanceBefore = shieldedToken.balanceOf(recipient);
         vm.prank(governance);
         try pool.payProtocolFee() {
-            ghost_totalProtocolFeesPaid += amount;
+            uint256 recipientBalanceAfter = shieldedToken.balanceOf(recipient);
+            if (
+                recipientBalanceAfter < recipientBalanceBefore
+                    || recipientBalanceAfter - recipientBalanceBefore != amount
+            ) {
+                feePayoutRecipientMismatch = true;
+                _unexpectedRevert(this.payProtocolFee.selector);
+                return;
+            }
+            ghost_totalProtocolFeesPaid += recipientBalanceAfter - recipientBalanceBefore;
             calls_payProtocolFee++;
             _success(this.payProtocolFee.selector);
         } catch {
@@ -1396,6 +1420,7 @@ contract SplitRiskPoolInvariantTest is Test, FactoryProxyTestBase {
 
     /// @notice Random fee payouts must only move accrued fees from pool accounting to recipients.
     function invariant_feePayoutConservation() public view {
+        assertFalse(handler.feePayoutRecipientMismatch(), "fee payout did not reach its configured recipient");
         assertEq(
             pool.accumulatedPoolFee() + handler.ghost_totalPoolFeesPaid(),
             handler.ghost_totalPoolFeesAccrued(),
