@@ -25,6 +25,20 @@ contract RevertingMarketSessionGate {
     }
 }
 
+contract RevertingOpeningFreshnessInnerFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function protectionOpeningMaxPriceAgeForToken(address) external pure returns (uint256) {
+        return 1 hours;
+    }
+
+    function isPriceStale(address) external pure returns (bool, uint256) {
+        revert("staleness unavailable");
+    }
+}
+
 contract CorporateGuardWithoutClosedSessionExitFeed is IOracleFeed, ICorporateActionPauseGuard {
     function getPrice(address) external pure returns (uint256) {
         return 1e8;
@@ -63,7 +77,8 @@ contract RobinhoodStockOracleFeedTest is Test {
     int256 internal constant TSLA_PRICE = 33_200_000_000; // $332.00 with 8 decimals
     int256 internal constant TSLA_POST_SPLIT_PRICE = 3_320_000_000; // $33.20 after a 10:1 split
     int256 internal constant WETH_PRICE = 1735e8;
-    uint256 internal constant MAX_PRICE_AGE = 3600;
+    uint256 internal constant MAX_PRICE_AGE = 1 days;
+    uint256 internal constant OPENING_MAX_PRICE_AGE = 1 hours;
 
     function setUp() public {
         chainlinkFeed = new ChainlinkOracleFeed(MAX_PRICE_AGE);
@@ -73,6 +88,7 @@ contract RobinhoodStockOracleFeedTest is Test {
         wethAggregator = new MockChainlinkAggregator("WETH / USD", 8, WETH_PRICE);
         chainlinkFeed.setTokenFeed(address(tsla), address(tslaAggregator));
         chainlinkFeed.setTokenFeed(address(weth), address(wethAggregator));
+        chainlinkFeed.setProtectionOpeningMaxPriceAgeForToken(address(tsla), OPENING_MAX_PRICE_AGE);
         marketSessionGate = new USMarketSessionGate(address(this), address(0xBEEF));
         marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         stockFeed = new RobinhoodStockOracleFeed(address(chainlinkFeed), address(marketSessionGate));
@@ -264,7 +280,55 @@ contract RobinhoodStockOracleFeedTest is Test {
 
     function test_openingEligibility_AllowsConfiguredOpenSession() public view {
         assertTrue(stockFeed.supportsProtectionOpeningEligibility(address(tsla)));
+        assertTrue(stockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
         assertTrue(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_openingEligibility_RequiresExplicitReviewedFreshnessPolicy() public {
+        chainlinkFeed.setProtectionOpeningMaxPriceAgeForToken(address(tsla), 0);
+
+        assertFalse(stockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+        assertEq(stockFeed.getPrice(address(tsla)), uint256(TSLA_PRICE), "ordinary pricing must remain available");
+
+        chainlinkFeed.setProtectionOpeningMaxPriceAgeForToken(
+            address(tsla), stockFeed.MAX_PROTECTION_OPENING_PRICE_AGE() + 1
+        );
+        assertFalse(stockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_openingEligibility_UsesTighterOpeningAgeWithoutShorteningOrdinaryPrice() public {
+        (,,, uint256 updatedAt,) = tslaAggregator.latestRoundData();
+        vm.warp(updatedAt + OPENING_MAX_PRICE_AGE);
+        assertTrue(stockFeed.isProtectionOpeningAllowed(address(tsla)), "exact opening-age boundary must pass");
+
+        vm.warp(block.timestamp + 1);
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)), "opening-age boundary + 1 must fail");
+        assertEq(
+            chainlinkFeed.getPrice(address(tsla)),
+            uint256(TSLA_PRICE),
+            "generic 24-hour price path must remain available"
+        );
+    }
+
+    function test_openingEligibility_FeedReplacementClearsReviewedFreshnessPolicy() public {
+        chainlinkFeed.setTokenFeed(address(tsla), address(tslaAggregator));
+
+        assertEq(chainlinkFeed.protectionOpeningMaxPriceAgeForToken(address(tsla)), 0);
+        assertFalse(stockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+    }
+
+    function test_openingEligibility_FailsClosedForFutureTimestampAndRevertingStaleness() public {
+        tslaAggregator.setRoundData(2, TSLA_PRICE, block.timestamp, block.timestamp + 1, 2);
+        assertFalse(stockFeed.isProtectionOpeningAllowed(address(tsla)));
+
+        RevertingOpeningFreshnessInnerFeed revertingInner = new RevertingOpeningFreshnessInnerFeed();
+        RobinhoodStockOracleFeed revertingStockFeed =
+            new RobinhoodStockOracleFeed(address(revertingInner), address(marketSessionGate));
+        assertTrue(revertingStockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(revertingStockFeed.isProtectionOpeningAllowed(address(tsla)));
     }
 
     function test_openingEligibility_ClosedSessionDoesNotDisablePriceReads() public {

@@ -13,6 +13,7 @@ import { PythConfig } from "../contracts/oracles/PythConfig.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { ERC4626OracleFeed } from "../contracts/oracles/ERC4626OracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
+import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
 import { USMarketSessionGate } from "../contracts/oracles/USMarketSessionGate.sol";
 import { SplitRiskPoolFactory } from "../contracts/SplitRiskPoolFactory.sol";
 import { SplitRiskPool } from "../contracts/SplitRiskPool.sol";
@@ -1760,6 +1761,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(factory.getWhitelistedTokens().length, 10);
         assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.authorizedCallerCount(), 0);
+        _assertRobinhoodDemoOpeningFreshness(harness, chainlinkOracleFeed);
 
         address faucetAddr = harness.currentDeploymentAddressHarness("RobinhoodDemoAssetFaucet");
         assertTrue(faucetAddr != address(0));
@@ -1803,6 +1805,15 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);
+
+        address tsla = harness.currentDeploymentAddressHarness("RobinhoodTestTSLA");
+        vm.prank(address(timelock));
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(tsla, 30 minutes);
+        assertEq(
+            chainlinkOracleFeed.protectionOpeningMaxPriceAgeForToken(tsla),
+            30 minutes,
+            "timelock governance must retain opening-freshness administration"
+        );
     }
 
     function test_RobinhoodTestnet_DemoAssetsDefaultOffAndRequireExplicitOptIn() public {
@@ -2572,6 +2583,35 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         YSTimelockController ysTimelock = YSTimelockController(payable(address(timelock)));
         assertEq(ysTimelock.getRoleMemberCount(ysTimelock.DEFAULT_ADMIN_ROLE()), 1);
         assertEq(ysTimelock.getRoleMember(ysTimelock.DEFAULT_ADMIN_ROLE(), 0), address(timelock));
+    }
+
+    function _assertRobinhoodDemoOpeningFreshness(
+        ProductionDeployHarness harness,
+        ChainlinkOracleFeed chainlinkOracleFeed
+    ) internal view {
+        address stockOracleFeed = harness.currentDeploymentAddressHarness("RobinhoodStockOracleFeed");
+        RobinhoodStockOracleFeed stockFeed = RobinhoodStockOracleFeed(stockOracleFeed);
+        address[8] memory stockTokens;
+        stockTokens[0] = harness.currentDeploymentAddressHarness("RobinhoodTestSGOV");
+        stockTokens[1] = harness.currentDeploymentAddressHarness("RobinhoodTestSPY");
+        stockTokens[2] = harness.currentDeploymentAddressHarness("RobinhoodTestQQQ");
+        stockTokens[3] = harness.currentDeploymentAddressHarness("RobinhoodTestTSLA");
+        stockTokens[4] = harness.currentDeploymentAddressHarness("RobinhoodTestAMZN");
+        stockTokens[5] = harness.currentDeploymentAddressHarness("RobinhoodTestPLTR");
+        stockTokens[6] = harness.currentDeploymentAddressHarness("RobinhoodTestNFLX");
+        stockTokens[7] = harness.currentDeploymentAddressHarness("RobinhoodTestAMD");
+
+        for (uint256 i = 0; i < stockTokens.length; i++) {
+            assertEq(
+                chainlinkOracleFeed.protectionOpeningMaxPriceAgeForToken(stockTokens[i]),
+                1 hours,
+                "demo stock opening freshness was not explicitly configured"
+            );
+            assertTrue(
+                stockFeed.isProtectionOpeningFreshnessConfigured(stockTokens[i]),
+                "stock wrapper rejected configured opening freshness"
+            );
+        }
     }
 
     function _pinPythOracleCodehash(address pythOracleAddr) internal {

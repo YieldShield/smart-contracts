@@ -120,6 +120,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     uint256 internal constant MIN_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_CHAINLINK_MAX_PRICE_AGE = 86_400;
+    uint256 internal constant DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE = 1 hours;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;
     address internal constant ROBINHOOD_TESTNET_TSLA_TOKEN = 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E;
@@ -249,6 +250,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionRobinhoodSequencerFeedInvalid(address feed);
     error ProductionRobinhoodSequencerRequirementMismatch(address oracle, bool actual, bool expected);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
+    error ProductionRobinhoodStockOpeningFreshnessMissing(address token);
     error ProductionMarketSessionGuardianInvalid(address guardian, address timelock);
 
     function run() external ScaffoldEthDeployerRunner {
@@ -1060,6 +1062,34 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         chainlinkOracleFeed.setTokenFeed(assets.pltr, feeds.pltr);
         chainlinkOracleFeed.setTokenFeed(assets.nflx, feeds.nflx);
         chainlinkOracleFeed.setTokenFeed(assets.amd, feeds.amd);
+
+        // Protection openings use a reviewed equity-specific freshness bound without
+        // shortening the ordinary 24-hour adapter window used by non-opening operations.
+        // Configure this only after setTokenFeed because feed replacement deliberately clears it.
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.sgov, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.spy, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.qqq, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.tsla, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.amzn, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.pltr, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.nflx, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(
+            assets.amd, DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE
+        );
     }
 
     function _deployRobinhoodStockOracleFeed(address chainlinkOracleFeed, address marketSessionGate)
@@ -1104,6 +1134,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         (bool probeSuccess, bytes memory probeData) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
         if (!probeSuccess || probeData.length < 32) {
             revert InvalidProductionProtocolContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
+        }
+        if (!RobinhoodStockOracleFeed(stockOracleFeed).isProtectionOpeningFreshnessConfigured(token)) {
+            revert ProductionRobinhoodStockOpeningFreshnessMissing(token);
         }
         _addRobinhoodDemoToken(factory, token, name, symbol, stockOracleFeed, minCollateralRatioBp);
     }

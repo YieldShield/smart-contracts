@@ -26,6 +26,7 @@ interface IChainlinkOracleFeedOptional {
     function supportsCircuitBreaker(address token) external view returns (bool);
     function supportsStrictProtectedPrice(address token) external view returns (bool);
     function isPriceStale(address token) external view returns (bool isStale, uint256 updatedAt);
+    function protectionOpeningMaxPriceAgeForToken(address token) external view returns (uint256 maxAge);
     function getPriceForClosedSessionExit(address token) external view returns (uint256 price);
 }
 
@@ -48,6 +49,11 @@ contract RobinhoodStockOracleFeed is
     IProtectionOpeningEligibility,
     IClosedSessionExitPrice
 {
+    /// @notice Maximum reviewed freshness window for opening Robinhood equity protection
+    /// @dev Individual tokens must configure an explicit non-zero value on the inner feed and
+    ///      may use a tighter bound. Ordinary and closed-session price reads are unchanged.
+    uint256 public constant MAX_PROTECTION_OPENING_PRICE_AGE = 1 hours;
+
     /// @notice The wrapped ChainlinkOracleFeed that performs the actual price reads
     address public immutable innerFeed;
 
@@ -182,6 +188,19 @@ contract RobinhoodStockOracleFeed is
         return true;
     }
 
+    /// @notice Whether a token has an explicit reviewed opening-specific freshness policy
+    /// @dev Fails closed for incompatible inner feeds, missing policies, and values above the
+    ///      immutable Robinhood equity ceiling.
+    function isProtectionOpeningFreshnessConfigured(address token) public view returns (bool configured) {
+        try IChainlinkOracleFeedOptional(innerFeed).protectionOpeningMaxPriceAgeForToken(token) returns (
+            uint256 maxAge
+        ) {
+            return maxAge != 0 && maxAge <= MAX_PROTECTION_OPENING_PRICE_AGE;
+        } catch {
+            return false;
+        }
+    }
+
     /// @inheritdoc IProtectionOpeningEligibility
     /// @dev This does not gate price reads or exits. Missing token pause status, a failed market
     ///      status call, a closed calendar day, or an emergency pause all fail closed for openings.
@@ -193,7 +212,24 @@ contract RobinhoodStockOracleFeed is
         }
 
         try IUSMarketSessionGate(marketSessionGate).isMarketOpen() returns (bool marketOpen) {
-            return marketOpen;
+            if (!marketOpen) return false;
+        } catch {
+            return false;
+        }
+
+        uint256 openingMaxAge;
+        try IChainlinkOracleFeedOptional(innerFeed).protectionOpeningMaxPriceAgeForToken(token) returns (
+            uint256 configuredMaxAge
+        ) {
+            if (configuredMaxAge == 0 || configuredMaxAge > MAX_PROTECTION_OPENING_PRICE_AGE) return false;
+            openingMaxAge = configuredMaxAge;
+        } catch {
+            return false;
+        }
+
+        try IChainlinkOracleFeedOptional(innerFeed).isPriceStale(token) returns (bool isStale, uint256 updatedAt) {
+            if (isStale || updatedAt == 0 || updatedAt > block.timestamp) return false;
+            return block.timestamp - updatedAt <= openingMaxAge;
         } catch {
             return false;
         }

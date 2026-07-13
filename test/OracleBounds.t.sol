@@ -222,6 +222,24 @@ contract OracleBoundsTest is Test {
         assertEq(feedMax.maxPriceAge(), 86_400);
     }
 
+    function testChainlink_ProtectionOpeningMaxPriceAgeUsesExplicitBoundedPolicy() public {
+        ChainlinkOracleFeed feed = new ChainlinkOracleFeed(86_400);
+        address token = address(quoteToken);
+
+        assertEq(feed.protectionOpeningMaxPriceAgeForToken(token), 0);
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 10);
+        assertEq(feed.protectionOpeningMaxPriceAgeForToken(token), 10);
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 86_400);
+        assertEq(feed.protectionOpeningMaxPriceAgeForToken(token), 86_400);
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 0);
+        assertEq(feed.protectionOpeningMaxPriceAgeForToken(token), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.InvalidPriceAge.selector, 9, 10));
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 9);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkOracleFeed.PriceAgeTooHigh.selector, 86_401, 86_400));
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 86_401);
+    }
+
     // ============ UniswapV3TWAPFeed: TWAP period bounds ============
 
     function testTWAP_SetTWAPPeriod_RevertsBelowMinimum() public {

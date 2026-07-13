@@ -186,10 +186,12 @@ contract ChainlinkVenusBoundsTest is Test {
         MockChainlinkProxyWithBounds proxy = new MockChainlinkProxyWithBounds(2_000e8, 8, MIN_BOUND, MAX_BOUND);
         feed.setTokenFeed(token, address(proxy));
         feed.setMaxPriceAgeForToken(token, 120);
+        feed.setProtectionOpeningMaxPriceAgeForToken(token, 60);
 
         feed.setTokenFeed(token, address(proxy));
 
         assertEq(feed.maxPriceAgeForToken(token), 0, "override should be cleared");
+        assertEq(feed.protectionOpeningMaxPriceAgeForToken(token), 0, "opening-specific override should be cleared");
         assertEq(feed.effectiveMaxPriceAge(token), feed.maxPriceAge(), "global max age should apply");
     }
 

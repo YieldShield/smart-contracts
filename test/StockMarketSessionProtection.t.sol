@@ -43,6 +43,7 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
         chainlink = new ChainlinkOracleFeed(1 days);
         chainlink.setTokenFeed(address(stock), address(stockAggregator));
         chainlink.setTokenFeed(address(backing), address(backingAggregator));
+        chainlink.setProtectionOpeningMaxPriceAgeForToken(address(stock), 1 hours);
         marketGate = new USMarketSessionGate(address(this), address(0xBEEF));
         marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         stockFeed = new RobinhoodStockOracleFeed(address(chainlink), address(marketGate));
@@ -81,6 +82,16 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
         assertEq(stock.balanceOf(address(this)), balanceBefore);
         assertEq(stock.balanceOf(address(pool)), 0);
         assertEq(chainlink.getPrice(address(stock)), 100e8, "price remains fresh and readable while market is closed");
+    }
+
+    function test_openSessionRejectsOpeningAfterEquityAgeWhileGenericPriceRemainsFresh() public {
+        vm.warp(block.timestamp + 1 hours + 1);
+        marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
+
+        assertEq(chainlink.getPrice(address(stock)), 100e8, "generic 24-hour Chainlink price must remain readable");
+        assertFalse(composite.isProtectionOpeningAllowed(address(stock)));
+        vm.expectRevert(abi.encodeWithSelector(ErrorsLib.ProtectionOpeningClosed.selector, address(stock)));
+        pool.depositShieldedAsset(address(stock), 10e18, 0);
     }
 
     function test_closedSessionDoesNotBlockSameAssetWithdrawal() public {

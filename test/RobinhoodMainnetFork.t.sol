@@ -26,6 +26,7 @@ contract AlwaysClosedMarketSessionGate {
 contract RobinhoodMainnetForkTest is ForkTestHelper {
     uint256 internal constant ROBINHOOD_MAINNET_CHAIN_ID = 4_663;
     uint256 internal constant MAX_PRICE_AGE = 1 days;
+    uint256 internal constant OPENING_MAX_PRICE_AGE = 1 hours;
 
     address internal constant TSLA = 0x322F0929c4625eD5bAd873c95208D54E1c003b2d;
     address internal constant TSLA_USD_FEED = 0x4A1166a659A55625345e9515b32adECea5547C38;
@@ -72,6 +73,7 @@ contract RobinhoodMainnetForkTest is ForkTestHelper {
         // can independently detect stock-token and price-feed registry drift.
         innerFeed.setSequencerUptimeFeedRequired(false);
         innerFeed.setTokenFeed(TSLA, TSLA_USD_FEED);
+        innerFeed.setProtectionOpeningMaxPriceAgeForToken(TSLA, OPENING_MAX_PRICE_AGE);
 
         AlwaysOpenMarketSessionGate marketGate = new AlwaysOpenMarketSessionGate();
         AlwaysClosedMarketSessionGate closedMarketGate = new AlwaysClosedMarketSessionGate();
@@ -103,9 +105,8 @@ contract RobinhoodMainnetForkTest is ForkTestHelper {
         }
 
         assertEq(adapterUpdatedAt, updatedAt, "adapter returned the wrong feed timestamp");
-        assertTrue(stockFeed.isProtectionOpeningAllowed(TSLA), "unpaused token failed the open-gate fixture");
-
         if (isStale) {
+            assertFalse(stockFeed.isProtectionOpeningAllowed(TSLA), "stale token allowed a protection opening");
             vm.expectRevert(
                 abi.encodeWithSelector(ChainlinkOracleFeed.StalePrice.selector, TSLA, updatedAt, MAX_PRICE_AGE)
             );
@@ -115,6 +116,12 @@ contract RobinhoodMainnetForkTest is ForkTestHelper {
             );
             closedMarketStockFeed.getPrice(TSLA);
         } else {
+            bool openingFresh = block.timestamp - updatedAt <= OPENING_MAX_PRICE_AGE;
+            assertEq(
+                stockFeed.isProtectionOpeningAllowed(TSLA),
+                openingFresh,
+                "opening eligibility ignored equity-specific freshness"
+            );
             assertEq(stockFeed.getPrice(TSLA), uint256(answer), "adapter changed the 8-decimal feed answer");
             assertEq(
                 closedMarketStockFeed.getPrice(TSLA),

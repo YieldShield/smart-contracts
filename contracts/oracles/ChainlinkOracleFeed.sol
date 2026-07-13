@@ -153,10 +153,19 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     /// @notice Per-token max price age override. Zero means "use the global maxPriceAge".
     mapping(address => uint256) public maxPriceAgeForToken;
 
+    /// @notice Per-token freshness bound used only when opening new protection positions
+    /// @dev Zero means that no reviewed opening-specific freshness policy has been configured.
+    ///      This is intentionally separate from `maxPriceAgeForToken`: equity openings need a
+    ///      tighter bound without shortening the ordinary price window used by other operations.
+    mapping(address => uint256) public protectionOpeningMaxPriceAgeForToken;
+
     mapping(address => uint256) public scheduledTokenFeedRemovalTime;
 
     /// @notice Emitted when a per-token max price age is set
     event MaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
+
+    /// @notice Emitted when an opening-specific per-token max price age is set
+    event ProtectionOpeningMaxPriceAgeForTokenUpdated(address indexed token, uint256 oldAge, uint256 newAge);
 
     event TokenFeedRemovalScheduled(address indexed token, uint256 executableAt);
     event TokenFeedRemovalCancelled(address indexed token);
@@ -195,6 +204,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         tokenFeeds[token] = aggregator;
         isTokenSupported[token] = true;
         _clearTokenMaxPriceAge(token);
+        _clearTokenProtectionOpeningMaxPriceAge(token);
         _clearScheduledTokenFeedRemoval(token);
 
         // Best-effort cache of the underlying aggregator's min/max answer
@@ -290,6 +300,14 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         }
     }
 
+    function _clearTokenProtectionOpeningMaxPriceAge(address token) internal {
+        uint256 oldAge = protectionOpeningMaxPriceAgeForToken[token];
+        if (oldAge != 0) {
+            delete protectionOpeningMaxPriceAgeForToken[token];
+            emit ProtectionOpeningMaxPriceAgeForTokenUpdated(token, oldAge, 0);
+        }
+    }
+
     function removeTokenFeed(address token) external onlyOwner {
         _consumeScheduledTokenFeedRemoval(token);
         delete tokenFeeds[token];
@@ -297,6 +315,7 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         delete tokenFeedMaxAnswer[token];
         delete tokenFeedBoundsAggregator[token];
         delete maxPriceAgeForToken[token];
+        delete protectionOpeningMaxPriceAgeForToken[token];
         isTokenSupported[token] = false;
         emit TokenFeedSet(token, address(0));
     }
@@ -331,6 +350,18 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         uint256 oldAge = maxPriceAgeForToken[token];
         maxPriceAgeForToken[token] = _maxPriceAge;
         emit MaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
+    }
+
+    /// @notice Set a per-token freshness bound used only for protection-opening eligibility
+    /// @dev Set to zero to remove the reviewed opening policy. Consumers must fail closed when
+    ///      no value is configured. The Robinhood stock wrapper additionally applies its tighter
+    ///      equity-policy ceiling without changing ordinary Chainlink price reads.
+    function setProtectionOpeningMaxPriceAgeForToken(address token, uint256 _maxPriceAge) external onlyOwner {
+        if (_maxPriceAge != 0 && _maxPriceAge < 10) revert InvalidPriceAge(_maxPriceAge, 10);
+        if (_maxPriceAge > MAX_PRICE_AGE_LIMIT) revert PriceAgeTooHigh(_maxPriceAge, MAX_PRICE_AGE_LIMIT);
+        uint256 oldAge = protectionOpeningMaxPriceAgeForToken[token];
+        protectionOpeningMaxPriceAgeForToken[token] = _maxPriceAge;
+        emit ProtectionOpeningMaxPriceAgeForTokenUpdated(token, oldAge, _maxPriceAge);
     }
 
     /// @notice Resolve the effective max-price-age for a token (override or global)
