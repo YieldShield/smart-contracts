@@ -114,7 +114,7 @@ library EventsLib {
     event PoolClosed(address indexed pool, address indexed creator);
     event PoolDeactivated(address indexed pool);
     event CreationBondPosted(address indexed pool, address indexed creator, address indexed token, uint256 amount);
-    event CreationBondReturned(address indexed pool, address indexed creator, address indexed token, uint256 amount);
+    event CreationBondReturned(address indexed pool, address indexed recipient, address indexed token, uint256 amount);
     event CreationBondForfeited(address indexed pool, address indexed recipient, address indexed token, uint256 amount);
     event CreationBondShortfall(
         address indexed pool, address indexed token, uint256 recordedAmount, uint256 paidAmount

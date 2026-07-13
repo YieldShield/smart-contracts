@@ -277,6 +277,7 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         address creator
     );
     event PoolImplementationPinChecked(address indexed implementation, bytes32 codehash);
+    event CreationBondReturned(address indexed pool, address indexed recipient, address indexed token, uint256 amount);
 
     CompositeOracle public compositeOracle;
 
@@ -2052,6 +2053,8 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         factory.closePool(poolAddress);
 
         uint256 recipientBalanceBefore = blockingToken.balanceOf(user1);
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit CreationBondReturned(poolAddress, user1, address(blockingToken), expectedBondAmount);
         factory.closePoolTo(poolAddress, user1);
 
         assertEq(
