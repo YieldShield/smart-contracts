@@ -1374,18 +1374,55 @@ contract CompositeOracleDualFeedTest is Test {
         compositeOracle.revertToPrimary(address(token));
     }
 
-    function test_RevertToPrimary_SucceedsWhenBackupUnavailableAndPrimaryHealthy() public {
+    function test_RevertToPrimary_RevertsWhenBackupUnavailableAndPrimaryHealthy() public {
         _challengeAndFinalize();
         backupOracle.setPrice(address(token), 0);
 
-        vm.expectEmit(true, true, false, true);
-        emit RevertedToPrimary(address(token), address(this), type(uint256).max);
-        vm.expectEmit(true, false, false, true);
-        emit OracleSwitched(address(token), false);
-
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.RevertNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
         compositeOracle.revertToPrimary(address(token));
 
-        assertFalse(compositeOracle.isBackupActiveForToken(address(token)));
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)), "failed failback must preserve backup mode");
+    }
+
+    function test_RevertToPrimary_RevertsWhenBackupProtectedReadFails() public {
+        _challengeAndFinalize();
+        backupOracle.setShouldRevertOnCircuitBreaker(true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.RevertNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
+        compositeOracle.revertToPrimary(address(token));
+
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)), "failed failback must preserve backup mode");
+    }
+
+    function test_RevertToPrimary_RevertsWhenBackupLosesCircuitBreakerCapability() public {
+        MutableCircuitBreakerSelectorFeed mutableBackup = new MutableCircuitBreakerSelectorFeed();
+        uint256 deviatedPrice = (PRIMARY_PRICE * 10076) / 10000;
+        mutableBackup.setPrice(address(token), deviatedPrice);
+        compositeOracle.setTokenOracleFeedDual(address(token), address(primaryOracle), address(mutableBackup));
+
+        compositeOracle.challengeForToken(address(token));
+        vm.warp(block.timestamp + CHALLENGE_DURATION + 1);
+        compositeOracle.finalizeChallenge(address(token));
+
+        primaryOracle.setPrice(address(token), deviatedPrice);
+        mutableBackup.setUnsafeSelectorEnabled(false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompositeOracle.RevertNotPossible.selector, address(token), "Backup oracle unavailable"
+            )
+        );
+        compositeOracle.revertToPrimary(address(token));
+
+        assertTrue(compositeOracle.isBackupActiveForToken(address(token)), "failed failback must preserve backup mode");
     }
 
     function test_RevertToPrimary_RevertsWhenPrimaryAlreadyActive() public {

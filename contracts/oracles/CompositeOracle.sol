@@ -838,13 +838,13 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         if (!primaryProtectedAvailable) {
             revert RevertNotPossible(token, "Primary oracle unavailable");
         }
+        if (!backupSupportsCircuitBreaker || !backupSuccess) {
+            revert RevertNotPossible(token, "Backup oracle unavailable");
+        }
 
-        uint256 currentDeviation = type(uint256).max;
-        if (backupSupportsCircuitBreaker && backupSuccess) {
-            currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
-            if (currentDeviation > deviationThresholdBps) {
-                revert RevertNotPossible(token, "Deviation still exceeds threshold");
-            }
+        uint256 currentDeviation = OracleValidationLib.calculateDeviation(primaryPrice, backupPrice);
+        if (currentDeviation > deviationThresholdBps) {
+            revert RevertNotPossible(token, "Deviation still exceeds threshold");
         }
 
         config.isBackupActive = false;

@@ -180,7 +180,9 @@ interface ICompositeOracle is IPriceOracle {
     function cancelChallenge(address token) external;
 
     /// @notice Revert to primary oracle when market stabilizes
-    /// @dev Anyone can call this if backup is active and deviation has returned to normal.
+    /// @dev Anyone can call this only when both protected feeds are readable and their deviation
+    ///      has returned to normal. Recovery while either feed is unavailable requires the
+    ///      scheduled owner-controlled force-reset path.
     /// @param token The token address
     function revertToPrimary(address token) external;
 
