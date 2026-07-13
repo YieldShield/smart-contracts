@@ -5,7 +5,7 @@
 This follow-up reviewed `main` at
 `b8016a8d2c4224f72fc0a37fc317ec579c97d1f8`, after the fixes recorded in
 `SECURITY_REMEDIATION_2026_07_13.md`. It found **no confirmed Critical or
-High-severity issue**. It confirmed one **Medium**, five **Low**, and one
+High-severity issue**. It confirmed one **Medium**, six **Low**, and one
 **Informational** weakness or inconsistency.
 
 The Medium finding is in the permissionless dual-feed recovery path. After a
@@ -19,16 +19,16 @@ The Low findings concern opt-in Robinhood equity safeguards, an advertised Arbit
 deployment path that cannot deploy the current oversized Solidity implementations,
 a required Arbitrum updater confirmation flag that is absent from CLI preflight and the
 environment template, receipt-NFT coverage that can regress without tripping a
-per-contract floor, and the lack of Arbitrum live-fork coverage. The Informational
-finding records fuzz tests whose names and assertions overstate the boundary
-conditions they exercise.
+per-contract floor, the lack of Arbitrum live-fork coverage, and a nondeterministic
+randomized-reachability release gate. The Informational finding records fuzz tests
+whose names and assertions overstate the boundary conditions they exercise.
 
 | Severity      | Count | Character                                                   |
 | ------------- | ----: | ----------------------------------------------------------- |
 | Critical      |     0 | None confirmed                                              |
 | High          |     0 | None confirmed                                              |
 | Medium        |     1 | Permissionless reactivation of a previously disputed oracle |
-| Low           |     5 | Configuration, deployment availability, and assurance gaps  |
+| Low           |     6 | Configuration, deployment availability, and assurance gaps  |
 | Informational |     1 | Misleading fuzz-test assurance                              |
 
 This is an engineering review, not a guarantee of correctness or a substitute for
@@ -65,6 +65,7 @@ value is deposited.
 | L-03 | Low           | Arbitrum One requires a Pyth updater confirmation flag that CLI preflight and documentation omit                         | Confirmed operational inconsistency |
 | L-04 | Low           | Receipt NFTs are outside per-contract coverage floors                                                                    | Confirmed assurance gap             |
 | L-05 | Low           | Supported Arbitrum oracle paths have no live-fork CI coverage, while existing fork jobs run only after merge             | Confirmed assurance gap             |
+| L-06 | Low           | The randomized reachability gate is nondeterministic and emits non-diagnostic counterexamples                            | Confirmed assurance gap             |
 | I-01 | Informational | A boundary fuzz test never approaches its named boundary and contains tautological assertions                            | Confirmed test-quality issue        |
 
 ## Medium finding
@@ -281,6 +282,43 @@ future canonical Arbitrum Sepolia sequencer feed and add equivalent checks if on
 published. Run deterministic public-RPC smokes on pull requests; leave only
 secret-dependent or rate-sensitive cases in the post-merge job.
 
+### L-06 — The randomized reachability gate is nondeterministic and emits non-diagnostic counterexamples
+
+**Affected:** `.github/workflows/ci.yml:80-84`; `foundry.toml:88-92`;
+`test/SplitRiskPoolInvariant.t.sol:548-573,981-1008,1037-1071,1443-1485`
+
+The blocking reachability profile requires every economically meaningful handler
+to record at least one randomized success in each invariant campaign, but CI does
+not pin a fuzz seed. Deterministic setup deliberately excludes its successful calls
+from the metric and, after exercising same-asset and cross-asset exits, leaves only
+one live shield receipt. A random sequence can consume that receipt before
+`claimRewards` selects its current owner. Later `claimRewards` selector dispatches
+return as modeled precondition skips, so Foundry reports zero external reverts while
+the handler's separate success counter remains zero.
+
+This occurred on the documentation-only SHA
+`53318f0f5940f052012887c3e35bfce54f970951`. The normal Foundry suite passed, but
+[CI run 29258297496, attempt 1](https://github.com/YieldShield/smart-contracts/actions/runs/29258297496)
+failed the dedicated reachability step with 27/28 tests passing. Forge reported 233
+`claimRewards` handler dispatches and zero external handler reverts, then shrank the
+failing 1,025-call campaign to one unrelated `dropPrice` call. The dispatch count
+does not mean that 233 eligible protocol claims failed: calls with no selected live
+receipt are intentionally counted as precondition skips. The shrunk trace therefore
+does not preserve the scheduling history that made the coverage postcondition fail.
+
+**Impact:** a false-negative release signal, retry-driven normalization of red
+security gates, and loss of reproducible failure evidence. This does not establish
+a production accounting or `claimRewards` defect.
+
+**Recommendation:** make hard-gated reachability deterministic and reproducible.
+Pin and print several reviewed `--fuzz-seed` values, retain or upload the original
+unshrunk campaign evidence, and redesign the handler so destructive exits cannot
+eliminate every receipt required by another hard floor. For example, reserve a
+dedicated claimable receipt or select from a global live-receipt set. Keep unseeded
+campaigns as additional exploration, but do not make a single random per-run
+path-coverage outcome the release gate. CI output should distinguish attempts,
+precondition skips, protocol successes, and unexpected reverts.
+
 ## Informational finding
 
 ### I-01 — The named uint128 boundary fuzz test does not approach the boundary
@@ -321,8 +359,7 @@ The review did not confirm an additional issue in:
   upgrades, storage snapshots, or bootstrap finalization;
 - manifest promotion, exact finalized-block agreement, dual-RPC code/wiring checks,
   operator-identity attestations, or quarantine of unpromoted public deployments;
-- randomized invariant reachability, storage-layout CI, or Slither's separate
-  blocking high-severity job.
+- storage-layout CI or Slither's separate blocking high-severity job.
 
 Automated findings were not accepted by label alone. Slither's Pyth-confidence and
 publish-time heuristics do not recognize the repository's explicit validation
@@ -365,6 +402,10 @@ finding above has a current-code path or a reproducible assurance probe.
   check, and no required updater-confirmation input.
 - Current artifacts: pool 48,302-byte runtime / 48,569-byte initcode; factory
   41,385-byte runtime / 41,652-byte initcode.
+- Post-push exact-SHA CI on `53318f0f...`: the normal Foundry suite, coverage policy,
+  fork smoke, contract-size jobs, Slither reporting and high-severity gate, and
+  Aderyn report completed successfully. Attempt 1 of the separate randomized
+  reachability gate failed 1/28 as described in L-06.
 - The immediately preceding exact-baseline remediation record reports 1,169
   Foundry tests passing with five expected live-fork skips, 134 script tests,
   28 invariant-reachability tests, storage snapshot success, coverage policy
