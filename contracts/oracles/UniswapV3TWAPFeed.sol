@@ -488,6 +488,16 @@ contract UniswapV3TWAPFeed is IOracleFeed, SequencerUptimeGuard {
             if (quoteStale) {
                 return (true, quotePublishTime);
             }
+
+            // Mirror the complete protected read before reporting health. Pool
+            // availability and quote freshness alone are insufficient when the
+            // composed token/USD value truncates to zero (or another guarded
+            // normalization step reverts).
+            try this.getPrice(token) returns (uint256 price) {
+                if (price == 0) return (true, 0);
+            } catch {
+                return (true, 0);
+            }
             return (false, uint64(block.timestamp));
         } catch {
             return (true, 0);

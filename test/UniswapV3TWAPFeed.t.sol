@@ -578,4 +578,19 @@ contract UniswapV3TWAPFeedTest is Test {
         assertTrue(isStale);
         assertEq(publishTime, 0);
     }
+
+    function test_isPriceStale_TrueWhenComposedPriceTruncatesToZero() public {
+        MockERC20 token = new MockERC20("Tiny Price Token", "TINY");
+        MockUniswapV3Pool pool = new MockUniswapV3Pool(
+            address(token), address(quoteToken), -800_000, harness.DEFAULT_MINIMUM_AVERAGE_LIQUIDITY()
+        );
+        harness.setTokenPool(address(token), address(pool));
+
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3TWAPFeed.PriceTruncatedToZero.selector, address(token)));
+        harness.getPrice(address(token));
+
+        (bool isStale, uint64 publishTime) = harness.isPriceStale(address(token));
+        assertTrue(isStale);
+        assertEq(publishTime, 0);
+    }
 }
