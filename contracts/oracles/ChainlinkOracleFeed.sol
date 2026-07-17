@@ -32,6 +32,13 @@ interface IChainlinkAggregatorBounds {
     function maxAnswer() external view returns (int192);
 }
 
+/// @notice Optional capability exposed by pull-style or test feeds whose freshness can be
+///         advanced by the transaction sender. Standard Chainlink push feeds omit it.
+interface IUserUpdatableChainlinkAggregator {
+    function supportsUserUpdates() external view returns (bool);
+    function refresh() external;
+}
+
 /// @title ChainlinkOracleFeed
 /// @author David Hawig
 /// @notice Oracle feed adapter for Chainlink price feeds
@@ -101,6 +108,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
     ///      carrying the new bound values.
     event FeedBoundsRefreshed(address indexed token, address indexed feed);
 
+    /// @notice Emitted after a caller refreshes a user-updatable underlying feed.
+    event UserPriceRefresh(address indexed token, address indexed feed, address indexed caller);
+
     /// @notice Custom error for unsupported token
     error TokenNotSupported(address token);
 
@@ -112,6 +122,9 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
 
     /// @notice Custom error for invalid feed address
     error InvalidFeedAddress(address feed);
+
+    /// @notice Custom error when a token's underlying Chainlink feed is push-only.
+    error UserPriceRefreshNotSupported(address token, address feed);
 
     /// @notice Custom error when L2 sequencer is down
     error SequencerDown();
@@ -268,6 +281,31 @@ contract ChainlinkOracleFeed is IOracleFeed, Ownable {
         address feed = address(tokenFeeds[token]);
         emit FeedBoundsRefreshed(token, feed);
         _cacheFeedBounds(token, feed);
+    }
+
+    /// @notice Whether the registered aggregator explicitly supports depositor-triggered refreshes.
+    /// @dev Capability detection keeps this production-safe: normal Chainlink push feeds do not
+    ///      implement the optional selector and therefore remain non-user-updatable.
+    function supportsUserUpdates(address token) public view returns (bool) {
+        if (!isTokenSupported[token]) return false;
+        address feed = address(tokenFeeds[token]);
+        try IUserUpdatableChainlinkAggregator(feed).supportsUserUpdates() returns (bool supported) {
+            return supported;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @notice Refresh a pull-style or test aggregator registered for `token`.
+    /// @dev The underlying feed defines how updates are authenticated. The Robinhood testnet mock
+    ///      preserves the existing answer and only advances its round/timestamp; production pull
+    ///      adapters can verify signed reports before returning successfully.
+    function refreshPrice(address token) external {
+        if (!isTokenSupported[token]) revert TokenNotSupported(token);
+        address feed = address(tokenFeeds[token]);
+        if (!supportsUserUpdates(token)) revert UserPriceRefreshNotSupported(token, feed);
+        IUserUpdatableChainlinkAggregator(feed).refresh();
+        emit UserPriceRefresh(token, feed, msg.sender);
     }
 
     /// @notice Remove a token feed

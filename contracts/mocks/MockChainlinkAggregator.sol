@@ -16,6 +16,8 @@ contract MockChainlinkAggregator is Ownable {
     int192 public minAnswer;
     int192 public maxAnswer;
 
+    event AnswerRefreshed(uint80 indexed roundId, int256 answer, uint256 updatedAt, address indexed caller);
+
     constructor(string memory description_, uint8 decimals_, int256 answer_) Ownable(msg.sender) {
         _description = description_;
         _decimals = decimals_;
@@ -54,6 +56,24 @@ contract MockChainlinkAggregator is Ownable {
         _startedAt = block.timestamp;
         _updatedAt = block.timestamp;
         _answeredInRound = _roundId;
+    }
+
+    /// @notice Signals that this test feed supports depositor-triggered freshness updates.
+    /// @dev Production Chainlink aggregators do not expose this capability. Consumers must
+    ///      probe it explicitly instead of assuming every Chainlink-shaped feed is writable.
+    function supportsUserUpdates() external pure returns (bool) {
+        return true;
+    }
+
+    /// @notice Advances the mock round and timestamp without allowing the caller to choose a price.
+    /// @dev This is intentionally permissionless for testnet rehearsal flows. Price changes remain
+    ///      owner-only through `setAnswer`, preventing depositors from manipulating pool valuation.
+    function refresh() external {
+        _roundId++;
+        _startedAt = block.timestamp;
+        _updatedAt = block.timestamp;
+        _answeredInRound = _roundId;
+        emit AnswerRefreshed(_roundId, _answer, _updatedAt, msg.sender);
     }
 
     function setRoundData(

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { Test } from "forge-std/Test.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { CompositeOracle } from "../contracts/oracles/CompositeOracle.sol";
 import { RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
@@ -83,6 +84,28 @@ contract CorporateGuardWithoutClosedSessionExitFeed is IOracleFeed, ICorporateAc
 
     function description() external pure returns (string memory) {
         return "Corporate Guard Only";
+    }
+}
+
+contract PushOnlyChainlinkAggregator {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function description() external pure returns (string memory) {
+        return "Production push-only feed";
+    }
+
+    function version() external pure returns (uint256) {
+        return 1;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+    {
+        return (1, 1e8, block.timestamp, block.timestamp, 1);
     }
 }
 
@@ -406,6 +429,55 @@ contract RobinhoodStockOracleFeedTest is Test {
 
         assertFalse(feedWithBrokenGate.isProtectionOpeningAllowed(address(tsla)));
         assertEq(feedWithBrokenGate.getPrice(address(tsla)), uint256(TSLA_PRICE));
+    }
+
+    // ============ User-updatable feed capability ============
+
+    function test_refreshPrice_AllowsDepositorToRefreshWithoutChangingAnswer() public {
+        address depositor = makeAddr("depositor");
+        vm.warp(block.timestamp + MAX_PRICE_AGE + 1);
+        (bool staleBefore,) = stockFeed.isPriceStale(address(tsla));
+        assertTrue(staleBefore, "price should age before refresh");
+        assertTrue(stockFeed.supportsUserUpdates(address(tsla)), "mock feed should advertise user refresh");
+
+        vm.prank(depositor);
+        stockFeed.refreshPrice(address(tsla));
+
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = tslaAggregator.latestRoundData();
+        assertEq(roundId, 2, "refresh should advance the round");
+        assertEq(answeredInRound, roundId, "refreshed round should be complete");
+        assertEq(answer, TSLA_PRICE, "depositor cannot change the configured price");
+        assertEq(updatedAt, block.timestamp, "refresh should advance the timestamp");
+        (bool staleAfter,) = stockFeed.isPriceStale(address(tsla));
+        assertFalse(staleAfter, "price should be fresh after depositor refresh");
+    }
+
+    function test_refreshPrice_RevertsWhileCorporateActionPaused() public {
+        tsla.setOraclePaused(true);
+
+        vm.expectRevert(abi.encodeWithSelector(RobinhoodStockOracleFeed.StockTokenOraclePaused.selector, address(tsla)));
+        stockFeed.refreshPrice(address(tsla));
+    }
+
+    function test_refreshPrice_RejectsStandardPushOnlyFeed() public {
+        MockERC20 token = new MockERC20("Push-only token", "PUSH");
+        PushOnlyChainlinkAggregator pushOnlyFeed = new PushOnlyChainlinkAggregator();
+        chainlinkFeed.setTokenFeed(address(token), address(pushOnlyFeed));
+
+        assertFalse(chainlinkFeed.supportsUserUpdates(address(token)), "push feed must not advertise user refresh");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ChainlinkOracleFeed.UserPriceRefreshNotSupported.selector, address(token), address(pushOnlyFeed)
+            )
+        );
+        chainlinkFeed.refreshPrice(address(token));
+    }
+
+    function test_setAnswer_RemainsOwnerOnly() public {
+        address depositor = makeAddr("depositor");
+        vm.prank(depositor);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, depositor));
+        tslaAggregator.setAnswer(1);
     }
 
     // ============ Corporate-action multiplier scenario ============

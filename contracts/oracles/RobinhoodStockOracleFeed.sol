@@ -29,6 +29,8 @@ interface IChainlinkOracleFeedOptional {
     function isPriceStale(address token) external view returns (bool isStale, uint256 updatedAt);
     function protectionOpeningMaxPriceAgeForToken(address token) external view returns (uint256 maxAge);
     function getPriceForClosedSessionExit(address token) external view returns (uint256 price);
+    function supportsUserUpdates(address token) external view returns (bool);
+    function refreshPrice(address token) external;
 }
 
 /// @title RobinhoodStockOracleFeed
@@ -176,6 +178,17 @@ contract RobinhoodStockOracleFeed is
         if (marketOpen) revert MarketSessionOpen(token);
 
         return IChainlinkOracleFeedOptional(innerFeed).getPriceForClosedSessionExit(token);
+    }
+
+    /// @notice Whether the underlying Chainlink-compatible feed supports user refreshes.
+    function supportsUserUpdates(address token) external view returns (bool supported) {
+        return IChainlinkOracleFeedOptional(innerFeed).supportsUserUpdates(token);
+    }
+
+    /// @notice Refresh a user-updatable underlying feed while preserving the stock pause guard.
+    function refreshPrice(address token) external {
+        _requireNotPaused(token);
+        IChainlinkOracleFeedOptional(innerFeed).refreshPrice(token);
     }
 
     /// @notice Check if a price is stale for a given token
