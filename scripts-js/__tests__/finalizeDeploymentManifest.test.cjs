@@ -1405,7 +1405,7 @@ test("CREATE provenance must match a live receipt contract address", async () =>
                 validationProvider: { ...providerWithoutAddress },
             }),
         ),
-        /missing a valid contract address/u,
+        /creation address does not match/u,
     );
 
     const providerWithMismatch = {
@@ -1577,4 +1577,118 @@ test("deployment workflow promotes the manifest before ABI generation", () => {
     assert.notEqual(promotionIndex, -1);
     assert.notEqual(abiIndex, -1);
     assert.ok(promotionIndex < abiIndex);
+});
+
+test("CREATE2 helper deployments allow the expected null receipt address", async (t) => {
+    const item = await fixture();
+    const rootDir = mkdtempSync(join(tmpdir(), "ys-manifest-create2-"));
+    t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+    const hash = `0x${"ef".repeat(32)}`;
+    item.broadcast.transactions.push({
+        hash,
+        transaction: { from: DEPLOYER },
+        transactionType: "CREATE2",
+        contractAddress: addressFor(999),
+    });
+    item.broadcast.receipts.push({
+        contractAddress: null,
+        status: "0x1",
+        transactionHash: hash,
+    });
+    item.liveReceipts.set(hash, {
+        blockHash: RECEIPT_BLOCK_HASH,
+        blockNumber: FINALIZED_BLOCK_NUMBER - 1n,
+        contractAddress: null,
+        from: DEPLOYER,
+        status: 1,
+        transactionHash: hash,
+    });
+    writeAttempt(rootDir, item.candidate, item.broadcast);
+
+    const result = await item.promoteDeploymentManifest(
+        promotionArgs(rootDir, item),
+    );
+
+    assert.equal(result.manifest.status, "active");
+    assert.ok(result.manifest.transactionHashes.includes(hash));
+});
+
+test("manifest promotion retries receipts that are not finalized yet", async () => {
+    const { promoteDeploymentManifestWithFinalityWait } =
+        await import("../finalizeDeploymentManifest.js");
+    const pending = new Error(
+        `On-chain receipt ${TX_HASH} is not included in the agreed finalized state.`,
+    );
+    const calls = [];
+
+    const result = await promoteDeploymentManifestWithFinalityWait(
+        { deploymentId: DEPLOYMENT_ID },
+        {
+            promote: async (options) => {
+                calls.push(options);
+                if (calls.length < 3) throw pending;
+                return { activePath: "/deployment.json" };
+            },
+            timeoutMs: 100,
+            pollIntervalMs: 1,
+            now: () => calls.length,
+            sleep: async () => {},
+            log: () => {},
+        },
+    );
+
+    assert.equal(calls.length, 3);
+    assert.equal(result.activePath, "/deployment.json");
+});
+
+test("manifest promotion does not retry non-finality failures", async () => {
+    const { promoteDeploymentManifestWithFinalityWait } =
+        await import("../finalizeDeploymentManifest.js");
+    let calls = 0;
+    await assert.rejects(
+        promoteDeploymentManifestWithFinalityWait(
+            {},
+            {
+                promote: async () => {
+                    calls += 1;
+                    throw new Error("runtime codehash mismatch");
+                },
+                sleep: async () => {},
+                log: () => {},
+            },
+        ),
+        /runtime codehash mismatch/u,
+    );
+    assert.equal(calls, 1);
+});
+
+test("validation provider requests respect the configured minimum interval", async () => {
+    const { rateLimitedProvider } =
+        await import("../finalizeDeploymentManifest.js");
+    let clock = 1_000;
+    const calledAt = [];
+    const provider = rateLimitedProvider(
+        {
+            async getCode(value) {
+                calledAt.push(clock);
+                return value;
+            },
+        },
+        250,
+        {
+            now: () => clock,
+            sleep: async (delay) => {
+                clock += delay;
+            },
+        },
+    );
+
+    const results = await Promise.all([
+        provider.getCode("first"),
+        provider.getCode("second"),
+        provider.getCode("third"),
+    ]);
+
+    assert.deepEqual(results, ["first", "second", "third"]);
+    assert.deepEqual(calledAt, [1_000, 1_250, 1_500]);
 });

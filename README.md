@@ -178,7 +178,15 @@ hosts, and the normalized operator slugs must identify different operating
 organizations. Only the slugs—not RPC URLs or credentials—are persisted in
 finality evidence. These identities are operator-attested rather than
 cryptographically discovered; use an independently operated full node for one
-side when possible.
+side when possible. After a successful broadcast, manifest promotion waits up
+to one hour for valid receipts to enter the agreed finalized state, polling
+every 15 seconds. Override those defaults with
+`YS_DEPLOYMENT_FINALITY_WAIT_TIMEOUT_MS` and
+`YS_DEPLOYMENT_FINALITY_POLL_INTERVAL_MS` when a reviewed chain requires a
+different window. Codehash, wiring, receipt, and RPC-disagreement failures still
+fail immediately. Independent validation RPC requests are spaced 500ms apart by
+default to remain compatible with common public endpoint limits; override this
+with `YS_DEPLOYMENT_VALIDATION_RPC_MIN_INTERVAL_MS` when needed.
 
 The production deploy CLI has finality policies for the checked-in `arbitrum`,
 `arbitrumSepolia`, `robinhood`, and `robinhoodTestnet` aliases. A separate

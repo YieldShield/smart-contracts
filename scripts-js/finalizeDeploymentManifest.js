@@ -22,6 +22,9 @@ const FINALITY_POLICY_PATH = join(
 const CHAIN_FINALITY_POLICY = Object.freeze(
     JSON.parse(readFileSync(FINALITY_POLICY_PATH, "utf8")),
 );
+const DEFAULT_FINALITY_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
+const DEFAULT_FINALITY_POLL_INTERVAL_MS = 15 * 1000;
+const DEFAULT_VALIDATION_RPC_MIN_INTERVAL_MS = 500;
 
 const PYTH_CORE_INVENTORY = Object.freeze([
     "YSToken",
@@ -514,6 +517,37 @@ function providerAtBlock(provider, blockNumber) {
         getTransactionReceipt(hash) {
             return provider.getTransactionReceipt(hash);
         },
+    };
+}
+
+function rateLimitedProvider(
+    provider,
+    minIntervalMs,
+    {
+        now = Date.now,
+        sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
+    } = {},
+) {
+    let nextRequestAt = 0;
+    let queue = Promise.resolve();
+    const schedule = (request) => {
+        const result = queue.then(async () => {
+            const delay = Math.max(0, nextRequestAt - now());
+            if (delay > 0) await sleep(delay);
+            nextRequestAt = now() + minIntervalMs;
+            return request();
+        });
+        queue = result.catch(() => {});
+        return result;
+    };
+    return {
+        call: (...args) => schedule(() => provider.call(...args)),
+        getCode: (...args) => schedule(() => provider.getCode(...args)),
+        getNetwork: (...args) => schedule(() => provider.getNetwork(...args)),
+        getStorage: (...args) => schedule(() => provider.getStorage(...args)),
+        getTransactionReceipt: (...args) =>
+            schedule(() => provider.getTransactionReceipt(...args)),
+        send: (...args) => schedule(() => provider.send(...args)),
     };
 }
 
@@ -1401,42 +1435,57 @@ async function validateBroadcast({
         throw new Error("Broadcast still contains pending transactions.");
     }
 
-    const receiptByHash = new Map(
-        broadcast.receipts.map((receipt) => [
-            String(receipt.transactionHash || "").toLowerCase(),
-            receipt,
-        ]),
-    );
-    if (receiptByHash.size !== broadcast.transactions.length) {
+    if (broadcast.receipts.length !== broadcast.transactions.length) {
         throw new Error(
             "Broadcast receipt count does not match its transaction count.",
         );
     }
     const expectedDeployer = ethers.getAddress(candidate.deployer);
-    const transactionHashes = [];
-    const seenTransactionHashes = new Set();
-    const createdAddresses = new Set();
+    const recordedCreateAddresses = new Set();
     for (const transaction of broadcast.transactions) {
-        const hash = String(transaction.hash || "").toLowerCase();
         const from = transaction.transaction?.from;
-        if (!/^0x[0-9a-f]{64}$/u.test(hash)) {
-            throw new Error("Broadcast transaction is missing a valid hash.");
-        }
-        if (seenTransactionHashes.has(hash)) {
-            throw new Error(
-                `Broadcast transaction hash is duplicated: ${hash}.`,
-            );
-        }
-        seenTransactionHashes.add(hash);
         if (!from || ethers.getAddress(from) !== expectedDeployer) {
             throw new Error(
                 "Broadcast transaction deployer does not match the candidate.",
             );
         }
-        const receipt = receiptByHash.get(hash);
-        if (!receipt || !receiptSucceeded(receipt.status)) {
+        const transactionType = String(
+            transaction.transactionType || "",
+        ).toUpperCase();
+        if (transactionType === "CREATE" || transactionType === "CREATE2") {
+            if (
+                !transaction.contractAddress ||
+                !ethers.isAddress(transaction.contractAddress)
+            ) {
+                throw new Error(
+                    "Broadcast creation transaction is missing a valid contract address.",
+                );
+            }
+            if (transactionType === "CREATE") {
+                recordedCreateAddresses.add(
+                    ethers.getAddress(transaction.contractAddress),
+                );
+            }
+        }
+    }
+
+    const transactionHashes = [];
+    const seenTransactionHashes = new Set();
+    const createdAddresses = new Set();
+    for (const receipt of broadcast.receipts) {
+        const hash = String(receipt.transactionHash || "").toLowerCase();
+        if (!/^0x[0-9a-f]{64}$/u.test(hash)) {
+            throw new Error("Broadcast receipt is missing a valid hash.");
+        }
+        if (seenTransactionHashes.has(hash)) {
             throw new Error(
-                `Broadcast transaction ${hash} is incomplete or failed.`,
+                `Broadcast receipt transaction hash is duplicated: ${hash}.`,
+            );
+        }
+        seenTransactionHashes.add(hash);
+        if (!receiptSucceeded(receipt.status)) {
+            throw new Error(
+                `Broadcast receipt ${hash} is incomplete or failed.`,
             );
         }
         const [liveReceipt, validationReceipt] = await Promise.all([
@@ -1471,38 +1520,30 @@ async function validateBroadcast({
                 `On-chain receipt ${hash} deployer does not match the candidate.`,
             );
         }
-        const transactionType = String(
-            transaction.transactionType || "",
-        ).toUpperCase();
-        if (transactionType === "CREATE" || transactionType === "CREATE2") {
-            if (
-                !transaction.contractAddress ||
-                !ethers.isAddress(transaction.contractAddress)
-            ) {
-                throw new Error(
-                    `Broadcast creation transaction ${hash} is missing a valid contract address.`,
-                );
-            }
-            if (
-                !liveProjection.contractAddress ||
-                !ethers.isAddress(liveProjection.contractAddress)
-            ) {
-                throw new Error(
-                    `On-chain creation receipt ${hash} is missing a valid contract address.`,
-                );
-            }
-            const recordedAddress = ethers.getAddress(
-                transaction.contractAddress,
+        const recordedReceiptAddress = receipt.contractAddress
+            ? ethers.getAddress(receipt.contractAddress)
+            : null;
+        if (recordedReceiptAddress !== liveProjection.contractAddress) {
+            throw new Error(
+                `Broadcast creation address does not match the on-chain receipt for ${hash}.`,
             );
-            const liveAddress = liveProjection.contractAddress;
-            if (recordedAddress !== liveAddress) {
+        }
+        if (liveProjection.contractAddress) {
+            if (!recordedCreateAddresses.has(liveProjection.contractAddress)) {
                 throw new Error(
-                    `Broadcast creation address does not match the on-chain receipt for ${hash}.`,
+                    `On-chain creation receipt ${hash} is not tied to a recorded CREATE transaction.`,
                 );
             }
-            createdAddresses.add(liveAddress);
+            createdAddresses.add(liveProjection.contractAddress);
         }
         transactionHashes.push(hash);
+    }
+    for (const address of recordedCreateAddresses) {
+        if (!createdAddresses.has(address)) {
+            throw new Error(
+                `Broadcast CREATE address ${address} is missing a valid on-chain creation receipt.`,
+            );
+        }
     }
     return { createdAddresses, transactionHashes };
 }
@@ -1992,6 +2033,53 @@ function resolveRpcUrl(rpcInput, env = process.env, rootDir = PROJECT_ROOT) {
     return url;
 }
 
+function positiveIntegerEnv(name, fallback, env = process.env) {
+    const raw = env[name];
+    if (raw === undefined || raw === "") return fallback;
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new Error(`${name} must be a positive integer.`);
+    }
+    return parsed;
+}
+
+function isPendingFinalityError(error) {
+    return /^On-chain receipt 0x[0-9a-f]{64} is not included in the agreed finalized state\.$/iu.test(
+        error?.message ?? "",
+    );
+}
+
+async function promoteDeploymentManifestWithFinalityWait(
+    options,
+    {
+        promote = promoteDeploymentManifest,
+        timeoutMs = DEFAULT_FINALITY_WAIT_TIMEOUT_MS,
+        pollIntervalMs = DEFAULT_FINALITY_POLL_INTERVAL_MS,
+        now = Date.now,
+        sleep = (duration) =>
+            new Promise((resolve) => setTimeout(resolve, duration)),
+        log = console.log,
+    } = {},
+) {
+    const deadline = now() + timeoutMs;
+    while (true) {
+        try {
+            return await promote(options);
+        } catch (error) {
+            if (!isPendingFinalityError(error)) throw error;
+            if (now() >= deadline) {
+                throw new Error(
+                    `${error.message} Timed out waiting for finalized-state promotion.`,
+                );
+            }
+            log(
+                `${error.message} Waiting ${pollIntervalMs / 1000}s before retrying promotion.`,
+            );
+            await sleep(pollIntervalMs);
+        }
+    }
+}
+
 async function main() {
     const args = parseCliArgs(process.argv.slice(2));
     const configurationDigest = process.env.YS_DEPLOYMENT_CONFIGURATION_DIGEST;
@@ -2004,24 +2092,43 @@ async function main() {
         : validationRpcInput;
     requireIndependentRpcUrls(primaryRpcUrl, validationRpcUrl);
     const provider = new ethers.JsonRpcProvider(primaryRpcUrl);
-    const validationProvider = new ethers.JsonRpcProvider(validationRpcUrl);
+    const rawValidationProvider = new ethers.JsonRpcProvider(validationRpcUrl);
+    const validationProvider = rateLimitedProvider(
+        rawValidationProvider,
+        positiveIntegerEnv(
+            "YS_DEPLOYMENT_VALIDATION_RPC_MIN_INTERVAL_MS",
+            DEFAULT_VALIDATION_RPC_MIN_INTERVAL_MS,
+        ),
+    );
     try {
-        const result = await promoteDeploymentManifest({
-            chainId: args["chain-id"],
-            deploymentId: args["deployment-id"],
-            configurationDigest,
-            scriptName: args.script,
-            provider,
-            validationProvider,
-            primaryRpcUrl,
-            validationRpcUrl,
-        });
+        const result = await promoteDeploymentManifestWithFinalityWait(
+            {
+                chainId: args["chain-id"],
+                deploymentId: args["deployment-id"],
+                configurationDigest,
+                scriptName: args.script,
+                provider,
+                validationProvider,
+                primaryRpcUrl,
+                validationRpcUrl,
+            },
+            {
+                timeoutMs: positiveIntegerEnv(
+                    "YS_DEPLOYMENT_FINALITY_WAIT_TIMEOUT_MS",
+                    DEFAULT_FINALITY_WAIT_TIMEOUT_MS,
+                ),
+                pollIntervalMs: positiveIntegerEnv(
+                    "YS_DEPLOYMENT_FINALITY_POLL_INTERVAL_MS",
+                    DEFAULT_FINALITY_POLL_INTERVAL_MS,
+                ),
+            },
+        );
         console.log(
             `Promoted deployment generation ${args["deployment-id"]} to ${result.activePath}`,
         );
     } finally {
         provider.destroy();
-        validationProvider.destroy();
+        rawValidationProvider.destroy();
     }
 }
 
@@ -2045,6 +2152,8 @@ export {
     chainFinalityPolicy,
     pythSequencerPolicyForChain,
     promoteDeploymentManifest,
+    promoteDeploymentManifestWithFinalityWait,
+    rateLimitedProvider,
     requiredReviewedCodehashPinNames,
     reviewedCodehashPinSpecs,
     requireIndependentRpcOperators,
