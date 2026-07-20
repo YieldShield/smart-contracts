@@ -48,6 +48,9 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
     bool internal demoAssetsRequestedOverride;
     bool internal marketSessionGuardianOverrideSet;
     address internal marketSessionGuardianOverride;
+    mapping(address canonicalToken => address testToken) internal canonicalStockTokenOverrides;
+    bool internal canonicalStockTokenOverridesEnabled;
+    bytes32 internal canonicalStockTokenCodehashOverride;
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         return this.onERC721Received.selector;
@@ -130,6 +133,32 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
             ROBINHOOD_TESTNET_NFLX_TOKEN,
             ROBINHOOD_TESTNET_AMD_TOKEN
         );
+    }
+
+    function setCanonicalStockTokenOverrideHarness(address canonicalToken, address testToken) external {
+        canonicalStockTokenOverrides[canonicalToken] = testToken;
+        canonicalStockTokenOverridesEnabled = true;
+        canonicalStockTokenCodehashOverride = testToken.codehash;
+    }
+
+    function robinhoodDemoStockTokenHarness(string memory envName, address canonicalToken, string memory symbol)
+        external
+        view
+        returns (address token)
+    {
+        (token,) = _robinhoodDemoStockToken(envName, canonicalToken, symbol, symbol);
+    }
+
+    function validateRobinhoodTestnetStockTokenHarness(address token, string memory symbol) external view {
+        _validateRobinhoodTestnetStockToken(token, symbol);
+    }
+
+    function configureRobinhoodTestnetDemoSessionsHarness(USMarketSessionGate gate) external {
+        _configureRobinhoodTestnetDemoSessions(gate);
+    }
+
+    function robinhoodTestnetDemoSessionDaysHarness() external pure returns (uint256) {
+        return ROBINHOOD_TESTNET_DEMO_SESSION_DAYS;
     }
 
     function currentDeploymentAddressHarness(string memory deploymentName) external view returns (address) {
@@ -359,9 +388,7 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         deployer = address(this);
         deployments.push(Deployment("RobinhoodStockOracleFeed", protocol.robinhoodStockOracleFeedAddr));
         USMarketSessionGate marketSessionGate = USMarketSessionGate(protocol.marketSessionGateAddr);
-        marketSessionGate.setDailySession(
-            uint64(block.timestamp / marketSessionGate.SECONDS_PER_DAY()), 0, marketSessionGate.SECONDS_PER_DAY()
-        );
+        _configureRobinhoodTestnetDemoSessions(marketSessionGate);
         _seedRobinhoodTestnetDemoAssets(protocol);
     }
 
@@ -629,6 +656,26 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
         return super._robinhoodTestnetDemoAssetsRequested();
     }
 
+    function _expectedRobinhoodTestnetStockToken(address canonicalToken) internal view override returns (address) {
+        address testToken = canonicalStockTokenOverrides[canonicalToken];
+        return testToken == address(0) ? super._expectedRobinhoodTestnetStockToken(canonicalToken) : testToken;
+    }
+
+    function _readRobinhoodTestnetStockToken(string memory envName, address expectedToken)
+        internal
+        view
+        override
+        returns (address)
+    {
+        if (canonicalStockTokenOverridesEnabled) return expectedToken;
+        return super._readRobinhoodTestnetStockToken(envName, expectedToken);
+    }
+
+    function _expectedRobinhoodTestnetStockTokenCodehash() internal view override returns (bytes32) {
+        if (canonicalStockTokenCodehashOverride != bytes32(0)) return canonicalStockTokenCodehashOverride;
+        return super._expectedRobinhoodTestnetStockTokenCodehash();
+    }
+
     function _readMasterCopy(address holder) internal view returns (address singleton) {
         (bool success, bytes memory data) = holder.staticcall(abi.encodeWithSignature("masterCopy()"));
         if (success && data.length >= 32) {
@@ -654,6 +701,21 @@ contract ProductionDeployHarness is DeployYieldShieldProduction {
 contract ContractBootstrapHolder { }
 
 contract CodeButNotPyth { }
+
+contract DeploymentCanonicalRobinhoodStockToken is MockERC20Decimals {
+    bool public paused;
+    uint256 public uiMultiplier = 1e18;
+
+    constructor(string memory symbol_) MockERC20Decimals(string.concat("Canonical ", symbol_), symbol_, 18) { }
+
+    function setPaused(bool value) external {
+        paused = value;
+    }
+
+    function setUiMultiplier(uint256 value) external {
+        uiMultiplier = value;
+    }
+}
 
 contract FakeProductionOwnableOracle {
     address public owner;
@@ -1548,6 +1610,34 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(guardianMetadata, vm.toString(guardian));
     }
 
+    function test_RobinhoodTestnet_DemoCalendarConfiguresNinetyDayBoundedWindow() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        vm.warp(10_000 days + 12 hours);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(0xA11CE));
+        uint64 firstDay = uint64(block.timestamp / 1 days);
+        uint64 lastDay = firstDay + uint64(harness.robinhoodTestnetDemoSessionDaysHarness() - 1);
+
+        harness.configureRobinhoodTestnetDemoSessionsHarness(marketSessionGate);
+
+        (uint32 firstOpen, uint32 firstClose) = marketSessionGate.getDailySession(firstDay);
+        (uint32 lastOpen, uint32 lastClose) = marketSessionGate.getDailySession(lastDay);
+        (uint32 afterOpen, uint32 afterClose) = marketSessionGate.getDailySession(lastDay + 1);
+        assertEq(firstOpen, 0);
+        assertEq(firstClose, 1 days);
+        assertEq(lastOpen, 0);
+        assertEq(lastClose, 1 days);
+        assertEq(afterOpen, 0);
+        assertEq(afterClose, 0);
+
+        vm.warp(uint256(firstDay) * 1 days);
+        assertTrue(marketSessionGate.isMarketOpen(), "first configured day must be open");
+        vm.warp(uint256(lastDay) * 1 days + 23 hours);
+        assertTrue(marketSessionGate.isMarketOpen(), "last configured day must be open");
+        vm.warp(uint256(lastDay + 1) * 1 days);
+        assertFalse(marketSessionGate.isMarketOpen(), "day after demo window must fail closed");
+    }
+
     function test_RobinhoodStockOracle_IsCoreDeploymentAndPinsImmutableWiring() public {
         ProductionDeployHarness harness = new ProductionDeployHarness();
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
@@ -1558,6 +1648,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(harness.currentDeploymentAddressHarness("RobinhoodStockOracleFeed"), stockOracleFeed);
         assertEq(RobinhoodStockOracleFeed(stockOracleFeed).innerFeed(), address(chainlinkOracleFeed));
         assertEq(RobinhoodStockOracleFeed(stockOracleFeed).marketSessionGate(), address(marketSessionGate));
+        assertEq(RobinhoodStockOracleFeed(stockOracleFeed).owner(), address(harness));
         harness.validateRobinhoodStockOracleWiringHarness(
             address(chainlinkOracleFeed), address(marketSessionGate), stockOracleFeed
         );
@@ -1628,6 +1719,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), address(timelock));
         RobinhoodStockOracleFeed stockOracleFeed =
             new RobinhoodStockOracleFeed(address(chainlinkOracleFeed), address(marketSessionGate));
+        stockOracleFeed.transferOwnership(address(harness));
         vm.prank(address(harness));
         marketSessionGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
@@ -1658,6 +1750,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.owner(), address(factory));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.owner(), address(timelock));
+        assertEq(stockOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.emergencyGuardian(), guardian);
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.compositeOracle(), address(compositeOracle));
@@ -1707,11 +1800,29 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         harness.setDemoAssetsRequestedOverrideHarness(true);
         address guardian = address(0xA11CE);
         harness.setMarketSessionGuardianOverrideHarness(guardian);
+        (
+            address canonicalTsla,
+            address canonicalAmzn,
+            address canonicalPltr,
+            address canonicalNflx,
+            address canonicalAmd
+        ) = harness.defaultRobinhoodTestnetStockTokensHarness();
+        DeploymentCanonicalRobinhoodStockToken tsla = new DeploymentCanonicalRobinhoodStockToken("TSLA");
+        DeploymentCanonicalRobinhoodStockToken amzn = new DeploymentCanonicalRobinhoodStockToken("AMZN");
+        DeploymentCanonicalRobinhoodStockToken pltr = new DeploymentCanonicalRobinhoodStockToken("PLTR");
+        DeploymentCanonicalRobinhoodStockToken nflx = new DeploymentCanonicalRobinhoodStockToken("NFLX");
+        DeploymentCanonicalRobinhoodStockToken amd = new DeploymentCanonicalRobinhoodStockToken("AMD");
+        harness.setCanonicalStockTokenOverrideHarness(canonicalTsla, address(tsla));
+        harness.setCanonicalStockTokenOverrideHarness(canonicalAmzn, address(amzn));
+        harness.setCanonicalStockTokenOverrideHarness(canonicalPltr, address(pltr));
+        harness.setCanonicalStockTokenOverrideHarness(canonicalNflx, address(nflx));
+        harness.setCanonicalStockTokenOverrideHarness(canonicalAmd, address(amd));
 
         ChainlinkOracleFeed chainlinkOracleFeed = new ChainlinkOracleFeed(86_400);
         USMarketSessionGate marketSessionGate = new USMarketSessionGate(address(harness), guardian);
         RobinhoodStockOracleFeed stockOracleFeed =
             new RobinhoodStockOracleFeed(address(chainlinkOracleFeed), address(marketSessionGate));
+        stockOracleFeed.transferOwnership(address(harness));
         ERC4626OracleFeed erc4626OracleFeed = new ERC4626OracleFeed(address(chainlinkOracleFeed));
         CompositeOracle compositeOracle = new CompositeOracle();
         SplitRiskPool poolImplementation = new SplitRiskPool();
@@ -1741,6 +1852,12 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertFalse(factory.bootstrapModeEnabled());
         assertEq(compositeOracle.authorizedCallerCount(), 0);
         _assertRobinhoodDemoOpeningFreshness(harness, chainlinkOracleFeed);
+        _assertRobinhoodDemoPauseProbeModesAndRefresh(harness, chainlinkOracleFeed, stockOracleFeed);
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodTestTSLA"), address(tsla));
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodTestAMZN"), address(amzn));
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodTestPLTR"), address(pltr));
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodTestNFLX"), address(nflx));
+        assertEq(harness.currentDeploymentAddressHarness("RobinhoodTestAMD"), address(amd));
 
         address faucetAddr = harness.currentDeploymentAddressHarness("RobinhoodDemoAssetFaucet");
         assertTrue(faucetAddr != address(0));
@@ -1760,16 +1877,18 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(compositeOracle.robinhoodStockOracleFeed(), address(stockOracleFeed));
         assertEq(chainlinkOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.owner(), address(timelock));
+        assertEq(stockOracleFeed.owner(), address(timelock));
         assertEq(marketSessionGate.emergencyGuardian(), guardian);
         assertEq(erc4626OracleFeed.owner(), address(factory));
         assertEq(factory.poolCount(), 9);
         assertEq(factory.getWhitelistedTokens().length, 10);
+        _assertRobinhoodDemoPauseProbeModesAndRefresh(harness, chainlinkOracleFeed, stockOracleFeed);
 
-        address tsla = harness.currentDeploymentAddressHarness("RobinhoodTestTSLA");
+        address deployedTsla = harness.currentDeploymentAddressHarness("RobinhoodTestTSLA");
         vm.prank(address(timelock));
-        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(tsla, 30 minutes);
+        chainlinkOracleFeed.setProtectionOpeningMaxPriceAgeForToken(deployedTsla, 30 minutes);
         assertEq(
-            chainlinkOracleFeed.protectionOpeningMaxPriceAgeForToken(tsla),
+            chainlinkOracleFeed.protectionOpeningMaxPriceAgeForToken(deployedTsla),
             30 minutes,
             "timelock governance must retain opening-freshness administration"
         );
@@ -1777,6 +1896,7 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
 
     function test_RobinhoodTestnet_DemoAssetsDefaultOffAndRequireExplicitOptIn() public {
         vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        vm.setEnv("YS_ROBINHOOD_TESTNET_SEED_DEMO_ASSETS", "false");
         ProductionDeployHarness defaultHarness = new ProductionDeployHarness();
         assertFalse(defaultHarness.robinhoodTestnetDemoAssetsRequestedHarness());
 
@@ -1863,6 +1983,51 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
         assertEq(pltr, 0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0);
         assertEq(nflx, 0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93);
         assertEq(amd, 0x71178BAc73cBeb415514eB542a8995b82669778d);
+    }
+
+    function test_RobinhoodTestnet_CanonicalStockOverrideMustMatchPinnedAddress() public {
+        vm.chainId(ROBINHOOD_TESTNET_CHAIN_ID);
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        (address canonicalTsla,,,,) = harness.defaultRobinhoodTestnetStockTokensHarness();
+        DeploymentCanonicalRobinhoodStockToken wrongToken = new DeploymentCanonicalRobinhoodStockToken("TSLA");
+        string memory envName = "YS_TEST_ROBINHOOD_WRONG_CANONICAL_TSLA";
+        vm.setEnv(envName, vm.toString(address(wrongToken)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodCanonicalTokenAddressMismatch.selector,
+                canonicalTsla,
+                address(wrongToken)
+            )
+        );
+        harness.robinhoodDemoStockTokenHarness(envName, canonicalTsla, "TSLA");
+    }
+
+    function test_RobinhoodTestnet_CanonicalStockValidationChecksMetadataAndMultiplier() public {
+        ProductionDeployHarness harness = new ProductionDeployHarness();
+        (address canonicalTsla,,,,) = harness.defaultRobinhoodTestnetStockTokensHarness();
+        DeploymentCanonicalRobinhoodStockToken token = new DeploymentCanonicalRobinhoodStockToken("TSLA");
+        harness.setCanonicalStockTokenOverrideHarness(canonicalTsla, address(token));
+
+        harness.validateRobinhoodTestnetStockTokenHarness(address(token), "TSLA");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodCanonicalTokenSymbolMismatch.selector,
+                address(token),
+                "TSLA",
+                "NFLX"
+            )
+        );
+        harness.validateRobinhoodTestnetStockTokenHarness(address(token), "NFLX");
+
+        token.setUiMultiplier(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployYieldShieldProduction.ProductionRobinhoodCanonicalTokenMultiplierInvalid.selector, address(token)
+            )
+        );
+        harness.validateRobinhoodTestnetStockTokenHarness(address(token), "TSLA");
     }
 
     function test_ProductionProtocol_ValidationRejectsMismatchedFactoryGovernanceTimelock() public {
@@ -2570,6 +2735,33 @@ contract DeploymentSecurityTest is Test, FactoryProxyTestBase {
                 stockFeed.isProtectionOpeningFreshnessConfigured(stockTokens[i]),
                 "stock wrapper rejected configured opening freshness"
             );
+        }
+    }
+
+    function _assertRobinhoodDemoPauseProbeModesAndRefresh(
+        ProductionDeployHarness harness,
+        ChainlinkOracleFeed chainlinkOracleFeed,
+        RobinhoodStockOracleFeed stockFeed
+    ) internal view {
+        address[10] memory tokens;
+        tokens[0] = harness.currentDeploymentAddressHarness("RobinhoodTestUSDG");
+        tokens[1] = harness.currentDeploymentAddressHarness("RobinhoodTestWETH");
+        tokens[2] = harness.currentDeploymentAddressHarness("RobinhoodTestSGOV");
+        tokens[3] = harness.currentDeploymentAddressHarness("RobinhoodTestSPY");
+        tokens[4] = harness.currentDeploymentAddressHarness("RobinhoodTestQQQ");
+        tokens[5] = harness.currentDeploymentAddressHarness("RobinhoodTestTSLA");
+        tokens[6] = harness.currentDeploymentAddressHarness("RobinhoodTestAMZN");
+        tokens[7] = harness.currentDeploymentAddressHarness("RobinhoodTestPLTR");
+        tokens[8] = harness.currentDeploymentAddressHarness("RobinhoodTestNFLX");
+        tokens[9] = harness.currentDeploymentAddressHarness("RobinhoodTestAMD");
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            assertTrue(chainlinkOracleFeed.supportsUserUpdates(tokens[i]), "demo token must support user refresh");
+            RobinhoodStockOracleFeed.PauseProbeMode expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.Unset;
+            if (i >= 2 && i <= 4) expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused;
+            if (i >= 5) expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused;
+            assertEq(uint256(stockFeed.pauseProbeMode(tokens[i])), uint256(expectedMode), "pause probe mode mismatch");
+            if (i >= 2) assertTrue(stockFeed.supportsUserUpdates(tokens[i]), "stock route must support user refresh");
         }
     }
 

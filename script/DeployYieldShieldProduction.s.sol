@@ -23,6 +23,7 @@ import { YSTimelockController } from "../contracts/governance/YSTimelockControll
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC1822Proxiable } from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 interface IProductionOwnable {
     function owner() external view returns (address);
@@ -33,6 +34,7 @@ interface IProductionCompositeOracle is IProductionOwnable {
     function authorizedCallerCount() external view returns (uint256);
     function robinhoodStockOracleFeed() external view returns (address);
     function setRobinhoodStockOracleFeed(address oracleFeed) external;
+    function getTokenOracleFeed(address token) external view returns (address);
 }
 
 interface IProductionERC4626OracleFeed is IProductionOwnable {
@@ -44,9 +46,12 @@ interface IProductionMarketSessionGate is IProductionOwnable {
     function setEmergencyGuardian(address newGuardian) external;
 }
 
-interface IProductionRobinhoodStockOracleFeed {
+interface IProductionRobinhoodStockOracleFeed is IProductionOwnable {
     function innerFeed() external view returns (address);
     function marketSessionGate() external view returns (address);
+    function pauseProbeMode(address token) external view returns (RobinhoodStockOracleFeed.PauseProbeMode);
+    function isTokenConfigured(address token) external view returns (bool);
+    function setPauseProbeMode(address token, RobinhoodStockOracleFeed.PauseProbeMode mode) external;
 }
 
 interface IProductionMintableERC20 {
@@ -129,6 +134,7 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     uint256 internal constant DEFAULT_PRODUCTION_TIMELOCK_DELAY = 2 days;
     uint256 internal constant DEFAULT_CHAINLINK_MAX_PRICE_AGE = 86_400;
     uint256 internal constant DEFAULT_ROBINHOOD_STOCK_OPENING_MAX_PRICE_AGE = 1 hours;
+    uint256 internal constant ROBINHOOD_TESTNET_DEMO_SESSION_DAYS = 90;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_OWNERS = 2;
     uint256 internal constant MIN_PRODUCTION_BOOTSTRAP_THRESHOLD = 2;
     address internal constant ROBINHOOD_TESTNET_TSLA_TOKEN = 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E;
@@ -136,6 +142,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     address internal constant ROBINHOOD_TESTNET_PLTR_TOKEN = 0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0;
     address internal constant ROBINHOOD_TESTNET_NFLX_TOKEN = 0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93;
     address internal constant ROBINHOOD_TESTNET_AMD_TOKEN = 0x71178BAc73cBeb415514eB542a8995b82669778d;
+    bytes32 internal constant ROBINHOOD_TESTNET_STOCK_TOKEN_CODEHASH =
+        0x2f367e6a678e7b30ab613d5963e541e6f4d3ca586de76e2f441fbfeb1a27c440;
     uint256 internal constant ROBINHOOD_DEMO_FAUCET_USDG_DRIP = 10_000e6;
     uint256 internal constant ROBINHOOD_DEMO_FAUCET_WETH_DRIP = 10e18;
     uint256 internal constant ROBINHOOD_DEMO_FAUCET_EQUITY_DRIP = 25e18;
@@ -264,6 +272,18 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     error ProductionRobinhoodSequencerRequirementMismatch(address oracle, bool actual, bool expected);
     error ProductionRobinhoodUnsupportedChain(uint256 chainId);
     error ProductionRobinhoodStockOpeningFreshnessMissing(address token);
+    error ProductionRobinhoodCanonicalTokenAddressMismatch(address expected, address actual);
+    error ProductionRobinhoodCanonicalTokenSymbolMismatch(address token, string actual, string expected);
+    error ProductionRobinhoodCanonicalTokenDecimalsMismatch(address token, uint8 actual, uint8 expected);
+    error ProductionRobinhoodCanonicalTokenPauseProbeInvalid(address token);
+    error ProductionRobinhoodCanonicalTokenMultiplierInvalid(address token);
+    error ProductionRobinhoodStockPauseProbeModeMismatch(
+        address token, RobinhoodStockOracleFeed.PauseProbeMode actual, RobinhoodStockOracleFeed.PauseProbeMode expected
+    );
+    error ProductionRobinhoodUserPriceRefreshMissing(address token);
+    error ProductionRobinhoodDemoStockConfigurationMismatch(
+        uint256 canonicalTokenCount, uint256 stockTokenCount, uint256 tokenCount
+    );
     error ProductionMarketSessionGuardianInvalid(address guardian, address timelock);
 
     function run() external ScaffoldEthDeployerRunner {
@@ -651,12 +671,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _deployRobinhoodStockOracleFeed(chainlinkOracleFeedAddr, marketSessionGateAddr);
         compositeOracle.setRobinhoodStockOracleFeed(robinhoodStockOracleFeedAddr);
 
-        // Testnet demo seeding is intentionally given only the current UTC day. Mainnet and
-        // future days remain fail-closed until governance loads a reviewed exchange calendar.
+        // The demo calendar is deliberately testnet-only and bounded. It keeps the canonical
+        // stock pools usable across a rehearsal window without weakening mainnet's reviewed,
+        // fail-closed exchange calendar.
         if (_isRobinhoodTestnet() && _robinhoodTestnetDemoAssetsRequested()) {
-            marketSessionGate.setDailySession(
-                uint64(block.timestamp / marketSessionGate.SECONDS_PER_DAY()), 0, marketSessionGate.SECONDS_PER_DAY()
-            );
+            _configureRobinhoodTestnetDemoSessions(marketSessionGate);
         }
 
         SplitRiskPoolFactory factoryImplementation = new SplitRiskPoolFactory();
@@ -934,6 +953,20 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         gate = new USMarketSessionGate(deployer, guardian);
     }
 
+    function _configureRobinhoodTestnetDemoSessions(USMarketSessionGate gate) internal {
+        if (!_isRobinhoodTestnet()) revert ProductionRobinhoodTestnetDemoAssetsUnsupported(block.chainid);
+        uint64 firstDay = uint64(block.timestamp / gate.SECONDS_PER_DAY());
+        uint32 fullDay = gate.SECONDS_PER_DAY();
+        uint64[] memory epochDays = new uint64[](ROBINHOOD_TESTNET_DEMO_SESSION_DAYS);
+        uint32[] memory opensAtSeconds = new uint32[](ROBINHOOD_TESTNET_DEMO_SESSION_DAYS);
+        uint32[] memory closesAtSeconds = new uint32[](ROBINHOOD_TESTNET_DEMO_SESSION_DAYS);
+        for (uint64 offset = 0; offset < ROBINHOOD_TESTNET_DEMO_SESSION_DAYS; offset++) {
+            epochDays[offset] = firstDay + offset;
+            closesAtSeconds[offset] = fullDay;
+        }
+        gate.setDailySessions(epochDays, opensAtSeconds, closesAtSeconds);
+    }
+
     function _envFlag(string memory envName) internal view returns (bool) {
         return _envFlagOrDefault(envName, false);
     }
@@ -987,6 +1020,8 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         RobinhoodDemoAssets memory assets = _deployRobinhoodDemoAssets();
         RobinhoodDemoFeeds memory feeds = _deployRobinhoodDemoFeeds();
         _configureRobinhoodDemoFeeds(chainlinkOracleFeed, assets, feeds);
+        _requireRobinhoodDemoUserPriceRefresh(chainlinkOracleFeed, assets);
+        _configureRobinhoodDemoStockPauseProbes(RobinhoodStockOracleFeed(d.robinhoodStockOracleFeedAddr), assets);
         _addRobinhoodDemoTokens(factory, assets, d.chainlinkOracleFeedAddr, d.robinhoodStockOracleFeedAddr);
         _mintRobinhoodDemoBalances(assets);
         _deployRobinhoodDemoAssetFaucet(assets);
@@ -994,6 +1029,43 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _seedRobinhoodDemoLiquidity(assets, pools);
 
         console.log("Robinhood testnet demo assets seeded");
+    }
+
+    function _requireRobinhoodDemoUserPriceRefresh(
+        ChainlinkOracleFeed chainlinkOracleFeed,
+        RobinhoodDemoAssets memory assets
+    ) internal view {
+        address[10] memory tokens = [
+            assets.usdg,
+            assets.weth,
+            assets.sgov,
+            assets.spy,
+            assets.qqq,
+            assets.tsla,
+            assets.amzn,
+            assets.pltr,
+            assets.nflx,
+            assets.amd
+        ];
+        for (uint256 i = 0; i < tokens.length; i++) {
+            if (!chainlinkOracleFeed.supportsUserUpdates(tokens[i])) {
+                revert ProductionRobinhoodUserPriceRefreshMissing(tokens[i]);
+            }
+        }
+    }
+
+    function _configureRobinhoodDemoStockPauseProbes(
+        RobinhoodStockOracleFeed stockOracleFeed,
+        RobinhoodDemoAssets memory assets
+    ) internal {
+        stockOracleFeed.setPauseProbeMode(assets.sgov, RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
+        stockOracleFeed.setPauseProbeMode(assets.spy, RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
+        stockOracleFeed.setPauseProbeMode(assets.qqq, RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
+        stockOracleFeed.setPauseProbeMode(assets.tsla, RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused);
+        stockOracleFeed.setPauseProbeMode(assets.amzn, RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused);
+        stockOracleFeed.setPauseProbeMode(assets.pltr, RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused);
+        stockOracleFeed.setPauseProbeMode(assets.nflx, RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused);
+        stockOracleFeed.setPauseProbeMode(assets.amd, RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused);
     }
 
     function _deployRobinhoodDemoAssets() internal returns (RobinhoodDemoAssets memory assets) {
@@ -1040,22 +1112,72 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     function _robinhoodDemoStockToken(
         string memory envName,
         address defaultRobinhoodTestnetToken,
-        string memory name,
+        string memory,
         string memory symbol
-    ) internal returns (address token, bool externalToken) {
-        token = vm.envOr(envName, address(0));
-        if (token == address(0) && _isRobinhoodTestnet() && defaultRobinhoodTestnetToken.code.length != 0) {
-            token = defaultRobinhoodTestnetToken;
+    ) internal view returns (address token, bool externalToken) {
+        address expectedToken = _expectedRobinhoodTestnetStockToken(defaultRobinhoodTestnetToken);
+        token = _readRobinhoodTestnetStockToken(envName, expectedToken);
+        if (token != expectedToken) revert ProductionRobinhoodCanonicalTokenAddressMismatch(expectedToken, token);
+        _validateRobinhoodTestnetStockToken(token, symbol);
+        return (token, true);
+    }
+
+    function _expectedRobinhoodTestnetStockToken(address canonicalToken) internal view virtual returns (address) {
+        return canonicalToken;
+    }
+
+    function _readRobinhoodTestnetStockToken(string memory envName, address expectedToken)
+        internal
+        view
+        virtual
+        returns (address)
+    {
+        return vm.envOr(envName, expectedToken);
+    }
+
+    function _expectedRobinhoodTestnetStockTokenCodehash() internal view virtual returns (bytes32) {
+        return ROBINHOOD_TESTNET_STOCK_TOKEN_CODEHASH;
+    }
+
+    function _validateRobinhoodTestnetStockToken(address token, string memory expectedSymbol) internal view {
+        _requireProductionContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
+        bytes32 expectedCodehash = _expectedRobinhoodTestnetStockTokenCodehash();
+        if (token.codehash != expectedCodehash) {
+            revert ProductionProtocolCodehashMismatch(
+                NAME_ROBINHOOD_STOCK_TOKEN, token, token.codehash, expectedCodehash
+            );
         }
-        if (token != address(0)) {
-            _requireProductionContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
-            (bool probeSuccess, bytes memory probeData) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
-            if (probeSuccess && probeData.length >= 32) {
-                return (token, true);
-            }
-            console.log("Robinhood testnet token missing oraclePaused(); using local demo token:", token);
+
+        string memory actualSymbol;
+        try IERC20Metadata(token).symbol() returns (string memory value) {
+            actualSymbol = value;
+        } catch {
+            revert InvalidProductionProtocolContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
         }
-        return (address(new MockRobinhoodStockToken(name, symbol)), false);
+        if (keccak256(bytes(actualSymbol)) != keccak256(bytes(expectedSymbol))) {
+            revert ProductionRobinhoodCanonicalTokenSymbolMismatch(token, actualSymbol, expectedSymbol);
+        }
+
+        uint8 actualDecimals;
+        try IERC20Metadata(token).decimals() returns (uint8 value) {
+            actualDecimals = value;
+        } catch {
+            revert InvalidProductionProtocolContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
+        }
+        if (actualDecimals != 18) {
+            revert ProductionRobinhoodCanonicalTokenDecimalsMismatch(token, actualDecimals, 18);
+        }
+
+        (bool pauseSuccess, bytes memory pauseData) = token.staticcall(abi.encodeWithSignature("paused()"));
+        if (!pauseSuccess || pauseData.length < 32 || abi.decode(pauseData, (uint256)) > 1) {
+            revert ProductionRobinhoodCanonicalTokenPauseProbeInvalid(token);
+        }
+
+        (bool multiplierSuccess, bytes memory multiplierData) =
+            token.staticcall(abi.encodeWithSignature("uiMultiplier()"));
+        if (!multiplierSuccess || multiplierData.length < 32 || abi.decode(multiplierData, (uint256)) == 0) {
+            revert ProductionRobinhoodCanonicalTokenMultiplierInvalid(token);
+        }
     }
 
     function _deployRobinhoodDemoFeeds() internal returns (RobinhoodDemoFeeds memory feeds) {
@@ -1144,34 +1266,57 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
     ) internal {
         _addRobinhoodDemoToken(factory, assets.usdg, "Robinhood Test USDG", "USDG", chainlinkOracleFeed, 10_000);
         _addRobinhoodDemoToken(factory, assets.weth, "Robinhood Test WETH", "WETH", chainlinkOracleFeed, 20_000);
-        _addRobinhoodDemoStockToken(factory, assets.sgov, "Robinhood Test SGOV", "SGOV", stockOracleFeed, 12_500);
-        _addRobinhoodDemoStockToken(factory, assets.spy, "Robinhood Test SPY", "SPY", stockOracleFeed, 20_000);
-        _addRobinhoodDemoStockToken(factory, assets.qqq, "Robinhood Test QQQ", "QQQ", stockOracleFeed, 22_500);
-        _addRobinhoodDemoStockToken(factory, assets.tsla, "Robinhood Test TSLA", "TSLA", stockOracleFeed, 25_000);
-        _addRobinhoodDemoStockToken(factory, assets.amzn, "Robinhood Test AMZN", "AMZN", stockOracleFeed, 25_000);
-        _addRobinhoodDemoStockToken(factory, assets.pltr, "Robinhood Test PLTR", "PLTR", stockOracleFeed, 30_000);
-        _addRobinhoodDemoStockToken(factory, assets.nflx, "Robinhood Test NFLX", "NFLX", stockOracleFeed, 25_000);
-        _addRobinhoodDemoStockToken(factory, assets.amd, "Robinhood Test AMD", "AMD", stockOracleFeed, 30_000);
+        RobinhoodStockOracleFeed.PauseProbeMode legacyMode = RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused;
+        RobinhoodStockOracleFeed.PauseProbeMode canonicalMode = RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused;
+        _addRobinhoodDemoStockToken(
+            factory, assets.sgov, "Robinhood Test SGOV", "SGOV", stockOracleFeed, 12_500, legacyMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.spy, "Robinhood Test SPY", "SPY", stockOracleFeed, 20_000, legacyMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.qqq, "Robinhood Test QQQ", "QQQ", stockOracleFeed, 22_500, legacyMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.tsla, "Robinhood Test TSLA", "TSLA", stockOracleFeed, 25_000, canonicalMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.amzn, "Robinhood Test AMZN", "AMZN", stockOracleFeed, 25_000, canonicalMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.pltr, "Robinhood Test PLTR", "PLTR", stockOracleFeed, 30_000, canonicalMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.nflx, "Robinhood Test NFLX", "NFLX", stockOracleFeed, 25_000, canonicalMode
+        );
+        _addRobinhoodDemoStockToken(
+            factory, assets.amd, "Robinhood Test AMD", "AMD", stockOracleFeed, 30_000, canonicalMode
+        );
     }
 
     /// @dev Registers a stock/ETF demo token in the CompositeOracle through the
     ///      RobinhoodStockOracleFeed wrapper so corporate-action and market-session policy
-    ///      gates are never bypassed. External testnet tokens without `oraclePaused()` are
-    ///      replaced with local demo tokens before this function is reached.
+    ///      gates are never bypassed. The expected pause-probe mode and permissionless mock-feed
+    ///      refresh capability must both be configured before CompositeOracle registration.
     function _addRobinhoodDemoStockToken(
         SplitRiskPoolFactory factory,
         address token,
         string memory name,
         string memory symbol,
         address stockOracleFeed,
-        uint256 minCollateralRatioBp
+        uint256 minCollateralRatioBp,
+        RobinhoodStockOracleFeed.PauseProbeMode expectedMode
     ) internal {
-        (bool probeSuccess, bytes memory probeData) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
-        if (!probeSuccess || probeData.length < 32) {
-            revert InvalidProductionProtocolContract(NAME_ROBINHOOD_STOCK_TOKEN, token);
+        RobinhoodStockOracleFeed.PauseProbeMode actualMode =
+            RobinhoodStockOracleFeed(stockOracleFeed).pauseProbeMode(token);
+        if (actualMode != expectedMode) {
+            revert ProductionRobinhoodStockPauseProbeModeMismatch(token, actualMode, expectedMode);
         }
         if (!RobinhoodStockOracleFeed(stockOracleFeed).isProtectionOpeningFreshnessConfigured(token)) {
             revert ProductionRobinhoodStockOpeningFreshnessMissing(token);
+        }
+        if (!RobinhoodStockOracleFeed(stockOracleFeed).supportsUserUpdates(token)) {
+            revert ProductionRobinhoodUserPriceRefreshMissing(token);
         }
         _addRobinhoodDemoToken(factory, token, name, symbol, stockOracleFeed, minCollateralRatioBp);
     }
@@ -1449,6 +1594,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _transferOwnershipIfNeeded(
                 NAME_US_MARKET_SESSION_GATE, d.marketSessionGateAddr, d.timelockAddr, bootstrapAdmin
             );
+            _transferOwnershipIfNeeded(
+                NAME_ROBINHOOD_STOCK_ORACLE_FEED, d.robinhoodStockOracleFeedAddr, d.timelockAddr, bootstrapAdmin
+            );
         } else {
             _transferOwnershipToFactoryIfNeeded(NAME_PYTH_ORACLE, d.pythOracleAddr, d.factoryAddr, bootstrapAdmin);
         }
@@ -1572,6 +1720,11 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
             _requireProductionOwner(
                 NAME_US_MARKET_SESSION_GATE, IProductionOwnable(d.marketSessionGateAddr).owner(), d.timelockAddr
             );
+            _requireProductionOwner(
+                NAME_ROBINHOOD_STOCK_ORACLE_FEED,
+                IProductionOwnable(d.robinhoodStockOracleFeedAddr).owner(),
+                d.timelockAddr
+            );
             _requireProductionAddress(
                 FIELD_MARKET_SESSION_GUARDIAN,
                 IProductionMarketSessionGate(d.marketSessionGateAddr).emergencyGuardian(),
@@ -1583,6 +1736,9 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
                 IProductionERC4626OracleFeed(d.erc4626OracleFeedAddr).underlyingPriceOracle(),
                 d.chainlinkOracleFeedAddr
             );
+            if (demoAssetsRequested) {
+                _validateRobinhoodDemoStockConfiguration(d);
+            }
         } else {
             _requireProductionOwner(NAME_PYTH_ORACLE, IProductionOwnable(d.pythOracleAddr).owner(), d.factoryAddr);
             _requireProductionAddress(FIELD_PYTH_ORACLE, factory.pythOracle(), d.pythOracleAddr);
@@ -1627,6 +1783,54 @@ contract DeployYieldShieldProduction is ScaffoldETHDeploy {
         _requireProductionAddress(
             FIELD_ROBINHOOD_STOCK_MARKET_GATE, stockOracle.marketSessionGate(), d.marketSessionGateAddr
         );
+    }
+
+    function _validateRobinhoodDemoStockConfiguration(ProtocolDeployment memory d) internal view {
+        SplitRiskPoolFactory factory = SplitRiskPoolFactory(payable(d.factoryAddr));
+        IProductionCompositeOracle compositeOracle = IProductionCompositeOracle(d.compositeOracleAddr);
+        IProductionRobinhoodStockOracleFeed stockOracle =
+            IProductionRobinhoodStockOracleFeed(d.robinhoodStockOracleFeedAddr);
+        ChainlinkOracleFeed chainlinkOracleFeed = ChainlinkOracleFeed(d.chainlinkOracleFeedAddr);
+        address[] memory tokens = factory.getWhitelistedTokens();
+        uint256 canonicalTokenCount;
+        uint256 stockTokenCount;
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            bool canonicalStock = _isCanonicalRobinhoodDemoStockToken(token);
+            bool stockRoute = compositeOracle.getTokenOracleFeed(token) == d.robinhoodStockOracleFeedAddr;
+            RobinhoodStockOracleFeed.PauseProbeMode expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.Unset;
+
+            if (canonicalStock) {
+                canonicalTokenCount++;
+                expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.TokenPaused;
+            } else if (stockRoute) {
+                expectedMode = RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused;
+            }
+
+            if (stockRoute) stockTokenCount++;
+            RobinhoodStockOracleFeed.PauseProbeMode actualMode = stockOracle.pauseProbeMode(token);
+            if (actualMode != expectedMode) {
+                revert ProductionRobinhoodStockPauseProbeModeMismatch(token, actualMode, expectedMode);
+            }
+            if (!chainlinkOracleFeed.supportsUserUpdates(token)) {
+                revert ProductionRobinhoodUserPriceRefreshMissing(token);
+            }
+        }
+
+        if (canonicalTokenCount != 5 || stockTokenCount != 8 || tokens.length != 10) {
+            revert ProductionRobinhoodDemoStockConfigurationMismatch(
+                canonicalTokenCount, stockTokenCount, tokens.length
+            );
+        }
+    }
+
+    function _isCanonicalRobinhoodDemoStockToken(address token) internal view returns (bool) {
+        return token == _expectedRobinhoodTestnetStockToken(ROBINHOOD_TESTNET_TSLA_TOKEN)
+            || token == _expectedRobinhoodTestnetStockToken(ROBINHOOD_TESTNET_AMZN_TOKEN)
+            || token == _expectedRobinhoodTestnetStockToken(ROBINHOOD_TESTNET_PLTR_TOKEN)
+            || token == _expectedRobinhoodTestnetStockToken(ROBINHOOD_TESTNET_NFLX_TOKEN)
+            || token == _expectedRobinhoodTestnetStockToken(ROBINHOOD_TESTNET_AMD_TOKEN);
     }
 
     function _isChainlinkProtocolDeployment(ProtocolDeployment memory d) internal pure returns (bool) {
