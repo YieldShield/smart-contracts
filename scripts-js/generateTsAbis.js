@@ -358,20 +358,32 @@ function validateActiveDeploymentManifest(chainId, manifest) {
         );
     }
 
-    const evidencedAddresses = new Set(
-        Object.keys(manifest.codehashEvidence).map((address) =>
+    const relaxedRobinhoodTestnet =
+        normalizedChainId === "46630" &&
+        manifest.productionGuardMode === "relaxed";
+    const evidencedAddresses = new Map(
+        Object.entries(manifest.codehashEvidence).map(([address, codehash]) => [
             address.toLowerCase(),
-        ),
+            codehash,
+        ]),
     );
-    const sourcedAddresses = new Set(
-        Object.keys(manifest.addressEvidence).map((address) =>
+    const sourcedAddresses = new Map(
+        Object.entries(manifest.addressEvidence).map(([address, source]) => [
             address.toLowerCase(),
-        ),
+            source,
+        ]),
     );
     for (const [address] of addressEntries) {
+        const normalizedAddress = address.toLowerCase();
+        const codehash = evidencedAddresses.get(normalizedAddress);
+        const source = sourcedAddresses.get(normalizedAddress);
         if (
-            !evidencedAddresses.has(address.toLowerCase()) ||
-            !sourcedAddresses.has(address.toLowerCase())
+            !evidencedAddresses.has(normalizedAddress) ||
+            !sourcedAddresses.has(normalizedAddress) ||
+            (relaxedRobinhoodTestnet &&
+                (!/^0x[0-9a-f]{64}$/iu.test(codehash ?? "") ||
+                    typeof source !== "string" ||
+                    source.trim().length === 0))
         ) {
             throw new Error(
                 `Deployment ${normalizedChainId} has incomplete address or codehash evidence`,
@@ -386,18 +398,21 @@ function validateActiveDeploymentManifest(chainId, manifest) {
         addressEntries.map(([address, name]) => [name, address]),
     );
     const pinNames = Object.keys(manifest.reviewedCodehashPins).sort();
-    if (
+    const reviewedPinsAreIncomplete =
         JSON.stringify(pinNames) !== JSON.stringify([...requiredPins].sort()) ||
-        requiredPins.some(
-            (name) =>
+        requiredPins.some((name) => {
+            const address = addressByName.get(name);
+            return (
                 !/^0x[0-9a-f]{64}$/iu.test(
                     manifest.reviewedCodehashPins[name] ?? "",
                 ) ||
                 manifest.reviewedCodehashPins[name].toLowerCase() !==
-                    manifest.codehashEvidence[
-                        addressByName.get(name)
-                    ]?.toLowerCase(),
-        )
+                    manifest.codehashEvidence[address]?.toLowerCase()
+            );
+        });
+    if (
+        (relaxedRobinhoodTestnet && pinNames.length !== 0) ||
+        (!relaxedRobinhoodTestnet && reviewedPinsAreIncomplete)
     ) {
         throw new Error(
             `Deployment ${normalizedChainId} has incomplete reviewed codehash pins`,

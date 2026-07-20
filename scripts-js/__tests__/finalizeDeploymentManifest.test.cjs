@@ -940,7 +940,11 @@ test("candidate validation rejects wrong chain, deployer, digest, inventory, and
 
 test("promotion requires and verifies every reviewed core runtime codehash pin", async () => {
     for (const oracleMode of ["chainlink", "pyth"]) {
-        const item = await fixture({ oracleMode });
+        const item =
+            oracleMode === "chainlink"
+                ? await fixture({ chainId: "4663", oracleMode })
+                : await fixture({ oracleMode });
+        if (oracleMode === "chainlink") configureSequencer(item);
         const specs = item.reviewedCodehashPinSpecs(oracleMode);
 
         for (const [name, envName] of specs) {
@@ -967,6 +971,50 @@ test("promotion requires and verifies every reviewed core runtime codehash pin",
             );
         }
     }
+});
+
+test("relaxed Robinhood testnet promotion records codehash evidence without reviewed pins", async () => {
+    for (const pinEnvMode of ["missing", "stale"]) {
+        const item = await fixture();
+        const env = { ...item.env };
+        for (const [, envName] of item.reviewedCodehashPinSpecs("chainlink")) {
+            if (pinEnvMode === "missing") {
+                delete env[envName];
+            } else {
+                env[envName] = `0x${"ff".repeat(32)}`;
+            }
+        }
+
+        const manifest = await item.validateAndBuildManifest(
+            validationArgs(item, { env }),
+        );
+
+        assert.deepEqual(manifest.reviewedCodehashPins, {});
+        const evidencedAddresses = new Map(
+            Object.entries(manifest.codehashEvidence).map(
+                ([address, codehash]) => [address.toLowerCase(), codehash],
+            ),
+        );
+        for (const address of Object.keys(item.candidate).filter((key) =>
+            /^0x[0-9a-f]{40}$/iu.test(key),
+        )) {
+            assert.equal(
+                evidencedAddresses.get(address.toLowerCase()),
+                item.runtimeCodehash,
+            );
+        }
+    }
+
+    const strict = await fixture();
+    strict.candidate.productionGuardMode = "strict";
+    strict.candidate.robinhoodSequencerUptimeFeedSource =
+        "robinhood-testnet-explicit-exception";
+    strict.env.YS_ROBINHOOD_ALLOW_MISSING_SEQUENCER_FEED = "true";
+    delete strict.env.YS_PRODUCTION_FACTORY_PROXY_CODEHASH;
+    await assert.rejects(
+        strict.validateAndBuildManifest(validationArgs(strict)),
+        /YS_PRODUCTION_FACTORY_PROXY_CODEHASH is required/u,
+    );
 });
 
 test("demo fixture metadata rejects an unexpected feed owner", async () => {

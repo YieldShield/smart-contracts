@@ -141,21 +141,26 @@ YS_PRODUCTION_MARKET_SESSION_GUARDIAN=<pause-only-guardian> ROBINHOOD_TESTNET_KE
 
 Robinhood testnet defaults to relaxed guardrails: if `YS_PRODUCTION_BOOTSTRAP_HOLDER`
 is unset, the deployer receives the initial YS supply, production Safe ownership
-pins are skipped, and the sequencer uptime feed is optional. Reviewed runtime
-codehash pins for the complete core deployment remain mandatory in every mode so
-the deployment manifest can be promoted. Set
+pins are skipped, and the sequencer uptime feed is optional. Relaxed testnet
+deployments require `YS_PRODUCTION_MARKET_SESSION_GUARDIAN`, but do not require
+caller-supplied core runtime codehash pins. Manifest finalization observes every
+core runtime through both the deployment RPC and an independent validation RPC;
+the providers must agree, and the observed codehashes are persisted as testnet
+evidence. These dual-RPC observations are not reviewed production pins and do not
+satisfy strict guardrails. Set
 `YS_ROBINHOOD_TESTNET_STRICT_PRODUCTION_GUARDS=true` to rehearse the stricter
 production checks on chain `46630`.
 
-Populate the runtime pins listed in `.env.example` from a deterministic rehearsal.
-They cover the factory proxy and implementation, pool implementation, YS token,
-timelock, governor, composite and ERC-4626 oracles, and the selected Pyth or
-Chainlink path (including the US market-session gate for Chainlink). Pin the exact
-deployed governor runtime: its token and timelock immutable addresses make a generic
+Strict testnet and production deployments must populate the reviewed runtime pins
+listed in `.env.example` from a deterministic rehearsal. They cover the factory
+proxy and implementation, pool implementation, YS token, timelock, governor,
+composite and ERC-4626 oracles, and the selected Pyth or Chainlink path (including
+the US market-session gate for Chainlink). Pin the exact deployed governor runtime:
+its token and timelock immutable addresses make a generic
 `type(YSGovernor).runtimeCode` hash unsuitable.
 
-Robinhood Chainlink deployments also include `RobinhoodStockOracleFeed` as a core
-contract, even when demo seeding is disabled. Set
+Strict Robinhood Chainlink deployments also include `RobinhoodStockOracleFeed` as
+a reviewed core contract, even when demo seeding is disabled. Set
 `YS_PRODUCTION_ROBINHOOD_STOCK_ORACLE_CODEHASH` to the exact rehearsed runtime;
 the wrapper embeds the Chainlink feed and US market-session gate as immutables, so
 its hash is deployment-specific. Deployment finalization and manifest promotion

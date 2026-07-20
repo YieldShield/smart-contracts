@@ -103,7 +103,7 @@ test("configuredKeystore prefers network-specific env defaults", async () => {
     );
 });
 
-test("missingProductionEnv keeps reviewed runtime pins mandatory in relaxed Robinhood mode", async () => {
+test("missingProductionEnv only requires the market guardian in relaxed Robinhood mode", async () => {
     const { missingProductionEnv, usesRelaxedRobinhoodTestnetGuards } =
         await import("../parseArgs.js");
 
@@ -119,11 +119,7 @@ test("missingProductionEnv keeps reviewed runtime pins mandatory in relaxed Robi
             },
             {},
         ),
-        [
-            ...COMMON_RUNTIME_PIN_NAMES,
-            ...CHAINLINK_RUNTIME_PIN_NAMES,
-            "YS_PRODUCTION_MARKET_SESSION_GUARDIAN",
-        ],
+        ["YS_PRODUCTION_MARKET_SESSION_GUARDIAN"],
     );
     assert.deepEqual(
         missingProductionEnv(
@@ -132,7 +128,6 @@ test("missingProductionEnv keeps reviewed runtime pins mandatory in relaxed Robi
                 network: "robinhoodTestnet",
             },
             {
-                ...RUNTIME_PIN_ENV,
                 YS_PRODUCTION_MARKET_SESSION_GUARDIAN:
                     "0x0000000000000000000000000000000000000009",
             },

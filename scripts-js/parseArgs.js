@@ -217,10 +217,9 @@ function missingProductionEnv({ fileName, network }, env = process.env) {
     }
 
     if (usesRelaxedRobinhoodTestnetGuards(network, env)) {
-        return [
-            ...REQUIRED_RUNTIME_CODEHASH_ENV,
-            ...REQUIRED_ROBINHOOD_ENV,
-        ].filter((name) => !hasNonBlankEnvValue(env[name]));
+        return ["YS_PRODUCTION_MARKET_SESSION_GUARDIAN"].filter(
+            (name) => !hasNonBlankEnvValue(env[name]),
+        );
     }
 
     const missing = [...REQUIRED_PRODUCTION_ENV];

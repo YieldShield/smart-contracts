@@ -1790,21 +1790,30 @@ async function validateAndBuildManifest({
     }
 
     const reviewedCodehashPins = {};
-    for (const [name, envName] of reviewedCodehashPinSpecs(oracleMode)) {
-        const expected = env[envName];
-        if (!/^0x[0-9a-f]{64}$/iu.test(expected ?? "")) {
-            throw new Error(`${envName} is required as a bytes32 codehash.`);
+    const usesRelaxedRobinhoodTestnetCodehashEvidence =
+        String(chainId) === "46630" &&
+        candidate.productionGuardMode === "relaxed";
+    if (!usesRelaxedRobinhoodTestnetCodehashEvidence) {
+        for (const [name, envName] of reviewedCodehashPinSpecs(oracleMode)) {
+            const expected = env[envName];
+            if (!/^0x[0-9a-f]{64}$/iu.test(expected ?? "")) {
+                throw new Error(
+                    `${envName} is required as a bytes32 codehash.`,
+                );
+            }
+            const address = byName.get(name);
+            if (!address || !codehashes[address]) {
+                throw new Error(
+                    `${name} is missing runtime-codehash evidence.`,
+                );
+            }
+            if (codehashes[address].toLowerCase() !== expected.toLowerCase()) {
+                throw new Error(
+                    `${name} runtime codehash does not match the reviewed configuration.`,
+                );
+            }
+            reviewedCodehashPins[name] = expected.toLowerCase();
         }
-        const address = byName.get(name);
-        if (!address || !codehashes[address]) {
-            throw new Error(`${name} is missing runtime-codehash evidence.`);
-        }
-        if (codehashes[address].toLowerCase() !== expected.toLowerCase()) {
-            throw new Error(
-                `${name} runtime codehash does not match the reviewed configuration.`,
-            );
-        }
-        reviewedCodehashPins[name] = expected.toLowerCase();
     }
 
     const [protocolState, validationProtocolState] = await Promise.all([

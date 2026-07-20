@@ -29,6 +29,7 @@ async function makePromotedManifest(
             },
         },
         robinhoodDemoAssetsEnabled: "false",
+        productionGuardMode: chainId === "46630" ? "relaxed" : "strict",
         transactionHashes: ["0x01"],
         codehashEvidence: {},
         addressEvidence: {},
@@ -90,12 +91,15 @@ async function makePromotedManifest(
             .padStart(64, "0")}`;
         manifest.addressEvidence[address] = "broadcast-create";
     });
-    for (const name of requiredReviewedCodehashPinNames(oracleMode)) {
-        const [address] = Object.entries(manifest).find(
-            ([key, value]) => /^0x[0-9a-f]{40}$/iu.test(key) && value === name,
-        );
-        manifest.reviewedCodehashPins[name] =
-            manifest.codehashEvidence[address];
+    if (manifest.productionGuardMode !== "relaxed") {
+        for (const name of requiredReviewedCodehashPinNames(oracleMode)) {
+            const [address] = Object.entries(manifest).find(
+                ([key, value]) =>
+                    /^0x[0-9a-f]{40}$/iu.test(key) && value === name,
+            );
+            manifest.reviewedCodehashPins[name] =
+                manifest.codehashEvidence[address];
+        }
     }
 
     return manifest;
@@ -194,28 +198,42 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
         /missing finalized-state promotion evidence/u,
     );
 
-    const withoutTokenPin = structuredClone(manifest);
-    delete withoutTokenPin.reviewedCodehashPins.YSToken;
+    const withoutFactoryCodehash = structuredClone(manifest);
+    const factoryAddress = manifestAddressFor(
+        withoutFactoryCodehash,
+        "SplitRiskPoolFactory",
+    );
+    delete withoutFactoryCodehash.codehashEvidence[factoryAddress];
     assert.throws(
-        () => validateActiveDeploymentManifest("46630", withoutTokenPin),
-        /incomplete reviewed codehash pins/u,
+        () => validateActiveDeploymentManifest("46630", withoutFactoryCodehash),
+        /incomplete address or codehash evidence/u,
+    );
+
+    const withMalformedCodehash = structuredClone(manifest);
+    withMalformedCodehash.codehashEvidence[factoryAddress] = "0x01";
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", withMalformedCodehash),
+        /incomplete address or codehash evidence/u,
+    );
+
+    const withoutFactorySource = structuredClone(manifest);
+    delete withoutFactorySource.addressEvidence[factoryAddress];
+    assert.throws(
+        () => validateActiveDeploymentManifest("46630", withoutFactorySource),
+        /incomplete address or codehash evidence/u,
     );
 
     const withUnexpectedPin = structuredClone(manifest);
-    withUnexpectedPin.reviewedCodehashPins.UnreviewedContract = `0x${"ff".repeat(32)}`;
+    withUnexpectedPin.reviewedCodehashPins.YSToken = `0x${"ff".repeat(32)}`;
     assert.throws(
         () => validateActiveDeploymentManifest("46630", withUnexpectedPin),
         /incomplete reviewed codehash pins/u,
     );
 
-    const withMismatchedGovernorPin = structuredClone(manifest);
-    withMismatchedGovernorPin.reviewedCodehashPins.YSGovernor = `0x${"ff".repeat(32)}`;
+    const strictTestnet = structuredClone(manifest);
+    strictTestnet.productionGuardMode = "strict";
     assert.throws(
-        () =>
-            validateActiveDeploymentManifest(
-                "46630",
-                withMismatchedGovernorPin,
-            ),
+        () => validateActiveDeploymentManifest("46630", strictTestnet),
         /incomplete reviewed codehash pins/u,
     );
 
@@ -223,6 +241,47 @@ test("Robinhood promoted manifests require exact inventory and evidence", async 
     assert.throws(
         () => validateActiveDeploymentManifest("46630", manifest),
         /does not match the reviewed production inventory/u,
+    );
+});
+
+test("strict manifests still require exact reviewed core codehash pins", async () => {
+    const { validateActiveDeploymentManifest } =
+        await import("../generateTsAbis.js");
+    const strictManifest = await makePromotedManifest("4663");
+
+    assert.equal(
+        validateActiveDeploymentManifest("4663", strictManifest),
+        strictManifest,
+    );
+
+    const withoutTokenPin = structuredClone(strictManifest);
+    delete withoutTokenPin.reviewedCodehashPins.YSToken;
+    assert.throws(
+        () => validateActiveDeploymentManifest("4663", withoutTokenPin),
+        /incomplete reviewed codehash pins/u,
+    );
+
+    const withUnexpectedPin = structuredClone(strictManifest);
+    withUnexpectedPin.reviewedCodehashPins.UnreviewedContract = `0x${"ff".repeat(32)}`;
+    assert.throws(
+        () => validateActiveDeploymentManifest("4663", withUnexpectedPin),
+        /incomplete reviewed codehash pins/u,
+    );
+
+    const withMismatchedGovernorPin = structuredClone(strictManifest);
+    withMismatchedGovernorPin.reviewedCodehashPins.YSGovernor = `0x${"ff".repeat(32)}`;
+    assert.throws(
+        () =>
+            validateActiveDeploymentManifest("4663", withMismatchedGovernorPin),
+        /incomplete reviewed codehash pins/u,
+    );
+
+    const relaxedMainnet = structuredClone(strictManifest);
+    relaxedMainnet.productionGuardMode = "relaxed";
+    relaxedMainnet.reviewedCodehashPins = {};
+    assert.throws(
+        () => validateActiveDeploymentManifest("4663", relaxedMainnet),
+        /incomplete reviewed codehash pins/u,
     );
 });
 
