@@ -44,7 +44,7 @@ interface ICompositeOracle is IPriceOracle {
     /// @notice Custom error when the one-time Robinhood stock wrapper pin is already set
     error RobinhoodStockOracleFeedAlreadyPinned(address oracleFeed);
 
-    /// @notice Custom error when a token exposing oraclePaused() bypasses the pinned wrapper
+    /// @notice Custom error when an explicitly guarded stock token bypasses the pinned wrapper
     error RobinhoodStockOracleFeedRequired(address token, address providedFeed, address requiredFeed);
 
     // ============ Single-Feed Configuration ============
@@ -55,7 +55,7 @@ interface ICompositeOracle is IPriceOracle {
     /// @param oracleFeed The oracle feed address (must implement IOracleFeed)
     function setTokenOracleFeed(address token, address oracleFeed) external;
 
-    /// @notice Pin the only primary feed accepted for tokens exposing `oraclePaused()`
+    /// @notice Pin the only primary feed accepted for tokens registered by the stock wrapper
     /// @dev One-time operation callable by the owner or an authorized caller. Production
     ///      deployment pins the reviewed RobinhoodStockOracleFeed before ownership transfer.
     function setRobinhoodStockOracleFeed(address oracleFeed) external;

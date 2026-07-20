@@ -47,6 +47,7 @@ contract StockMarketSessionProtectionTest is Test, FactoryProxyTestBase, IERC721
         marketGate = new USMarketSessionGate(address(this), address(0xBEEF));
         marketGate.setDailySession(uint64(block.timestamp / 1 days), 0, uint32(1 days));
         stockFeed = new RobinhoodStockOracleFeed(address(chainlink), address(marketGate));
+        stockFeed.setPauseProbeMode(address(stock), RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
         composite = new CompositeOracle();
         composite.setRobinhoodStockOracleFeed(address(stockFeed));
 

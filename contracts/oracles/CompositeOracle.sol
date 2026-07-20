@@ -9,6 +9,7 @@ import { ICorporateActionPauseGuard } from "../interfaces/ICorporateActionPauseG
 import { IClosedSessionExitPrice } from "../interfaces/IClosedSessionExitPrice.sol";
 import { IOracleFeed } from "../interfaces/IOracleFeed.sol";
 import { IProtectionOpeningEligibility } from "../interfaces/IProtectionOpeningEligibility.sol";
+import { IRobinhoodStockOracleFeed } from "../interfaces/IRobinhoodStockOracleFeed.sol";
 import { DecimalNormalizationLib } from "../libraries/DecimalNormalizationLib.sol";
 import { OracleValidationLib } from "../libraries/OracleValidationLib.sol";
 import { ConstantsLib } from "../libraries/ConstantsLib.sol";
@@ -1292,22 +1293,33 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         }
     }
 
-    /// @dev A successful ABI-valid `oraclePaused()` probe marks the token as a Robinhood
-    ///      stock/equity route. Such a token can never be configured with the raw Chainlink
-    ///      feed (or any other unpinned primary), across single, explicitly typed, or dual
-    ///      configuration paths. Standard tokens that do not expose the marker are unaffected.
+    /// @dev The pinned wrapper's explicit token registry is the authoritative stock-route marker.
+    ///      The legacy `oraclePaused()` marker remains a fail-safe for old deployments. A guarded
+    ///      stock token can never be configured with the raw Chainlink feed (or any other unpinned
+    ///      primary), across single, explicitly typed, or dual configuration paths.
     function _validateRobinhoodStockOracleRoute(address token, address primaryFeed) internal view {
-        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
-        if (!success || data.length < 32) return;
-
-        uint256 encodedBool;
-        assembly ("memory-safe") {
-            encodedBool := mload(add(data, 32))
-        }
-        if (encodedBool > 1) return;
-
         address requiredFeed = robinhoodStockOracleFeed;
-        if (requiredFeed == address(0) || primaryFeed != requiredFeed) {
+        bool stockRouteRequired;
+
+        if (requiredFeed != address(0)) {
+            try IRobinhoodStockOracleFeed(requiredFeed).isTokenConfigured(token) returns (bool configured) {
+                stockRouteRequired = configured;
+            } catch { }
+        }
+
+        if (!stockRouteRequired) {
+            (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature("oraclePaused()"));
+            if (!success || data.length < 32) return;
+
+            uint256 encodedBool;
+            assembly ("memory-safe") {
+                encodedBool := mload(add(data, 32))
+            }
+            if (encodedBool > 1) return;
+            stockRouteRequired = true;
+        }
+
+        if (stockRouteRequired && (requiredFeed == address(0) || primaryFeed != requiredFeed)) {
             revert RobinhoodStockOracleFeedRequired(token, primaryFeed, requiredFeed);
         }
     }

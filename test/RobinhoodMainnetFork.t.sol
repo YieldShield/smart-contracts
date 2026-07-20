@@ -88,6 +88,8 @@ contract RobinhoodMainnetForkTest is ForkTestHelper {
         RobinhoodStockOracleFeed stockFeed = new RobinhoodStockOracleFeed(address(innerFeed), address(marketGate));
         RobinhoodStockOracleFeed closedMarketStockFeed =
             new RobinhoodStockOracleFeed(address(innerFeed), address(closedMarketGate));
+        stockFeed.setPauseProbeMode(TSLA, RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
+        closedMarketStockFeed.setPauseProbeMode(TSLA, RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
 
         assertEq(address(innerFeed.tokenFeeds(TSLA)), TSLA_USD_FEED, "adapter feed address mismatch");
         assertTrue(stockFeed.supportsCircuitBreaker(TSLA), "circuit-breaker capability missing");
