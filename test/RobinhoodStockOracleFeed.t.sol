@@ -477,6 +477,11 @@ contract RobinhoodStockOracleFeedTest is Test {
 
         assertFalse(legacyStockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
         assertFalse(legacyStockFeed.isProtectionOpeningAllowed(address(tsla)));
+
+        // Reach the optional-interface probes after token configuration, too.
+        legacyStockFeed.setPauseProbeMode(address(tsla), RobinhoodStockOracleFeed.PauseProbeMode.OraclePaused);
+        assertFalse(legacyStockFeed.isProtectionOpeningFreshnessConfigured(address(tsla)));
+        assertFalse(legacyStockFeed.isProtectionOpeningAllowed(address(tsla)));
     }
 
     function test_openingEligibility_UsesTighterOpeningAgeWithoutShorteningOrdinaryPrice() public {
