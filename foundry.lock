@@ -6,16 +6,10 @@
     }
   },
   "lib/openzeppelin-contracts": {
-    "tag": {
-      "name": "v5.6.1",
-      "rev": "d017d3e51dca633965a4962a9e1fc0c46b9c26b6"
-    }
+    "rev": "bb8ed388b04690b09f8c36586f5cde9fdd67fb40"
   },
   "lib/openzeppelin-contracts-upgradeable": {
-    "tag": {
-      "name": "v5.6.1",
-      "rev": "cd03a3f91412314b9fd6ed4ee610604318bf4821"
-    }
+    "rev": "184d9fe75bcd640ad8e0bc86dcef1858fb33cd13"
   },
   "lib/solidity-bytes-utils": {
     "tag": {
