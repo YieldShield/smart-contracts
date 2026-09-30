@@ -273,6 +273,11 @@ jobs:
         run: npm ci
 
       - name: Generate production coverage report
+        env:
+          # Instrumented coverage samples paths; the normal test job retains
+          # the full 256 x 500 invariant stress runs and reachability checks.
+          FOUNDRY_INVARIANT_RUNS: "16"
+          FOUNDRY_INVARIANT_DEPTH: "64"
         # Coverage instrumentation invalidates gas benchmarks. The normal Foundry
         # job still runs this suite without instrumentation and enforces its 15M cap.
         # Live fork cases self-skip unless the dedicated fork job explicitly opts in.
@@ -352,7 +357,7 @@ jobs:
           fi
 
       - name: Upload Slither SARIF
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         if: always()
         continue-on-error: true
         with:
