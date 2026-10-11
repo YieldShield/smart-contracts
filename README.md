@@ -1,3 +1,5 @@
+![YieldShield Smart Contracts — Split-risk pools. Explicit settlement.](.github/assets/banner.png)
+
 # YieldShield Smart Contracts
 
 [![CI](https://github.com/YieldShield/smart-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/YieldShield/smart-contracts/actions/workflows/ci.yml)
