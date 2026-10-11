@@ -1107,8 +1107,10 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return;
         }
 
-        uint256 representedReward =
-            Math.mulDiv(rewardPerShareIncrement, totalProtectorShares, ConstantsLib.REWARD_PRECISION);
+        // Fractions credited to the index cannot also remain as redistributable whole-token dust.
+        uint256 representedReward = Math.mulDiv(
+            rewardPerShareIncrement, totalProtectorShares, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil
+        );
         if (representedReward == 0) {
             return;
         }
@@ -1189,8 +1191,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
             return (rewardAmount, 0);
         }
 
+        // Fractions credited to the index cannot also remain as redistributable whole-token dust.
         uint256 representedReward =
-            Math.mulDiv(rewardPerShareIncrement, currentTotalShares, ConstantsLib.REWARD_PRECISION);
+            Math.mulDiv(rewardPerShareIncrement, currentTotalShares, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil);
         if (representedReward == 0) {
             pendingProtectorRewardDust = distributableReward;
             accumulatedCommissions += rewardAmount;
@@ -1575,7 +1578,12 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 totalEarned = Math.mulDiv(effectiveRewardPerShare, positionShares_, ConstantsLib.REWARD_PRECISION);
         uint256 debt = rewardDebt[tokenId];
         uint256 alreadyClaimed = commissionsClaimed[tokenId];
-        return totalEarned > (debt + alreadyClaimed) ? totalEarned - debt - alreadyClaimed : 0;
+        claimable = totalEarned > (debt + alreadyClaimed) ? totalEarned - debt - alreadyClaimed : 0;
+        // Isolate each epoch even if an upgraded pool already contains an overallocated index.
+        uint256 reserve = positionEpoch < protectorShareEpoch
+            ? protectorEpochRemainingReserve[positionEpoch]
+            : currentEpochCommissionReserve;
+        return Math.min(claimable, reserve);
     }
 
     /// @dev Ends the current share epoch when shield activation wipes all backing assets.
@@ -2019,7 +2027,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         tokenId = IProtectorReceiptNFT(protectorReceiptNFT).nextTokenId();
         protectorShares[tokenId] = sharesMinted;
         protectorShareEpochs[tokenId] = protectorShareEpoch;
-        rewardDebt[tokenId] = Math.mulDiv(rewardPerShareAccumulated, sharesMinted, ConstantsLib.REWARD_PRECISION);
+        // Exclude fractions earned before this receipt joined the pool.
+        rewardDebt[tokenId] =
+            Math.mulDiv(rewardPerShareAccumulated, sharesMinted, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil);
 
         // The deposit entrypoint is nonReentrant and all receipt/accounting
         // state is committed before the ERC721 receiver callback.
@@ -2593,7 +2603,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         } else {
             // Partial withdrawal - reset to clean slate to avoid rounding exploits
             // Set rewardDebt to current accumulator for new amount (fresh start)
-            rewardDebt[tokenId] = Math.mulDiv(rewardPerShareAccumulated, newShares, ConstantsLib.REWARD_PRECISION);
+            rewardDebt[tokenId] =
+                Math.mulDiv(rewardPerShareAccumulated, newShares, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil);
             // Clear commissions claimed - position gets fresh accounting
             delete commissionsClaimed[tokenId];
             protectorShares[tokenId] = newShares;
