@@ -1698,6 +1698,65 @@ contract SplitRiskPoolFactoryTest is Test, FactoryProxyTestBase {
         pool.acceptGovernanceTimelock();
     }
 
+    function testCancelledPoolMustBeRestagedBeforeFactoryAcceptance() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        address replacement = address(_deployTestTimelock(address(this)));
+        vm.startPrank(governanceTimelock);
+        factory.setGovernanceTimelock(replacement);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+        factory.cancelPoolGovernanceTimelockTransfers(0, 1, replacement);
+        // Repeated cancellation must not count the same pool twice.
+        factory.cancelPoolGovernanceTimelockTransfers(0, 1, replacement);
+        vm.stopPrank();
+
+        vm.prank(replacement);
+        vm.expectRevert(abi.encodeWithSelector(SplitRiskPoolFactory.PoolGovernanceTransfersPending.selector, 1));
+        factory.acceptGovernanceTimelock();
+
+        vm.prank(governanceTimelock);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+        vm.startPrank(replacement);
+        factory.acceptGovernanceTimelock();
+        factory.acceptPoolGovernanceTimelockTransfers(0, 1);
+        vm.stopPrank();
+        assertEq(SplitRiskPool(payable(poolAddress)).governanceTimelock(), replacement);
+    }
+
+    function testSameTargetRestagingPreservesFactoryCancellationGuard() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        address replacement = address(_deployTestTimelock(address(this)));
+        vm.startPrank(governanceTimelock);
+        factory.setGovernanceTimelock(replacement);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+        pool.setGovernanceTimelock(replacement);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, replacement)
+        );
+        pool.cancelGovernanceTimelockTransfer();
+        vm.stopPrank();
+        vm.startPrank(replacement);
+        factory.acceptGovernanceTimelock();
+        factory.acceptPoolGovernanceTimelockTransfers(0, 1);
+        vm.stopPrank();
+        assertEq(pool.governanceTimelock(), replacement);
+    }
+
+    function testFactoryLocksPreviouslyDirectStagedPool() public {
+        address poolAddress = createPool(address(tokenA), "TKNA", address(tokenB), "TKNB", 500, 200, 15000);
+        SplitRiskPool pool = SplitRiskPool(payable(poolAddress));
+        address replacement = address(_deployTestTimelock(address(this)));
+        vm.startPrank(governanceTimelock);
+        factory.setGovernanceTimelock(replacement);
+        pool.setGovernanceTimelock(replacement);
+        factory.startPoolGovernanceTimelockTransfers(0, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolAccessControlUpgradeable.InvalidGovernanceTimelock.selector, replacement)
+        );
+        pool.cancelGovernanceTimelockTransfer();
+        vm.stopPrank();
+    }
+
     function testRevertCreatePoolWithoutDefaultOracle() public {
         // Create a new factory without setting default oracle
         SplitRiskPool poolImpl = new SplitRiskPool();

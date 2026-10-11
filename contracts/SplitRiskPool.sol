@@ -2896,7 +2896,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     {
         _requireFactoryGovernanceTransferAlignment(newGovernanceTimelock);
         ProtocolAccessControlUpgradeable.setGovernanceTimelock(newGovernanceTimelock);
-        _factoryStagedGovernanceTimelock = address(0);
+        // Repeating an already staged target must preserve the factory's guard:
+        // its completion counter assumes this transfer cannot be cancelled directly.
+        if (_factoryStagedGovernanceTimelock != newGovernanceTimelock) {
+            _factoryStagedGovernanceTimelock = address(0);
+        }
     }
 
     function _requireFactoryGovernanceTransferAlignment(address newGovernanceTimelock) internal view {
@@ -3279,9 +3283,8 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         }
 
         bytes32 defaultAdminRole = bytes32(0);
-        (bool countCallSucceeded, bytes memory countData) = candidateAccessControl.staticcall(
-            abi.encodeWithSignature("getRoleMemberCount(bytes32)", defaultAdminRole)
-        );
+        (bool countCallSucceeded, bytes memory countData) =
+            candidateAccessControl.staticcall(abi.encodeWithSignature("getRoleMemberCount(bytes32)", defaultAdminRole));
         if (!countCallSucceeded || countData.length < 32 || abi.decode(countData, (uint256)) != 1) {
             return false;
         }
