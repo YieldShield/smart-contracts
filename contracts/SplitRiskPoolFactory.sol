@@ -273,8 +273,9 @@ contract SplitRiskPoolFactory is
         uint256 end = _poolPageEnd(offset, limit);
         for (uint256 i = offset; i < end;) {
             SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
-            if (pool.governanceTimelock() != pendingGovernance && pool.pendingGovernanceTimelock() != pendingGovernance)
-            {
+            if (pool.governanceTimelock() != pendingGovernance) {
+                // Adopt direct pool staging too, so the pool cannot invalidate
+                // the factory's cached completion count through direct cancellation.
                 pool.setGovernanceTimelockFromFactory(pendingGovernance);
             }
             _markPoolGovernanceTransferStaged(address(pool), pendingGovernance);
@@ -326,6 +327,16 @@ contract SplitRiskPoolFactory is
             SplitRiskPool pool = SplitRiskPool(payable(pools[i]));
             if (pool.pendingGovernanceTimelock() == expectedPendingGovernance) {
                 pool.cancelGovernanceTimelockFromFactory(expectedPendingGovernance);
+                if (
+                    _pendingGovernancePoolTransferTarget == expectedPendingGovernance
+                        && _poolGovernanceTransferEpoch[address(pool)] == _governancePoolTransferEpoch
+                        && _poolGovernanceTransferTarget[address(pool)] == expectedPendingGovernance
+                ) {
+                    delete _poolGovernanceTransferEpoch[address(pool)];
+                    // Active epochs are nonzero; clearing the epoch invalidates the
+                    // marker. Restaging overwrites its target before counting it again.
+                    ++_pendingGovernancePoolTransfersRemaining;
+                }
             }
             unchecked {
                 ++i;

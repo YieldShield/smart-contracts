@@ -31,7 +31,7 @@
     "finalize:deployment-manifest": "node scripts-js/finalizeDeploymentManifest.js",
     "fork": "make fork FORK_URL=${1:-mainnet}",
     "format": "make format",
-    "postinstall": "shx cp -n .env.example .env",
+    "postinstall": "node scripts-js/initializeEnv.js",
     "lint": "make lint",
     "robinhood:mock-feeds": "node scripts-js/robinhood-mock-feed-operator.cjs",
     "security": "make security",
@@ -50,8 +50,5 @@
     "prettier": "~3.9.9",
     "qrcode": "~1.5.3",
     "toml": "~5.0.0"
-  },
-  "devDependencies": {
-    "shx": "^0.4.0"
   }
 }

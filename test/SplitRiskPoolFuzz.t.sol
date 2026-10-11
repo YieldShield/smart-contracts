@@ -761,7 +761,8 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
         // Verify late joiner has correct rewardDebt
         uint256 rewardDebt2 = pool.rewardDebt(tokenId2);
-        uint256 expectedDebt = Math.mulDiv(rewardPerShareBeforeLateJoiner, lateDeposit, REWARD_PRECISION);
+        uint256 expectedDebt =
+            Math.mulDiv(rewardPerShareBeforeLateJoiner, lateDeposit, REWARD_PRECISION, Math.Rounding.Ceil);
         assertEq(rewardDebt2, expectedDebt, "Reward debt should match accumulated rewards at deposit time");
 
         // Verify late joiner cannot claim historical rewards
@@ -810,7 +811,8 @@ contract SplitRiskPoolFuzzTest is Test, TestTimelockHelper {
 
             // Verify reward debt is correctly set
             uint256 rewardDebt = pool.rewardDebt(protectorTokenIds[i]);
-            uint256 expectedDebt = Math.mulDiv(rewardPerShareBefore, depositAmounts[i], REWARD_PRECISION);
+            uint256 expectedDebt =
+                Math.mulDiv(rewardPerShareBefore, depositAmounts[i], REWARD_PRECISION, Math.Rounding.Ceil);
             assertEq(rewardDebt, expectedDebt, "Reward debt should match accumulator at deposit time");
 
             // Warp time and generate more yield

@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import { AggregatorV3Interface, ChainlinkOracleFeed } from "../contracts/oracles/ChainlinkOracleFeed.sol";
 import { IRobinhoodStockToken, RobinhoodStockOracleFeed } from "../contracts/oracles/RobinhoodStockOracleFeed.sol";
 import { ForkTestHelper } from "./helpers/ForkTestHelper.sol";
+import { OracleValidationLib } from "../contracts/libraries/OracleValidationLib.sol";
 
 contract AlwaysOpenMarketSessionGate {
     function emergencyPaused() external pure returns (bool) {
@@ -118,11 +119,15 @@ contract RobinhoodMainnetForkTest is ForkTestHelper {
         if (isStale) {
             assertFalse(stockFeed.isProtectionOpeningAllowed(TSLA), "stale token allowed a protection opening");
             vm.expectRevert(
-                abi.encodeWithSelector(ChainlinkOracleFeed.StalePrice.selector, TSLA, updatedAt, MAX_PRICE_AGE)
+                abi.encodeWithSelector(
+                    OracleValidationLib.StalePrice.selector, TSLA, updatedAt, MAX_PRICE_AGE, block.timestamp
+                )
             );
             stockFeed.getPrice(TSLA);
             vm.expectRevert(
-                abi.encodeWithSelector(ChainlinkOracleFeed.StalePrice.selector, TSLA, updatedAt, MAX_PRICE_AGE)
+                abi.encodeWithSelector(
+                    OracleValidationLib.StalePrice.selector, TSLA, updatedAt, MAX_PRICE_AGE, block.timestamp
+                )
             );
             closedMarketStockFeed.getPrice(TSLA);
         } else {

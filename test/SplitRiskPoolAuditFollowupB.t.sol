@@ -296,10 +296,12 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         pool.depositBackingAsset(address(backingToken), overCapDeposit, 0);
     }
 
-    function test_B4_rewardPerShareDoesNotAdvanceWhenRepresentedRewardIsZero() public {
+    function test_B4_subTokenIndexCreditIsNotAlsoPendingDust() public {
         (uint256 protectorTokenId,) = _seedPositions();
 
         stdstore.target(address(pool)).sig("totalProtectorShares()").checked_write(uint256(3));
+        stdstore.target(address(pool)).sig("protectorShares(uint256)").with_key(protectorTokenId)
+            .checked_write(uint256(3));
         stdstore.target(address(pool)).sig("pendingProtectorRewardDust()").checked_write(uint256(1));
         stdstore.target(address(pool)).sig("accumulatedCommissions()").checked_write(uint256(1));
         stdstore.target(address(pool)).sig("currentEpochCommissionReserve()").checked_write(uint256(1));
@@ -310,10 +312,14 @@ contract SplitRiskPoolAuditFollowupBTest is Test, TestTimelockHelper {
         vm.prank(protector);
         pool.claimCommission(protectorTokenId);
 
-        assertEq(pool.rewardPerShareAccumulated(), rewardPerShareBefore, "zero represented reward must not advance");
-        assertEq(pool.pendingProtectorRewardDust(), 1, "dust remains pending");
+        assertEq(pool.rewardPerShareAccumulated(), rewardPerShareBefore + ConstantsLib.REWARD_PRECISION / 3);
+        assertEq(pool.pendingProtectorRewardDust(), 0, "credited fraction cannot also remain pending");
         assertEq(pool.accumulatedCommissions(), 1, "commission reserve stays intact");
         assertEq(shieldedToken.balanceOf(protector), protectorBalanceBefore, "nothing is paid from unrepresented dust");
+        uint256 creditedIndex = pool.rewardPerShareAccumulated();
+        vm.prank(protector);
+        pool.claimCommission(protectorTokenId);
+        assertEq(pool.rewardPerShareAccumulated(), creditedIndex, "same fraction cannot be credited twice");
     }
 
     function test_B4_pendingDustRedirectDoesNotCreateUnbackedProtocolFees() public {

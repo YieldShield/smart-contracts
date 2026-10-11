@@ -162,12 +162,21 @@ contract CompositeOracle is ICompositeOracle, Ownable {
     /// @notice Custom error when a strict circuit-breaker price is requested from an unsupported feed
     error CircuitBreakerNotSupported(address token, address feed);
 
+    /// @notice Nested routers would hide feed-specific collateral and opening policies.
+    error NestedCompositeFeedUnsupported(address token, address feed);
+
     /// @notice Custom error when protected pricing is requested while a challenge is pending
     error OracleChallengePending(address token);
     error OraclePriceDisputed(address token);
 
     /// @notice Constructor
     constructor() Ownable(msg.sender) { }
+
+    /// @notice Decimal precision of all normalized USD prices returned by this router.
+    /// @dev Required when an ERC4626 feed uses this router to price its underlying asset.
+    function decimals() external pure returns (uint8) {
+        return ConstantsLib.USD_DECIMALS;
+    }
 
     // ============ Admin Functions ============
 
@@ -1647,17 +1656,28 @@ contract CompositeOracle is ICompositeOracle, Ownable {
         address backupFeed,
         bool strictRequired
     ) internal view {
+        _rejectNestedCompositeFeed(token, primaryFeed);
         _requireCircuitBreakerSupport(token, primaryFeed);
         if (strictRequired) {
             _requireStrictProtectedPriceSupport(token, primaryFeed);
         }
 
         if (backupFeed != address(0)) {
+            _rejectNestedCompositeFeed(token, backupFeed);
             _requireCircuitBreakerSupport(token, backupFeed);
             if (strictRequired) {
                 _requireStrictProtectedPriceSupport(token, backupFeed);
             }
         }
+    }
+
+    /// @dev Pool validation and optional feed policies inspect one router layer. A second
+    ///      CompositeOracle layer would conceal ERC4626 backing feeds and opening gates.
+    ///      ERC4626 feeds may still use a composite as their underlying USD price source.
+    function _rejectNestedCompositeFeed(address token, address feed) internal view {
+        (bool success, bytes memory data) =
+            feed.staticcall(abi.encodeCall(ICompositeOracle.getTokenDualFeedStatus, (token)));
+        if (success && data.length >= 192) revert NestedCompositeFeedUnsupported(token, feed);
     }
 
     function _requireCircuitBreakerSupport(address token, address feed) internal view {
