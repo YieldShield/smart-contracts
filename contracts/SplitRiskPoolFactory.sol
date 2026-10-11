@@ -333,7 +333,8 @@ contract SplitRiskPoolFactory is
                         && _poolGovernanceTransferTarget[address(pool)] == expectedPendingGovernance
                 ) {
                     delete _poolGovernanceTransferEpoch[address(pool)];
-                    delete _poolGovernanceTransferTarget[address(pool)];
+                    // Active epochs are nonzero; clearing the epoch invalidates the
+                    // marker. Restaging overwrites its target before counting it again.
                     ++_pendingGovernancePoolTransfersRemaining;
                 }
             }

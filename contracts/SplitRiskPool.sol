@@ -567,32 +567,42 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
     ///      the IProtectionOpeningEligibility capability. Legacy oracles without either marker
     ///      remain compatible. An advertised policy must return a canonical, allowed status.
     function _requireProtectionOpeningAllowed(address token) internal view {
-        (bool capabilitySuccess, bytes memory capabilityData) = poolConfig.priceOracle
-            .staticcall(abi.encodeCall(ICompositeOracle.protectionOpeningEligibilityRequired, (token)));
+        address oracle = poolConfig.priceOracle;
+        (bool capabilitySuccess, bytes memory capabilityData) =
+            oracle.staticcall(abi.encodeCall(ICompositeOracle.protectionOpeningEligibilityRequired, (token)));
 
         if (!capabilitySuccess && capabilityData.length == 0) {
-            (capabilitySuccess, capabilityData) = poolConfig.priceOracle
-                .staticcall(abi.encodeCall(IProtectionOpeningEligibility.supportsProtectionOpeningEligibility, (token)));
+            (capabilitySuccess, capabilityData) = oracle.staticcall(
+                abi.encodeCall(IProtectionOpeningEligibility.supportsProtectionOpeningEligibility, (token))
+            );
             if (!capabilitySuccess && capabilityData.length == 0) return;
         }
         if (!capabilitySuccess || capabilityData.length < 32) {
-            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, oracle);
         }
-        uint256 required = abi.decode(capabilityData, (uint256));
+        uint256 required;
+        // The length check above guarantees this word exists; validate the bool below.
+        assembly ("memory-safe") {
+            required := mload(add(capabilityData, 0x20))
+        }
         if (required > 1) {
-            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, oracle);
         }
         if (required == 0) return;
 
         (bool eligibilitySuccess, bytes memory eligibilityData) =
-            poolConfig.priceOracle.staticcall(abi.encodeCall(ICompositeOracle.isProtectionOpeningAllowed, (token)));
+            oracle.staticcall(abi.encodeCall(ICompositeOracle.isProtectionOpeningAllowed, (token)));
 
         if (!eligibilitySuccess || eligibilityData.length < 32) {
-            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, oracle);
         }
-        uint256 allowed = abi.decode(eligibilityData, (uint256));
+        uint256 allowed;
+        // As above, read only the validated first ABI word without decoding it twice.
+        assembly ("memory-safe") {
+            allowed := mload(add(eligibilityData, 0x20))
+        }
         if (allowed > 1) {
-            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, poolConfig.priceOracle);
+            revert ErrorsLib.ProtectionOpeningEligibilityUnavailable(token, oracle);
         }
         if (allowed == 0) {
             revert ErrorsLib.ProtectionOpeningClosed(token);
@@ -1111,11 +1121,11 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         uint256 representedReward = Math.mulDiv(
             rewardPerShareIncrement, totalProtectorShares, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil
         );
-        if (representedReward == 0) {
-            return;
-        }
+        // A positive index increment represents at least one unit with ceiling rounding.
+        // floor(pendingDust * precision / shares) * shares <= pendingDust * precision,
+        // so rounding that product up to whole units cannot exceed pendingDust.
         rewardPerShareAccumulated += rewardPerShareIncrement;
-        pendingProtectorRewardDust = pendingDust > representedReward ? pendingDust - representedReward : 0;
+        pendingProtectorRewardDust = pendingDust - representedReward;
     }
 
     function _redirectPendingProtectorRewardDust(uint256 maxSafeAccumulation)
@@ -1194,16 +1204,9 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         // Fractions credited to the index cannot also remain as redistributable whole-token dust.
         uint256 representedReward =
             Math.mulDiv(rewardPerShareIncrement, currentTotalShares, ConstantsLib.REWARD_PRECISION, Math.Rounding.Ceil);
-        if (representedReward == 0) {
-            pendingProtectorRewardDust = distributableReward;
-            accumulatedCommissions += rewardAmount;
-            currentEpochCommissionReserve += rewardAmount;
-            totalCommissionsEverAccumulated += rewardAmount;
-            return (rewardAmount, 0);
-        }
+        // Positive ceiling-rounded credit is nonzero and cannot exceed its source reward.
         rewardPerShareAccumulated += rewardPerShareIncrement;
-        pendingProtectorRewardDust =
-            distributableReward > representedReward ? distributableReward - representedReward : 0;
+        pendingProtectorRewardDust = distributableReward - representedReward;
         accumulatedCommissions += rewardAmount;
         currentEpochCommissionReserve += rewardAmount;
         totalCommissionsEverAccumulated += rewardAmount;
@@ -1569,20 +1572,22 @@ contract SplitRiskPool is Initializable, ISplitRiskPool, ProtocolAccessControlUp
         view
         returns (uint256 claimable)
     {
-        uint256 effectiveRewardPerShare = rewardPerShareAccumulated;
+        uint256 effectiveRewardPerShare;
+        uint256 reserve;
         uint256 positionEpoch = protectorShareEpochs[tokenId];
         if (positionEpoch < protectorShareEpoch) {
             effectiveRewardPerShare = protectorEpochFinalRewardPerShare[positionEpoch];
+            reserve = protectorEpochRemainingReserve[positionEpoch];
+        } else {
+            effectiveRewardPerShare = rewardPerShareAccumulated;
+            reserve = currentEpochCommissionReserve;
         }
 
         uint256 totalEarned = Math.mulDiv(effectiveRewardPerShare, positionShares_, ConstantsLib.REWARD_PRECISION);
         uint256 debt = rewardDebt[tokenId];
         uint256 alreadyClaimed = commissionsClaimed[tokenId];
         claimable = totalEarned > (debt + alreadyClaimed) ? totalEarned - debt - alreadyClaimed : 0;
-        // Isolate each epoch even if an upgraded pool already contains an overallocated index.
-        uint256 reserve = positionEpoch < protectorShareEpoch
-            ? protectorEpochRemainingReserve[positionEpoch]
-            : currentEpochCommissionReserve;
+        // Isolate each epoch defensively even if its reward index is overallocated.
         return Math.min(claimable, reserve);
     }
 

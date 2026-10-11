@@ -61,25 +61,28 @@ Verification used Solidity 0.8.35, Foundry 1.7.1, and Node.js 24.14.0.
 
 | Check | Result |
 | --- | --- |
-| Complete offline Solidity suite | 1,233 passed, 0 failed, 7 optional network skips (60 suites) |
-| Coverage run (`--ir-minimum`, 16 invariant runs × 64 calls; gas-only suite excluded) | 1,223 passed, 0 failed, 7 optional skips |
-| Production coverage policy | Passed for 29 contracts: 86.88% lines (4,563/5,252), 56.94% branches (722/1,268) |
+| Complete offline Solidity suite | 1,235 passed, 0 failed, 7 optional network skips (60 suites) |
+| Coverage run (`--ir-minimum`, 16 invariant runs × 64 calls; gas-only suite excluded) | 1,225 passed, 0 failed, 7 optional skips |
+| Production coverage policy | Passed for 29 contracts: 86.95% lines (4,566/5,251), 57.06% branches (723/1,267) |
 | Deterministic invariant reachability, seeds `0x01`, `0x02`, `0x03` | 28 passed per seed; required handler paths reached |
 | JavaScript deployment/tooling suite | 147 passed |
 | Public RPC fork smoke checks | Arbitrum mainnet, Arbitrum Sepolia, Robinhood mainnet passed |
 | Pool/factory storage-layout checks | Passed; no storage changes |
 | Foundry dependency gitlink/lock consistency | Passed for all four pins |
 | Robinhood deployment size policy | Passed for all 16 production targets |
+| Unchanged tracked bytecode budgets | Passed: pool runtime 48,365 / 48,384 bytes; factory runtime 41,381 / 41,385 bytes |
 | npm full dependency audit | Zero reported advisories after removal of shx |
 | Solidity and JavaScript formatting | Passed |
 
 The full Solidity suite uses the repository's standard fuzz/invariant settings. The separate coverage run deliberately reduces invariant workload and excludes `FactoryLinearScanGas.t.sol` because instrumentation changes gas measurements. Coverage percentages are measured evidence, not proof of safety; the lower branch coverage remains a review limit.
 
+The initial CI run identified 105-byte and 24-byte overruns of the repository's existing pool/factory budgets. The budgets were not increased. A separate refactoring removes unreachable zero-credit branches after ceiling rounding, uses the proven credit bound for checked dust subtraction, selects each epoch's index and reserve together, and invalidates a canceled migration by clearing its nonzero epoch marker. Oracle flags are read only after explicit return-length checks and still reject noncanonical booleans; two additional fuzz tests cover every short return length. These changes preserve interfaces, storage layout, and the fixes above. The limits are still tight, so future growth requires the existing module-split policy.
+
 ## Static analysis triage
 
-Slither 0.11.5 analyzed 160 contracts with 74 detectors: **0 high, 121 medium, 72 low raw findings**. The high-severity gate passed. The remaining findings are not automatically confirmed vulnerabilities:
+Slither 0.11.5 analyzed 160 contracts with 74 detectors: **0 high, 119 medium, 72 low raw findings**. The high-severity gate passed. The remaining findings are not automatically confirmed vulnerabilities:
 
-- 64 strict-equality warnings cover zero-balance/empty-state sentinels, exact receipt IDs, and exact-transfer integrity checks. Those comparisons are intentional.
+- 62 strict-equality warnings cover zero-balance/empty-state sentinels, exact receipt IDs, and exact-transfer integrity checks. Those comparisons are intentional.
 - 23 reentrancy-without-ETH warnings point to guarded pool entrypoints, internal calls reached through those guards, and governance-only calls into pinned/trusted protocol components. Receipt mint callbacks are covered by existing callback/reentrancy tests.
 - Nine Pyth confidence/publish-time warnings miss validation in helper functions: `_readPythPrice` validates future time, age, and confidence; EMA reads validate age and confidence; staleness probes ultimately validate protected pricing.
 - Seven uninitialized-local warnings concern Solidity zero initialization or assignments in guarded try/catch paths. Eighteen unused-return warnings concern intentionally discarded tuple fields or return values from operations whose required failure signal is a revert.

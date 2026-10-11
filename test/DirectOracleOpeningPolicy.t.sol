@@ -98,6 +98,28 @@ contract DirectOracleOpeningPolicyTest is StockMarketSessionProtectionTest {
         pool.depositShieldedAsset(address(stock), 10e18, 0);
     }
 
+    function testFuzz_directStockFeedRejectsShortStatus(uint8 returnLength) public {
+        _migrateToDirectStockFeed();
+        vm.mockCall(
+            address(stockFeed),
+            abi.encodeCall(stockFeed.isProtectionOpeningAllowed, (address(stock))),
+            new bytes(bound(returnLength, 0, 31))
+        );
+        _expectUnavailablePolicy();
+        pool.depositShieldedAsset(address(stock), 10e18, 0);
+    }
+
+    function testFuzz_directStockFeedRejectsShortCapability(uint8 returnLength) public {
+        _migrateToDirectStockFeed();
+        vm.mockCall(
+            address(stockFeed),
+            abi.encodeCall(stockFeed.supportsProtectionOpeningEligibility, (address(stock))),
+            new bytes(bound(returnLength, 0, 31))
+        );
+        _expectUnavailablePolicy();
+        pool.depositShieldedAsset(address(stock), 10e18, 0);
+    }
+
     function _expectUnavailablePolicy() internal {
         vm.expectRevert(
             abi.encodeWithSelector(
