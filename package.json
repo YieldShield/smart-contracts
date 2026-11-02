@@ -50,5 +50,13 @@
     "prettier": "~3.9.10",
     "qrcode": "~1.5.3",
     "toml": "~5.0.1"
+  },
+  "overrides": {
+    "@pythnetwork/hermes-client": {
+      "zod": "^4.6.6"
+    },
+    "@zodios/core": {
+      "zod": "^4.6.6"
+    }
   }
 }
