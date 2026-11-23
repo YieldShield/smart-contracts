@@ -1,4 +1,4 @@
-.PHONY: build deploy generate-abis get-address account chain compile flatten fork format lint test verify slither aderyn security coverage coverage-lcov
+.PHONY: build deploy generate-abis get-address account chain compile flatten fork format lint test verify slither security coverage coverage-lcov
 
 DEPLOY_SCRIPT ?= script/Deploy.s.sol
 LOCALHOST_ANVIL_PRIVATE_KEY ?= 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
@@ -76,13 +76,8 @@ slither:
 	slither . --foundry-out-dir out --config-file slither.config.json --checklist --fail-none > slither-report.md 2>&1
 	@echo "Report written to slither-report.md"
 
-# Security analysis — Aderyn
-aderyn:
-	aderyn --output aderyn-report.md --no-snippets --skip-update-check
-	@echo "Report written to aderyn-report.md"
-
 # Run all security analysis
-security: slither aderyn
+security: slither
 	@echo "All security analysis complete"
 
 # Coverage summary (text table to stdout)
