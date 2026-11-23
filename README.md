@@ -270,20 +270,15 @@ Run Slither:
 make slither
 ```
 
-Run Aderyn:
-
-```sh
-make aderyn
-```
-
-Run both:
+Run the maintained security checks:
 
 ```sh
 make security
 ```
 
-CI blocks on Slither high-severity findings. Aderyn currently runs as a
-report-only artifact for manual triage.
+CI blocks on Slither high-severity findings. Aderyn has been
+[retired](https://aderyn.cyfrin.io/retirement), and its withdrawn installation
+artifacts are no longer used by CI or the Makefile. Historical reports are kept.
 
 Security reports and follow-up notes are stored in the root audit files and
 under `docs_ok/security/`.
