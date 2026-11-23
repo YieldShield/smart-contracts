@@ -9,7 +9,7 @@ test("local Slither reports findings without hiding execution failures", () => {
     const makefile = readFileSync(join(root, "Makefile"), "utf8");
     const recipe = makefile.slice(
         makefile.indexOf("slither:\n"),
-        makefile.indexOf("\n# Security analysis — Aderyn"),
+        makefile.indexOf("\n# Run all security analysis"),
     );
 
     assert.match(recipe, /\bslither\s+\./u);
@@ -31,11 +31,9 @@ test("Slither 0.11.5 is pinned in both jobs without detector-family exclusions",
     const pins = workflow.match(/slither-analyzer==0\.11\.5/gu) || [];
     assert.equal(pins.length, 2, "both Slither jobs must pin 0.11.5");
 
-    const gate = workflow.slice(
-        workflow.indexOf("  slither-gate:"),
-        workflow.indexOf("  aderyn:"),
-    );
+    const gate = workflow.slice(workflow.indexOf("  slither-gate:"));
     assert.match(gate, /--fail-high/u);
+    assert.doesNotMatch(gate, /^\s*continue-on-error:\s*true/gmu);
     assert.doesNotMatch(gate, /--exclude(?:-|\s)/u);
 
     const config = JSON.parse(
@@ -76,4 +74,17 @@ test("Slither 0.11.5 is pinned in both jobs without detector-family exclusions",
         1,
         "only the deterministic UTC modulo may suppress weak-prng",
     );
+});
+
+test("security entry points do not invoke the retired Aderyn tool", () => {
+    const workflow = readFileSync(
+        join(root, ".github", "workflows", "ci.yml"),
+        "utf8",
+    );
+    assert.doesNotMatch(workflow, /^  aderyn:/mu);
+    assert.doesNotMatch(workflow, /npm install[^\n]*@cyfrin\/aderyn/u);
+
+    const makefile = readFileSync(join(root, "Makefile"), "utf8");
+    assert.match(makefile, /^security: slither$/mu);
+    assert.doesNotMatch(makefile, /^aderyn:/mu);
 });
