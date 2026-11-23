@@ -52,7 +52,6 @@ Run static analysis when changing contract logic:
 
 ```sh
 make slither
-make aderyn
 ```
 
 The local Slither target is report-only for detector findings: it writes the
@@ -61,8 +60,10 @@ configuration, compilation, and analyzer crashes still return a non-zero exit
 status so a broken analysis cannot appear successful.
 
 In CI, Slither's dedicated high-severity job is the blocking static-analysis
-gate. Aderyn is uploaded as a report-only artifact for manual triage unless a
-separate Aderyn severity gate is intentionally added later.
+gate. Aderyn has been [retired by its publisher](https://aderyn.cyfrin.io/retirement),
+and its installation artifacts were withdrawn. Its former report-only job and
+local command have been removed. Historical Aderyn reports remain available in
+the audit records.
 
 Run coverage when changing core accounting, pool, oracle, receipt NFT, or
 governance behavior:
